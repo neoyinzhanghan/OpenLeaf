@@ -1,6 +1,25 @@
+> **Note:** This project (including this README) was written with AI assistance.
+
+<p align="center">
+  <img src="client/public/logo.png" alt="OpenLeaf logo" width="160" />
+</p>
+
 # OpenLeaf
 
-Local-first LaTeX editor with an Overleaf-style split view: edit on the left, compiled PDF on the right. Each project is a normal folder on disk under `projects/`.
+## Overview
+
+OpenLeaf is a **local-first LaTeX editor** you run on your own machine. It is meant for people who want an Overleaf-like writing experience—split source and PDF, compile in the browser, collaborate in realtime—without sending papers to a hosted service.
+
+Projects are ordinary folders under `projects/`: `main.tex`, sections, figures, bibliography, and anything else you need. OpenLeaf edits those files on disk, compiles them with your local TeX Live install, and shows the PDF beside the editor. There is no cloud document store; what you see in the UI is what lives on your filesystem.
+
+Typical workflow:
+
+1. Create or open a project (the repo ships `example-article` as a template).
+2. Edit LaTeX in the Monaco editor; save with **Ctrl/Cmd+S** to write to disk and (by default) auto-compile.
+3. Review the PDF preview, SyncTeX-jump from PDF to source, and download PDF or ZIP when ready.
+4. Optionally co-edit with teammates on your LAN using preset identities, and use **History** for per-project git backups.
+
+OpenLeaf is designed for trusted local or LAN use (lab machines, shared office networks). It does not include authentication.
 
 ## Prerequisites
 
