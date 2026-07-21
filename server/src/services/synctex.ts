@@ -28,17 +28,48 @@ export type SynctexForwardHit = {
 function isProjectSource(input: string): boolean {
   if (!input) return false;
   if (input.includes("texmf")) return false;
+  if (input.split("/").includes("..")) return false;
   if (input.startsWith(".openleaf/") || input.includes("/.openleaf/")) return false;
+  if (input.startsWith(".paperflow/") || input.includes("/.paperflow/")) return false;
   return true;
 }
 
+/**
+ * Map SyncTeX Input paths onto the current project tree.
+ * Absolute paths from a previous checkout (e.g. PaperFlow → OpenLeaf) must not become
+ * `../../../OtherRoot/projects/<id>/sections/foo.tex`.
+ */
 function normalizeRel(cwd: string, raw: string): string {
   const trimmed = raw.trim().replace(/\\/g, "/");
-  const rel = path.isAbsolute(trimmed) ? path.relative(cwd, trimmed) : trimmed;
-  return rel
+  const projectName = path.basename(cwd);
+  const absCandidate = path.isAbsolute(trimmed) ? trimmed : path.resolve(cwd, trimmed);
+  const absNorm = absCandidate.replace(/\\/g, "/");
+
+  // Prefer: everything after the last /<projectId>/ segment (survives relocated checkouts).
+  const marker = `/${projectName}/`;
+  const markerIdx = absNorm.lastIndexOf(marker);
+  if (markerIdx >= 0) {
+    return absNorm
+      .slice(markerIdx + marker.length)
+      .replace(/\/\.\//g, "/")
+      .replace(/^\.\//, "");
+  }
+
+  let rel = path.isAbsolute(trimmed) ? path.relative(cwd, trimmed) : trimmed;
+  rel = rel
     .replace(/\\/g, "/")
     .replace(/\/\.\//g, "/")
     .replace(/^\.\//, "");
+
+  // Last resort: drop leading ../ segments if the remainder looks like a project path.
+  if (rel.split("/").includes("..")) {
+    const parts = rel.split("/").filter((p) => p && p !== ".");
+    while (parts[0] === "..") parts.shift();
+    // Strip a duplicated project folder name if present
+    if (parts[0] === projectName) parts.shift();
+    rel = parts.join("/");
+  }
+  return rel;
 }
 
 function pathsMatch(a: string, b: string, loose = false): boolean {

@@ -98,6 +98,11 @@ export function EditorPage() {
     column: number;
     nonce?: number;
   } | null>(null);
+  const pendingJumpRef = useRef<{
+    path: string;
+    line: number;
+    column: number;
+  } | null>(null);
   const [pdfHighlight, setPdfHighlight] = useState<PdfHighlight | null>(null);
   const [syncToast, setSyncToast] = useState<string | null>(null);
   const [forceTextPath, setForceTextPath] = useState<string | null>(null);
@@ -425,6 +430,20 @@ export function EditorPage() {
     if (dirty) setStatus((s) => (s === "compiling" || s === "saving" ? s : "dirty"));
   }, [dirty]);
 
+  // After collab/file load finishes, re-issue any pending SyncTeX jump for this path
+  useEffect(() => {
+    const pending = pendingJumpRef.current;
+    if (!fileReady || !activePath || !pending) return;
+    if (pending.path !== activePath) return;
+    pendingJumpRef.current = null;
+    setJumpTo({
+      path: pending.path,
+      line: pending.line,
+      column: pending.column,
+      nonce: Date.now(),
+    });
+  }, [fileReady, activePath, yText]);
+
   const showSyncToast = useCallback((msg: string) => {
     setSyncToast(msg);
     window.setTimeout(() => setSyncToast((cur) => (cur === msg ? null : cur)), 2800);
@@ -435,13 +454,29 @@ export function EditorPage() {
       if (!id) return;
       try {
         const hit = await synctexLookup(id, page, x, y);
-        const target = hit.input.replace(/^\.\//, "");
+        // Guard against relocated-checkout SyncTeX paths (e.g. ../../../PaperFlow/.../sections/x.tex)
+        let target = hit.input.replace(/\\/g, "/").replace(/^\.\//, "");
+        if (target.split("/").includes("..") || target.startsWith("/")) {
+          const marker = `/${id}/`;
+          const idx = `/${target}`.replace(/\/+/g, "/").lastIndexOf(marker);
+          if (idx >= 0) {
+            target = `/${target}`.replace(/\/+/g, "/").slice(idx + marker.length);
+          } else {
+            showSyncToast("Stale SyncTeX paths — hit Recompile");
+            return;
+          }
+        }
+        if (!target || target.split("/").includes("..")) {
+          showSyncToast("No SyncTeX match — recompile?");
+          return;
+        }
         const dest = {
           path: target,
           line: hit.line,
           column: Math.max(1, hit.column || 1),
           nonce: Date.now(),
         };
+        pendingJumpRef.current = { path: target, line: dest.line, column: dest.column };
         showSyncToast(`→ ${target}:${hit.line}`);
         setForceTextPath(null);
         setForceBase64Path(null);
@@ -724,10 +759,10 @@ export function EditorPage() {
           <button type="button" className="btn btn-primary" onClick={() => void runCompile()} disabled={status === "compiling"}>
             Recompile
           </button>
-          <a className="btn" href={downloadUrl(id, "pdf")}>
+          <a className="btn" href={downloadUrl(id, "pdf")} download={`${id}.pdf`}>
             PDF
           </a>
-          <a className="btn" href={downloadUrl(id, "zip")}>
+          <a className="btn" href={downloadUrl(id, "zip")} download={`${id}.zip`}>
             ZIP
           </a>
         </div>

@@ -182,21 +182,23 @@ export function CodeEditor({
     });
   };
 
-  // MonacoBinding for collaborative text
+  // MonacoBinding for collaborative text — one model URI per project path
   useEffect(() => {
     bindingRef.current?.destroy();
     bindingRef.current = null;
     if (!editorReady) return;
     const ed = editorRef.current;
-    if (!ed || !yText || !path) return;
+    const monacoApi = monacoRef.current;
+    if (!ed || !yText || !path || !monacoApi) return;
 
-    let model = ed.getModel();
+    const uri = monacoApi.Uri.parse(`inmemory://openleaf/${encodeURIComponent(path)}`);
+    let model = monacoApi.editor.getModel(uri);
     if (!model) {
-      model = monacoEditor.createModel(
-        yText.toString(),
-        languageFor(path),
-        monaco.Uri.parse(`inmemory://openleaf/${path}`),
-      );
+      model = monacoApi.editor.createModel(yText.toString(), languageFor(path), uri);
+    } else if (model.getLanguageId() !== languageFor(path)) {
+      monacoApi.editor.setModelLanguage(model, languageFor(path));
+    }
+    if (ed.getModel() !== model) {
       ed.setModel(model);
     }
 
@@ -209,6 +211,11 @@ export function CodeEditor({
     };
   }, [yText, awareness, path, editorReady]);
 
+  // Reset jump memo when the open file changes so SyncTeX can jump again
+  useEffect(() => {
+    appliedJumpKeyRef.current = null;
+  }, [path]);
+
   useEffect(() => {
     if (!jumpTo) return;
     if (!pathMatches(path, jumpTo.path)) return;
@@ -217,12 +224,16 @@ export function CodeEditor({
     if (appliedJumpKeyRef.current === key) return;
 
     let cancelled = false;
-    const attempts = [0, 32, 80, 200, 500, 1000];
+    // Collab file switches can take >1s (ensure + bind); keep trying.
+    const attempts = [0, 40, 100, 200, 400, 800, 1600, 2800];
     const timers: number[] = [];
 
     const tryApply = () => {
       if (cancelled) return;
       if (appliedJumpKeyRef.current === key) return;
+      const ed = editorRef.current;
+      const model = ed?.getModel();
+      if (!ed || !model || model.getLineCount() < 1) return;
       if (applyJump(jumpTo)) {
         appliedJumpKeyRef.current = key;
       }
@@ -236,7 +247,7 @@ export function CodeEditor({
       cancelled = true;
       for (const t of timers) window.clearTimeout(t);
     };
-  }, [jumpTo, path, value, yText]);
+  }, [jumpTo, path, value, yText, editorReady]);
 
   // Keep Monaco theme in sync with app theme
   useEffect(() => {

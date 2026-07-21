@@ -91,18 +91,19 @@ export function PdfViewer({ url, onReverseSearch, highlight }: Props) {
             const handler = reverseRef.current;
             if (!handler) return;
             const rect = canvas.getBoundingClientRect();
-            const xCss = ev.clientX - rect.left;
-            const yCss = ev.clientY - rect.top;
-            // Top-left origin (y down), PDF points — matches SyncTeX from pdfTeX
-            const x = xCss / scale;
-            const y = yCss / scale;
+            if (rect.width <= 0 || rect.height <= 0) return;
+            // Map CSS click → canvas pixels → PDF points (pdf.js viewport scale)
+            const canvasX = ((ev.clientX - rect.left) / rect.width) * canvas.width;
+            const canvasY = ((ev.clientY - rect.top) / rect.height) * canvas.height;
+            const x = canvasX / scale;
+            const y = canvasY / scale;
 
             // Local click pulse for feedback
             wrap.querySelectorAll(".pdf-click-pulse").forEach((el) => el.remove());
             const pulse = document.createElement("div");
             pulse.className = "pdf-click-pulse";
-            pulse.style.left = `${xCss - 10}px`;
-            pulse.style.top = `${yCss - 10}px`;
+            pulse.style.left = `${ev.clientX - rect.left - 10}px`;
+            pulse.style.top = `${ev.clientY - rect.top - 10}px`;
             wrap.appendChild(pulse);
             window.setTimeout(() => pulse.remove(), 700);
 
