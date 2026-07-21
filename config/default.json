@@ -1,0 +1,26 @@
+{
+  "host": "0.0.0.0",
+  "port": 8787,
+  "projectsRoot": "projects",
+  "latex": {
+    "engine": "pdflatex",
+    "autoCompile": true,
+    "timeoutMs": 120000,
+    "outputDir": ".openleaf/out"
+  },
+  "client": {
+    "devPort": 5173
+  },
+  "defaultIdentities": [
+    { "id": "alice", "name": "Alice", "color": "#3B82F6" },
+    { "id": "bob", "name": "Bob", "color": "#10B981" },
+    { "id": "carol", "name": "Carol", "color": "#F59E0B" }
+  ],
+  "collab": {
+    "flushMs": 750,
+    "persistYjs": true
+  },
+  "git": {
+    "enabled": true
+  }
+}

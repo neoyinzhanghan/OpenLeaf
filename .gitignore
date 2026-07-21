@@ -1,0 +1,21 @@
+node_modules/
+dist/
+build/
+config/local.json
+*.log
+.DS_Store
+client/dist/
+server/dist/
+.env
+.env.*
+
+# User projects stay local; only the example ships in git
+projects/*
+!projects/example-article/
+!projects/example-article/**
+
+# Build artifacts (even for the example)
+projects/*/.openleaf/
+
+# Per-project git backups (local to each paper)
+projects/**/.git/

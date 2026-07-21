@@ -1,0 +1,40 @@
+import os from "node:os";
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+
+function lanIp(): string | undefined {
+  for (const nets of Object.values(os.networkInterfaces())) {
+    for (const net of nets ?? []) {
+      if (net.family === "IPv4" && !net.internal) return net.address;
+    }
+  }
+  return undefined;
+}
+
+const ip = lanIp();
+const port = 5173;
+
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    host: "0.0.0.0",
+    port,
+    strictPort: true,
+    open: ip ? `http://${ip}:${port}/` : true,
+    proxy: {
+      "/api": {
+        target: "http://127.0.0.1:8787",
+        changeOrigin: true,
+      },
+      "/collab": {
+        target: "ws://127.0.0.1:8787",
+        ws: true,
+        changeOrigin: true,
+      },
+    },
+  },
+  build: {
+    outDir: "dist",
+    emptyOutDir: true,
+  },
+});

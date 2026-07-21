@@ -1,0 +1,58 @@
+# OpenLeaf — Agent Guide
+
+Local-first LaTeX editor: filesystem projects, Express API, React UI.
+
+For human setup and usage, see [README.md](README.md).
+
+## Layout
+
+| Path | Role |
+|------|------|
+| `config/default.json` | Default app settings (port, projects root, engine, timeouts) |
+| `config/local.json` | Optional runtime overrides (gitignored); written by `PATCH /api/config` |
+| `server/src/config.ts` | Loads default → local → env (`OPENLEAF_*`) |
+| `server/src/routes/` | Thin HTTP handlers only |
+| `server/src/services/` | Business logic: FS, compile, zip, synctex, collab, git |
+| `client/src/api/` | Typed fetch wrappers for all endpoints |
+| `client/src/pages/` | Route-level screens |
+| `client/src/components/` | UI pieces (editor, PDF, tree, split, history, theme) |
+| `client/src/latex/` | Monaco LaTeX language: Monarch highlight, theme, completions |
+| `client/src/collab/` | Yjs client, identity helpers |
+| `projects/<id>/` | One LaTeX project per folder |
+| `projects/<id>/metrics.tex` | Optional shared numbers as LaTeX macros (`\input{metrics}` in `main.tex`) |
+| `projects/<id>/misc/` | Notes, drafts, and other non-compiled material |
+| `projects/<id>/openleaf.json` | `mainFile`, `engine`, `identities[]` |
+
+## Conventions
+
+- Never store project source outside `projectsRoot`.
+- Build artifacts only under `projects/<id>/.openleaf/` (visible in the file tree; omitted from ZIP).
+- User projects under `projects/` are gitignored except `example-article`.
+- The project FS is intentionally writable for hackers: create/rename/delete/upload any path under the project (path-safe). Text vs binary is sniffed, not extension-gated.
+- All file paths must be resolved with the project FS helpers (reject `..`).
+- Prefer editing services over routes when changing behavior.
+- Add new HTTP APIs in `routes/` + matching client wrapper in `client/src/api/`.
+- In `npm run dev`, do **not** serve `client/dist`; Vite on `:5173` is the UI (`:8787` redirects).
+
+## Config knobs
+
+- File: `config/default.json` / `config/local.json`
+- Env: `OPENLEAF_HOST`, `OPENLEAF_PORT`, `OPENLEAF_PROJECTS_ROOT`, `OPENLEAF_ENGINE`
+- HTTP: `GET/PATCH /api/config`
+- Identities (collab): **per project** in `projects/<id>/openleaf.json` → `identities[]`. Seeded from `defaultIdentities` in app config on create. `GET/PUT /api/projects/:id/identities`. UI toggles among that project's presets (stored per-project in localStorage).
+- Collab: WebSocket `/collab/<project>?identity=<id>`; Yjs CRDT flushed to disk; snapshot under `projects/<id>/.openleaf/collab/`
+- Git backups: each project is its own git repo; auto-commit on explicit save / FS mutations (`.openleaf/` ignored). Background CRDT flush does **not** commit. `GET /api/projects/:id/history`, `POST .../history/restore`. Toggle via `git.enabled`.
+
+## Commands
+
+```bash
+npm install
+npm run dev   # API :8787 + Vite :5173 — open the Vite URL for the UI
+npm run build
+npm start     # NODE_ENV=production; API serves built client on :8787
+npm run typecheck
+```
+
+## Prerequisites
+
+Node 20+, TeX Live (`pdflatex`, `bibtex`; `latexmk` optional but preferred), Git (if `git.enabled`).

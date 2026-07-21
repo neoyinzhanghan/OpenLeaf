@@ -1,0 +1,34 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{booktabs}
+
+\title{OpenLeaf Example Article}
+\author{Local-first \LaTeX{} editing}
+\date{\today}
+
+\begin{document}
+\input{metrics}
+
+\maketitle
+
+\begin{abstract}
+A small sample paper that demonstrates the recommended project layout:
+\texttt{main.tex}, \texttt{metrics.tex}, \texttt{sections/}, \texttt{figures/},
+\texttt{assets/}, \texttt{scripts/}, and \texttt{misc/}.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\input{sections/01_intro}
+\input{sections/02_results}
+\input{sections/03_discussion}
+\input{sections/04_methods}
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}
