@@ -8,18 +8,27 @@
 
 ## Overview
 
-OpenLeaf is a **local-first LaTeX editor** you run on your own machine. It is meant for people who want an Overleaf-like writing experience—split source and PDF, compile in the browser, collaborate in realtime—without sending papers to a hosted service.
+OpenLeaf is a **local-first LaTeX editor built for hackers and AI**.
 
-Projects are ordinary folders under `projects/`: `main.tex`, sections, figures, bibliography, and anything else you need. OpenLeaf edits those files on disk, compiles them with your local TeX Live install, and shows the PDF beside the editor. There is no cloud document store; what you see in the UI is what lives on your filesystem.
+It gives you the Overleaf-style experience—split source and PDF, compile in the browser, realtime collab on your LAN—without locking your paper inside someone else’s cloud. Every project is a normal folder on disk. The UI is just a thin window onto files you already own.
 
-Typical workflow:
+That is the point. You are not a tenant in a black-box editor. You control **everything**:
 
-1. Create or open a project (the repo ships `example-article` as a template).
-2. Edit LaTeX in the Monaco editor; save with **Ctrl/Cmd+S** to write to disk and (by default) auto-compile.
-3. Review the PDF preview, SyncTeX-jump from PDF to source, and download PDF or ZIP when ready.
-4. Optionally co-edit with teammates on your LAN using preset identities, and use **History** for per-project git backups.
+- the paper itself (`main.tex`, `sections/`, `figures/`, `metrics.tex`, `misc/`, …)
+- the app stack (`server/`, `client/`, `config/`)
+- how compile, collab, identities, and git backups behave
 
-OpenLeaf is designed for trusted local or LAN use (lab machines, shared office networks). It does not include authentication.
+Want a custom macro workflow, a metrics file your agent updates, a one-off script under `scripts/`, or a change to the compile pipeline? Open the repo and do it. Pair OpenLeaf with **Cursor**, **Claude Code**, or any coding agent in the same workspace: rewrite sections, generate figures, fix citations, reshape the project layout—while the browser stays open on the live PDF. The agent edits the same files OpenLeaf compiles. No export/import dance. No “paste into Overleaf.” Just your machine, your TeX, your tools.
+
+**Typical loop**
+
+1. Create or open a project (`example-article` ships as a template).
+2. Edit in Monaco—or let an AI agent edit the project folder beside you.
+3. **Ctrl/Cmd+S** saves to disk and (by default) auto-compiles.
+4. Review the PDF, SyncTeX-jump from preview to source, download PDF or ZIP.
+5. Co-edit on the LAN with preset identities; use **History** for per-project git backups.
+
+OpenLeaf is for trusted local or LAN use. There is no authentication—by design, because the filesystem *is* the product.
 
 ## Prerequisites
 
