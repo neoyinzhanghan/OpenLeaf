@@ -125,13 +125,22 @@ Priority: `config/default.json` → `config/local.json` (gitignored) → env var
 | Variable | Meaning |
 |----------|---------|
 | `OPENLEAF_HOST` | Bind address (default `0.0.0.0`) |
-| `OPENLEAF_PORT` | API port (default `8787`) |
-| `OPENLEAF_PROJECTS_ROOT` | Projects directory |
+| `OPENLEAF_PORT` | API port (default `8787`); Vite proxies `/api` and `/collab` here in dev |
+| `OPENLEAF_CLIENT_PORT` | Vite UI port in `npm run dev` (default `5173`) |
+| `OPENLEAF_PROJECTS_ROOT` | Projects directory (relative to repo root, or absolute) |
 | `OPENLEAF_ENGINE` | `pdflatex` or `xelatex` |
 
 You can also `GET` / `PATCH /api/config` (PATCH writes `config/local.json`).
 
-If you change the API port, update the Vite proxy target in [`client/vite.config.ts`](client/vite.config.ts) to match.
+**Separate papers from the app clone:** point `OPENLEAF_PROJECTS_ROOT` (or `"projectsRoot"` in `config/local.json`) at any writable directory, e.g. `/home/you/papers`. New projects are created there instead of `./projects/`.
+
+**Second instance on a shared machine** (ports already taken):
+
+```bash
+OPENLEAF_PORT=8788 OPENLEAF_CLIENT_PORT=5176 OPENLEAF_PROJECTS_ROOT=/path/to/papers npm run dev
+```
+
+Then open `http://127.0.0.1:5176`.
 
 ## Features
 
