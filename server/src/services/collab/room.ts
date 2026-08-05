@@ -16,12 +16,33 @@ import {
 const FILES_MAP = "files";
 const META_MAP = "meta";
 
-function flattenTextFiles(nodes: TreeNode[], out: string[] = []): string[] {
+/** Keep collab sync responsive — large CSVs/JSON under data/ must not enter the Y.Doc. */
+const MAX_COLLAB_FILE_BYTES = 256 * 1024;
+const MAX_COLLAB_SNAPSHOT_BYTES = 2 * 1024 * 1024;
+
+function isCollabTextFile(projectId: string, relativePath: string): boolean {
+  if (!relativePath || relativePath.includes(".openleaf/")) return false;
+  const full = resolveProjectPath(projectId, relativePath);
+  if (!isTextPath(relativePath) && !isTextPath(full)) return false;
+  try {
+    const st = fsSync.statSync(full);
+    if (st.size > MAX_COLLAB_FILE_BYTES) return false;
+  } catch {
+    return false;
+  }
+  return true;
+}
+
+function flattenCollabTextFiles(
+  projectId: string,
+  nodes: TreeNode[],
+  out: string[] = [],
+): string[] {
   for (const n of nodes) {
     if (n.type === "file") {
-      if (!n.path.includes(".openleaf/") && isTextPath(n.path)) out.push(n.path);
+      if (isCollabTextFile(projectId, n.path)) out.push(n.path);
     } else if (n.children) {
-      flattenTextFiles(n.children, out);
+      flattenCollabTextFiles(projectId, n.children, out);
     }
   }
   return out;
@@ -194,7 +215,7 @@ export class ProjectRoom {
   async reseedFromDisk(): Promise<void> {
     await this.whenReady();
     const tree = await getTree(this.projectId);
-    const textPaths = flattenTextFiles(tree);
+    const textPaths = flattenCollabTextFiles(this.projectId, tree);
     const onDisk = new Set(textPaths);
 
     this.doc.transact(() => {
@@ -216,7 +237,14 @@ export class ProjectRoom {
   /** Sync one path from disk into the CRDT (used after REST writes). */
   async syncPathFromDisk(relativePath: string): Promise<void> {
     await this.whenReady();
-    if (!isTextPath(relativePath) && !isTextPath(resolveProjectPath(this.projectId, relativePath))) {
+    if (!isCollabTextFile(this.projectId, relativePath)) {
+      // Drop oversized / binary paths if a prior snapshot had them
+      if (this.files.has(relativePath)) {
+        this.doc.transact(() => {
+          this.files.delete(relativePath);
+        }, "disk-seed");
+      }
+      this.dirtyPaths.delete(relativePath);
       return;
     }
     this.doc.transact(() => {
@@ -264,20 +292,28 @@ export class ProjectRoom {
     const snap = snapshotPath(this.projectId);
     if (loadConfig().collab.persistYjs && fsSync.existsSync(snap)) {
       try {
-        const buf = await fs.readFile(snap);
-        Y.applyUpdate(this.doc, new Uint8Array(buf), "disk-seed");
+        const st = fsSync.statSync(snap);
+        if (st.size > MAX_COLLAB_SNAPSHOT_BYTES) {
+          console.warn(
+            `[collab] dropping oversized snapshot for ${this.projectId} (${st.size} bytes)`,
+          );
+          await fs.unlink(snap).catch(() => undefined);
+        } else {
+          const buf = await fs.readFile(snap);
+          Y.applyUpdate(this.doc, new Uint8Array(buf), "disk-seed");
+        }
       } catch (err) {
         console.error("[collab] snapshot load failed", err);
       }
     }
 
     const tree = await getTree(this.projectId);
-    const textPaths = flattenTextFiles(tree);
+    const textPaths = flattenCollabTextFiles(this.projectId, tree);
     this.doc.transact(() => {
       for (const filePath of textPaths) {
         this.applyDiskContent(filePath);
       }
-      // Drop CRDT-only paths that no longer exist on disk
+      // Drop CRDT-only paths that no longer exist on disk (or exceed collab size)
       const onDisk = new Set(textPaths);
       const stale: string[] = [];
       this.files.forEach((_t, p) => {
@@ -304,9 +340,10 @@ export class ProjectRoom {
       const again = this.files.get(relativePath);
       if (again) return again;
 
-      const full = resolveProjectPath(this.projectId, relativePath);
-      if (!isTextPath(full) && !isTextPath(relativePath)) {
-        throw Object.assign(new Error("Not a text file"), { status: 400 });
+      if (!isCollabTextFile(this.projectId, relativePath)) {
+        throw Object.assign(new Error("File too large (or not text) for collab editing"), {
+          status: 400,
+        });
       }
       this.doc.transact(() => {
         this.applyDiskContent(relativePath);
@@ -329,7 +366,7 @@ export class ProjectRoom {
       } else if (event.op === "rename" && event.from && event.to) {
         this.renamePathPrefix(event.from, event.to);
       } else if ((event.op === "create" || event.op === "write") && event.path) {
-        if (isTextPath(event.path)) this.applyDiskContent(event.path);
+        if (isCollabTextFile(this.projectId, event.path)) this.applyDiskContent(event.path);
       }
       this.meta.set("treeVersion", Date.now());
       this.meta.set("treeEvent", { ...event, type: "tree-changed", at: Date.now() });

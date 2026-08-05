@@ -238,13 +238,8 @@ export function EditorPage() {
         setBinaryMeta(null);
         setEditMode("text");
 
-        // Wait for collab sync before binding — avoids dropping pre-sync keystrokes
-        if (collab.doc && !collab.synced) {
-          setFileReady(false);
-          setStatus("idle");
-          return;
-        }
-
+        // Prefer live collab when the room has synced. Never block the editor on sync —
+        // a large/stale ydoc can leave synced=false indefinitely (Save stuck on Loading…).
         if (collab.doc && collab.synced) {
           const text = await collab.ensureFile(pathBeingLoaded);
           if (cancelled || activePathRef.current !== pathBeingLoaded) return;
@@ -258,7 +253,7 @@ export function EditorPage() {
           }
         }
 
-        // Fallback when collab unavailable: controlled editor
+        // Disk / pre-sync fallback: editable immediately; upgrades to Y.Text when synced flips
         setYText(null);
         setContent(file.content);
         setSavedContent(file.content);
