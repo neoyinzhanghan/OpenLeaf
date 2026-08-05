@@ -1,5 +1,7 @@
 import type {
   AppConfig,
+  CommentAnchor,
+  CommentThread,
   CompileResult,
   FilePayload,
   GitCommitInfo,
@@ -206,6 +208,65 @@ export function synctexForward(
     column: String(column),
   });
   return request(`/api/projects/${encodeURIComponent(id)}/synctex?${params}`);
+}
+
+export function listProjectComments(id: string): Promise<CommentThread[]> {
+  return request(`/api/projects/${encodeURIComponent(id)}/comments`);
+}
+
+export function createProjectComment(
+  id: string,
+  body: { identityId: string; body: string; anchor: CommentAnchor },
+): Promise<{ thread: CommentThread; git?: GitCommitResult }> {
+  return request(`/api/projects/${encodeURIComponent(id)}/comments`, {
+    method: "POST",
+    body: JSON.stringify(body),
+    headers: { "X-OpenLeaf-Identity": body.identityId },
+  });
+}
+
+export function replyProjectComment(
+  id: string,
+  commentId: string,
+  body: { identityId: string; body: string },
+): Promise<{ thread: CommentThread; git?: GitCommitResult }> {
+  return request(
+    `/api/projects/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}/replies`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: { "X-OpenLeaf-Identity": body.identityId },
+    },
+  );
+}
+
+export function patchProjectComment(
+  id: string,
+  commentId: string,
+  body: { identityId?: string; resolved?: boolean; body?: string },
+): Promise<{ thread: CommentThread; git?: GitCommitResult }> {
+  return request(
+    `/api/projects/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(body),
+      headers: body.identityId ? { "X-OpenLeaf-Identity": body.identityId } : undefined,
+    },
+  );
+}
+
+export function deleteProjectComment(
+  id: string,
+  commentId: string,
+  identityId?: string,
+): Promise<{ ok: boolean; git?: GitCommitResult }> {
+  return request(
+    `/api/projects/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}`,
+    {
+      method: "DELETE",
+      headers: identityId ? { "X-OpenLeaf-Identity": identityId } : undefined,
+    },
+  );
 }
 
 export type CompileHandlers = {

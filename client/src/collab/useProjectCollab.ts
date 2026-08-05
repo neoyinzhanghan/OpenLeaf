@@ -20,6 +20,8 @@ export type ProjectCollab = {
   getFileText: (path: string) => Y.Text | null;
   ensureFile: (path: string) => Promise<Y.Text | null>;
   treeVersion: number;
+  /** Bumped when comments.json changes on the server (live panel refresh). */
+  commentsVersion: number;
 };
 
 function collabWsBase(): string {
@@ -34,6 +36,7 @@ export function useProjectCollab(projectId: string | undefined): ProjectCollab {
   const [synced, setSynced] = useState(false);
   const [peers, setPeers] = useState<CollabPresence[]>([]);
   const [treeVersion, setTreeVersion] = useState(0);
+  const [commentsVersion, setCommentsVersion] = useState(0);
   const [session, setSession] = useState<{
     doc: Y.Doc;
     awareness: Awareness;
@@ -142,6 +145,8 @@ export function useProjectCollab(projectId: string | undefined): ProjectCollab {
     const onMeta = () => {
       const v = meta.get("treeVersion");
       if (typeof v === "number") setTreeVersion(v);
+      const cv = meta.get("commentsVersion");
+      if (typeof cv === "number") setCommentsVersion(cv);
     };
     const onFiles = () => setFilesTick((n) => n + 1);
 
@@ -211,6 +216,7 @@ export function useProjectCollab(projectId: string | undefined): ProjectCollab {
     getFileText,
     ensureFile,
     treeVersion,
+    commentsVersion,
   };
 }
 

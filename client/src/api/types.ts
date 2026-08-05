@@ -92,3 +92,37 @@ export type GitCommitInfo = {
   email: string;
   date: string;
 };
+
+export type CommentAnchor = {
+  file: string;
+  line: number;
+  column?: number;
+  endLine?: number;
+  endColumn?: number;
+  quote?: string;
+  pdfPage?: number;
+  pdfX?: number;
+  pdfY?: number;
+};
+
+export type CommentReply = {
+  id: string;
+  authorId: string;
+  authorName: string;
+  authorColor: string;
+  body: string;
+  createdAt: string;
+};
+
+export type CommentThread = {
+  id: string;
+  anchor: CommentAnchor;
+  authorId: string;
+  authorName: string;
+  authorColor: string;
+  body: string;
+  createdAt: string;
+  updatedAt: string;
+  resolved: boolean;
+  replies: CommentReply[];
+};

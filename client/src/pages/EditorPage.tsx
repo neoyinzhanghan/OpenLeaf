@@ -9,6 +9,7 @@ import {
   getConfig,
   getProject,
   getTree,
+  listProjectComments,
   mkdirProjectPath,
   pdfUrl,
   readProjectFile,
@@ -23,11 +24,13 @@ import { BinaryPane } from "../components/BinaryPane";
 import { CodeEditor } from "../components/CodeEditor";
 import { CompileLog } from "../components/CompileLog";
 import { FileTree } from "../components/FileTree";
+import { CommentsPanel, type CommentDraft } from "../components/CommentsPanel";
 import { HistoryPanel } from "../components/HistoryPanel";
 import { PdfViewer, type PdfHighlight } from "../components/PdfViewer";
 import { SplitPane } from "../components/SplitPane";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { extractCitations, extractLabels } from "../latex/completions";
+import type { CommentAnchor, CommentThread } from "../api/types";
 
 type Status = "idle" | "dirty" | "saving" | "compiling" | "ok" | "err";
 type EditMode = "text" | "binary" | "base64";
@@ -108,6 +111,9 @@ export function EditorPage() {
   const [forceTextPath, setForceTextPath] = useState<string | null>(null);
   const [forceBase64Path, setForceBase64Path] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [commentDraft, setCommentDraft] = useState<CommentDraft | null>(null);
+  const [commentThreads, setCommentThreads] = useState<CommentThread[]>([]);
   const [lastCommit, setLastCommit] = useState<string | null>(null);
   const compileLock = useRef(false);
   const workspaceRef = useRef<HTMLDivElement>(null);
@@ -181,6 +187,23 @@ export function EditorPage() {
     if (!collab.treeVersion) return;
     void refreshTree();
   }, [collab.treeVersion, refreshTree]);
+
+  // Keep gutter marks / toolbar count fresh (panel may be closed)
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await listProjectComments(id);
+        if (!cancelled) setCommentThreads(list);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id, collab.commentsVersion]);
 
   const labels = useMemo(() => {
     const textForLabels = collabText ? liveContent : content;
@@ -444,25 +467,86 @@ export function EditorPage() {
     window.setTimeout(() => setSyncToast((cur) => (cur === msg ? null : cur)), 2800);
   }, []);
 
+  const normalizeSynctexPath = useCallback(
+    (raw: string): string | null => {
+      let target = raw.replace(/\\/g, "/").replace(/^\.\//, "");
+      if (target.split("/").includes("..") || target.startsWith("/")) {
+        const marker = `/${id}/`;
+        const idx = `/${target}`.replace(/\/+/g, "/").lastIndexOf(marker);
+        if (idx >= 0) {
+          target = `/${target}`.replace(/\/+/g, "/").slice(idx + marker.length);
+        } else {
+          return null;
+        }
+      }
+      if (!target || target.split("/").includes("..")) return null;
+      return target;
+    },
+    [id],
+  );
+
+  const jumpToAnchor = useCallback(
+    (anchor: CommentAnchor) => {
+      const col = Math.max(1, anchor.column || 1);
+      const dest = {
+        path: anchor.file,
+        line: anchor.line,
+        column: col,
+        nonce: Date.now(),
+      };
+      pendingJumpRef.current = { path: anchor.file, line: dest.line, column: dest.column };
+      setForceTextPath(null);
+      setForceBase64Path(null);
+      setJumpTo(dest);
+      if (anchor.file !== activePathRef.current) {
+        setActivePath(anchor.file);
+      }
+
+      // Also scroll/highlight the compiled PDF at the same spot
+      void (async () => {
+        if (!id) return;
+        try {
+          if (anchor.pdfPage != null) {
+            setPdfHighlight({
+              page: anchor.pdfPage,
+              x: anchor.pdfX ?? 72,
+              y: anchor.pdfY ?? 72,
+              width: 120,
+              height: 18,
+              fullWidth: true,
+              label: `${anchor.file}:${anchor.line} → p.${anchor.pdfPage}`,
+              nonce: Date.now(),
+            });
+            return;
+          }
+          if (!anchor.file.endsWith(".tex") && !anchor.file.endsWith(".ltx")) return;
+          const hit = await synctexForward(id, anchor.file, anchor.line, col);
+          setPdfHighlight({
+            page: hit.page,
+            x: hit.x,
+            y: hit.y,
+            width: hit.width,
+            height: hit.height,
+            fullWidth: true,
+            label: `${anchor.file}:${anchor.line} → p.${hit.page}`,
+            nonce: Date.now(),
+          });
+        } catch {
+          /* PDF may be missing or SyncTeX stale — source jump still works */
+        }
+      })();
+    },
+    [id],
+  );
+
   const onReverseSearch = useCallback(
     async (page: number, x: number, y: number) => {
       if (!id) return;
       try {
         const hit = await synctexLookup(id, page, x, y);
-        // Guard against relocated-checkout SyncTeX paths (e.g. ../../../PaperFlow/.../sections/x.tex)
-        let target = hit.input.replace(/\\/g, "/").replace(/^\.\//, "");
-        if (target.split("/").includes("..") || target.startsWith("/")) {
-          const marker = `/${id}/`;
-          const idx = `/${target}`.replace(/\/+/g, "/").lastIndexOf(marker);
-          if (idx >= 0) {
-            target = `/${target}`.replace(/\/+/g, "/").slice(idx + marker.length);
-          } else {
-            showSyncToast("Stale SyncTeX paths — hit Recompile");
-            return;
-          }
-        }
-        if (!target || target.split("/").includes("..")) {
-          showSyncToast("No SyncTeX match — recompile?");
+        const target = normalizeSynctexPath(hit.input);
+        if (!target) {
+          showSyncToast("Stale SyncTeX paths — hit Recompile");
           return;
         }
         const dest = {
@@ -483,7 +567,69 @@ export function EditorPage() {
         showSyncToast("No SyncTeX match — recompile?");
       }
     },
-    [id, showSyncToast],
+    [id, normalizeSynctexPath, showSyncToast],
+  );
+
+  const onPdfComment = useCallback(
+    async (page: number, x: number, y: number) => {
+      if (!id) return;
+      try {
+        const hit = await synctexLookup(id, page, x, y);
+        const target = normalizeSynctexPath(hit.input);
+        if (!target) {
+          showSyncToast("Stale SyncTeX paths — hit Recompile");
+          return;
+        }
+        const anchor: CommentAnchor = {
+          file: target,
+          line: hit.line,
+          column: Math.max(1, hit.column || 1),
+          pdfPage: page,
+          pdfX: x,
+          pdfY: y,
+        };
+        jumpToAnchor(anchor);
+        setCommentDraft({ anchor, hint: `PDF p.${page}` });
+        setCommentsOpen(true);
+        showSyncToast(`Comment @ ${target}:${hit.line}`);
+      } catch {
+        showSyncToast("No SyncTeX match — recompile?");
+      }
+    },
+    [id, jumpToAnchor, normalizeSynctexPath, showSyncToast],
+  );
+
+  const onRequestComment = useCallback(
+    (sel: { line: number; column: number; endLine: number; endColumn: number; quote: string }) => {
+      if (!activePathRef.current) return;
+      const anchor: CommentAnchor = {
+        file: activePathRef.current,
+        line: sel.line,
+        column: sel.column,
+        endLine: sel.endLine,
+        endColumn: sel.endColumn,
+        quote: sel.quote || undefined,
+      };
+      setCommentDraft({ anchor, hint: sel.quote || undefined });
+      setCommentsOpen(true);
+    },
+    [],
+  );
+
+  const commentMarks = useMemo(() => {
+    if (!activePath) return [];
+    return commentThreads
+      .filter((t) => t.anchor.file === activePath)
+      .map((t) => ({
+        line: t.anchor.line,
+        color: t.authorColor,
+        resolved: t.resolved,
+      }));
+  }, [commentThreads, activePath]);
+
+  const openCommentCount = useMemo(
+    () => commentThreads.filter((t) => !t.resolved).length,
+    [commentThreads],
   );
 
   const onForwardSearch = useCallback(
@@ -746,6 +892,16 @@ export function EditorPage() {
           <button
             type="button"
             className="btn"
+            onClick={() => {
+              setHistoryOpen(false);
+              setCommentsOpen(true);
+            }}
+          >
+            Comments{openCommentCount ? ` (${openCommentCount})` : ""}
+          </button>
+          <button
+            type="button"
+            className="btn"
             onClick={() => void save()}
             disabled={!activePath || !fileReady || editMode === "binary" || status === "saving"}
           >
@@ -788,6 +944,18 @@ export function EditorPage() {
           window.setTimeout(() => setActivePath(path), 0);
           void refreshTree();
         }}
+      />
+
+      <CommentsPanel
+        projectId={id}
+        identityId={collab.identity?.id}
+        open={commentsOpen}
+        onClose={() => setCommentsOpen(false)}
+        commentsVersion={collab.commentsVersion}
+        draft={commentDraft}
+        onDraftConsumed={() => setCommentDraft(null)}
+        onJump={jumpToAnchor}
+        onThreadsChange={setCommentThreads}
       />
 
       <div className="workspace" ref={workspaceRef}>
@@ -847,7 +1015,7 @@ export function EditorPage() {
                             letterSpacing: 0,
                           }}
                         >
-                          Ctrl/Cmd+Click → PDF
+                          Ctrl/Cmd+Click → PDF · Ctrl/Cmd+Alt+M → comment
                         </span>
                       </div>
                       <CodeEditor
@@ -861,6 +1029,8 @@ export function EditorPage() {
                         onForwardSearch={(line, col) => void onForwardSearch(line, col)}
                         yText={collabText ? yText : null}
                         awareness={collabText ? collab.awareness : null}
+                        commentMarks={commentMarks}
+                        onRequestComment={onRequestComment}
                       />
                     </>
                   )}
@@ -870,6 +1040,7 @@ export function EditorPage() {
                 <PdfViewer
                   url={pdfBust != null ? pdfUrl(id, pdfBust) : null}
                   onReverseSearch={onReverseSearch}
+                  onCommentAt={(page, x, y) => void onPdfComment(page, x, y)}
                   highlight={pdfHighlight}
                 />
               }

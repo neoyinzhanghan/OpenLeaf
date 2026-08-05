@@ -1,6 +1,5 @@
 import Editor, { type BeforeMount, type OnMount } from "@monaco-editor/react";
 import { useEffect, useRef, useState } from "react";
-import * as monaco from "monaco-editor";
 import { editor as monacoEditor, type editor } from "monaco-editor";
 import type { Awareness } from "y-protocols/awareness";
 import type * as Y from "yjs";
@@ -23,6 +22,20 @@ export type EditorJumpTarget = {
   nonce?: number;
 };
 
+export type CommentMark = {
+  line: number;
+  color: string;
+  resolved?: boolean;
+};
+
+export type CommentSelection = {
+  line: number;
+  column: number;
+  endLine: number;
+  endColumn: number;
+  quote: string;
+};
+
 type Props = {
   path: string | null;
   /** Controlled mode (binary/base64 or fallback). Ignored when yText is set. */
@@ -36,6 +49,10 @@ type Props = {
   /** Collaborative binding */
   yText?: Y.Text | null;
   awareness?: Awareness | null;
+  /** Gutter markers for comment threads on this file */
+  commentMarks?: CommentMark[];
+  /** Cmd/Ctrl+Alt+M or selection helper — open compose for current selection */
+  onRequestComment?: (sel: CommentSelection) => void;
 };
 
 function languageFor(path: string | null): string {
@@ -83,13 +100,18 @@ export function CodeEditor({
   onForwardSearch,
   yText = null,
   awareness = null,
+  commentMarks = [],
+  onRequestComment,
 }: Props) {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof import("monaco-editor") | null>(null);
   const decoRef = useRef<string[]>([]);
+  const commentDecoRef = useRef<string[]>([]);
   const decoTimerRef = useRef<number | null>(null);
   const forwardRef = useRef(onForwardSearch);
   forwardRef.current = onForwardSearch;
+  const commentReqRef = useRef(onRequestComment);
+  commentReqRef.current = onRequestComment;
   const saveRef = useRef(onSave);
   saveRef.current = onSave;
   const citationsRef = useRef(citations);
@@ -172,6 +194,19 @@ export function CodeEditor({
       const pos = ed.getPosition();
       if (pos && forwardRef.current) forwardRef.current(pos.lineNumber, pos.column);
     });
+    ed.addCommand(monacoApi.KeyMod.CtrlCmd | monacoApi.KeyMod.Alt | monacoApi.KeyCode.KeyM, () => {
+      const model = ed.getModel();
+      const sel = ed.getSelection();
+      if (!model || !sel || !commentReqRef.current) return;
+      const quote = model.getValueInRange(sel).trim().slice(0, 200);
+      commentReqRef.current({
+        line: sel.startLineNumber,
+        column: sel.startColumn,
+        endLine: sel.endLineNumber,
+        endColumn: sel.endColumn,
+        quote,
+      });
+    });
 
     ed.onMouseDown((e) => {
       if (!e.event.ctrlKey && !e.event.metaKey) return;
@@ -181,6 +216,38 @@ export function CodeEditor({
       forwardRef.current(e.target.position.lineNumber, e.target.position.column);
     });
   };
+
+  // Comment gutter marks
+  useEffect(() => {
+    const ed = editorRef.current;
+    if (!ed || !editorReady) return;
+    const marks = commentMarks.filter((m) => m.line >= 1);
+    commentDecoRef.current = ed.deltaDecorations(
+      commentDecoRef.current,
+      marks.map((m) => ({
+        range: {
+          startLineNumber: m.line,
+          startColumn: 1,
+          endLineNumber: m.line,
+          endColumn: 1,
+        },
+        options: {
+          isWholeLine: false,
+          linesDecorationsClassName: m.resolved
+            ? "comment-line-glyph resolved"
+            : "comment-line-glyph",
+          overviewRuler: {
+            color: m.resolved ? "#94A3B8" : m.color || "#0F766E",
+            position: monacoEditor.OverviewRulerLane.Left,
+          },
+          minimap: {
+            color: m.resolved ? "#94A3B8" : m.color || "#0F766E",
+            position: monacoEditor.MinimapPosition.Inline,
+          },
+        },
+      })),
+    );
+  }, [commentMarks, editorReady, path]);
 
   // MonacoBinding for collaborative text — one model URI per project path
   useEffect(() => {

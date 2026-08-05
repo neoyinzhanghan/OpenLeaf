@@ -22,6 +22,7 @@ For human setup and usage, see [README.md](README.md).
 | `projects/<id>/metrics.tex` | Optional shared numbers as LaTeX macros (`\input{metrics}` in `main.tex`) |
 | `projects/<id>/misc/` | Notes, drafts, and other non-compiled material |
 | `projects/<id>/openleaf.json` | `mainFile`, `engine`, `identities[]` |
+| `projects/<id>/comments.json` | Review threads (author, file:line, replies); git-tracked |
 
 ## Conventions
 

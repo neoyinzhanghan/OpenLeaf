@@ -85,6 +85,7 @@ Then open [http://127.0.0.1:8787](http://127.0.0.1:8787) (API serves the built U
 | **You** dropdown | Pick your collab identity for this project (from `openleaf.json`) |
 | Theme toggle | Light / dark (default is dark; preference stored in the browser) |
 | **History** | Per-project git snapshots; restore a previous save |
+| **Comments** | Source-anchored review threads (`comments.json`); Shift+click PDF or Ctrl/Cmd+Alt+M in source |
 | **Save & sync** | Flush live collab edits to disk and commit a backup |
 | **Recompile** | Run the TeX engine |
 | **PDF** / **ZIP** | Download outputs |
@@ -108,6 +109,7 @@ projects/my-paper/
   metrics.tex       # optional shared number macros (\input{metrics})
   references.bib
   openleaf.json     # mainFile, engine, identities[]
+  comments.json     # review threads (author, file:line, replies); git-tracked
   sections/         # \input{sections/...} from main.tex
   figures/
   assets/

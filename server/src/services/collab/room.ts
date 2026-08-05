@@ -111,6 +111,11 @@ export class ProjectRoom {
     this.meta = this.doc.getMap(META_MAP);
     this.updateHandler = (_update, origin) => {
       if (origin === "disk-seed" || origin === "disk-flush" || origin === "tree-sync") return;
+      // comments.json lives on disk; only bump meta for live clients
+      if (origin === "comments") {
+        this.schedulePersist();
+        return;
+      }
       this.scheduleFlush();
       this.schedulePersist();
     };
@@ -374,6 +379,13 @@ export class ProjectRoom {
     this.schedulePersist();
   }
 
+  /** Notify connected clients that comments.json changed (live panel refresh). */
+  bumpCommentsVersion(): void {
+    this.doc.transact(() => {
+      this.meta.set("commentsVersion", Date.now());
+    }, "comments");
+  }
+
   private removePathPrefix(prefix: string): void {
     const toDelete: string[] = [];
     this.files.forEach((_t, p) => {
@@ -491,6 +503,11 @@ export function notifyProjectTreeChange(
 ): void {
   const room = rooms.get(projectId);
   if (room) room.notifyTreeChange(event);
+}
+
+export function notifyProjectCommentsChanged(projectId: string): void {
+  const room = rooms.get(projectId);
+  if (room) room.bumpCommentsVersion();
 }
 
 export async function releaseRoomIfEmpty(projectId: string): Promise<void> {
