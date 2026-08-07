@@ -12,7 +12,8 @@ function lanIp(): string | undefined {
 }
 
 const ip = lanIp();
-const port = 5173;
+const port = Number(process.env.OPENLEAF_CLIENT_PORT || 5173);
+const apiPort = Number(process.env.OPENLEAF_PORT || 8787);
 
 export default defineConfig({
   plugins: [react()],
@@ -23,11 +24,11 @@ export default defineConfig({
     open: ip ? `http://${ip}:${port}/` : true,
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:8787",
+        target: `http://127.0.0.1:${apiPort}`,
         changeOrigin: true,
       },
       "/collab": {
-        target: "ws://127.0.0.1:8787",
+        target: `ws://127.0.0.1:${apiPort}`,
         ws: true,
         changeOrigin: true,
       },

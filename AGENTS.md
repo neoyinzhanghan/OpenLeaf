@@ -22,6 +22,7 @@ For human setup and usage, see [README.md](README.md).
 | `projects/<id>/metrics.tex` | Optional shared numbers as LaTeX macros (`\input{metrics}` in `main.tex`) |
 | `projects/<id>/misc/` | Notes, drafts, and other non-compiled material |
 | `projects/<id>/openleaf.json` | `mainFile`, `engine`, `identities[]` |
+| `projects/<id>/comments.json` | Review threads (author, file:line, replies); git-tracked |
 
 ## Conventions
 
@@ -37,8 +38,9 @@ For human setup and usage, see [README.md](README.md).
 ## Config knobs
 
 - File: `config/default.json` / `config/local.json`
-- Env: `OPENLEAF_HOST`, `OPENLEAF_PORT`, `OPENLEAF_PROJECTS_ROOT`, `OPENLEAF_ENGINE`
+- Env: `OPENLEAF_HOST`, `OPENLEAF_PORT`, `OPENLEAF_CLIENT_PORT` (Vite UI in dev), `OPENLEAF_PROJECTS_ROOT` (relative or absolute), `OPENLEAF_ENGINE`
 - HTTP: `GET/PATCH /api/config`
+- Dev proxy: `client/vite.config.ts` reads `OPENLEAF_PORT` / `OPENLEAF_CLIENT_PORT` (no manual proxy edit needed)
 - Identities (collab): **per project** in `projects/<id>/openleaf.json` → `identities[]`. Seeded from `defaultIdentities` in app config on create. `GET/PUT /api/projects/:id/identities`. UI toggles among that project's presets (stored per-project in localStorage).
 - Collab: WebSocket `/collab/<project>?identity=<id>`; Yjs CRDT flushed to disk; snapshot under `projects/<id>/.openleaf/collab/`
 - Git backups: each project is its own git repo; auto-commit on explicit save / FS mutations (`.openleaf/` ignored). Background CRDT flush does **not** commit. `GET /api/projects/:id/history`, `POST .../history/restore`. Toggle via `git.enabled`.

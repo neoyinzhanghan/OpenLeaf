@@ -84,7 +84,12 @@ export async function ensureProjectGit(id: string): Promise<void> {
   const root = projectDir(id);
   const gitDir = path.join(root, ".git");
   if (!fsSync.existsSync(gitDir)) {
-    await runGit(id, ["init"]);
+    // Prefer `main` (portable across Git < 2.28 that lack `git init -b`).
+    const init = await runGit(id, ["init", "-b", "main"], { allowFailure: true });
+    if (init.code !== 0) {
+      await runGit(id, ["init"]);
+      await runGit(id, ["symbolic-ref", "HEAD", "refs/heads/main"], { allowFailure: true });
+    }
     await runGit(id, ["config", "core.autocrlf", "false"], { allowFailure: true });
   }
 
