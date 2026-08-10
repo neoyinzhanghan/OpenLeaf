@@ -38,8 +38,21 @@ export function PdfViewer({ url, onReverseSearch, onCommentAt, highlight }: Prop
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [flash, setFlash] = useState<PdfHighlight | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
   /** Preserve scroll across intentional reloads (e.g. zoom) */
   const scrollRestoreRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        setFullscreen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [fullscreen]);
 
   useEffect(() => {
     if (!highlight) return;
@@ -187,7 +200,10 @@ export function PdfViewer({ url, onReverseSearch, onCommentAt, highlight }: Prop
   }, [flash, scale, pageCount, loading]);
 
   return (
-    <div className="pane pdf-pane" style={{ height: "100%" }}>
+    <div
+      className={`pane pdf-pane${fullscreen ? " pdf-pane--fullscreen" : ""}`}
+      style={{ height: "100%" }}
+    >
       <div className="pdf-toolbar">
         <span className="pane-title" style={{ padding: 0 }}>
           PDF
@@ -204,6 +220,16 @@ export function PdfViewer({ url, onReverseSearch, onCommentAt, highlight }: Prop
           +
         </button>
         {pageCount > 0 && <span className="status-pill">{pageCount} pages</span>}
+        <button
+          type="button"
+          className="btn btn-ghost"
+          onClick={() => setFullscreen((v) => !v)}
+          title={fullscreen ? "Exit full screen (Esc)" : "Full screen"}
+          aria-pressed={fullscreen}
+          aria-label={fullscreen ? "Exit full screen" : "Full screen"}
+        >
+          {fullscreen ? "Exit full screen" : "Full screen"}
+        </button>
       </div>
       {!url && <div className="empty-hint">Compile to preview the PDF.</div>}
       {loading && <div className="empty-hint">Loading PDF…</div>}
