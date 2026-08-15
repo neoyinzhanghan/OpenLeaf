@@ -12,6 +12,7 @@ import {
   writeFile,
   type TreeNode,
 } from "../projectFs.js";
+import { ProjectDiskWatch } from "./diskWatch.js";
 
 const FILES_MAP = "files";
 const META_MAP = "meta";
@@ -100,8 +101,10 @@ export class ProjectRoom {
   private seeding = new Map<string, Promise<Y.Text>>();
   private ready: Promise<void>;
   private destroyed = false;
+  private closing = false;
   private readonly flushMutex = createMutex();
   private updateHandler: (update: Uint8Array, origin: unknown) => void;
+  private diskWatch: ProjectDiskWatch | null = null;
 
   constructor(projectId: string, generation: number) {
     this.projectId = projectId;
@@ -135,6 +138,12 @@ export class ProjectRoom {
       }
     });
     this.ready = this.hydrate();
+    void this.ready.then(
+      () => {
+        this.startDiskWatch();
+      },
+      () => undefined,
+    );
   }
 
   async whenReady(): Promise<void> {
@@ -237,6 +246,96 @@ export class ProjectRoom {
       this.meta.set("treeEvent", { type: "tree-changed", op: "bump", at: Date.now() });
     }, "disk-seed");
     this.dirtyPaths.clear();
+  }
+
+  /**
+   * Apply external working-tree edits to the live CRDT.
+   * Skips paths with unflushed editor edits so typing is not overwritten.
+   * No-ops when disk already matches Y.Text (our own flush echo).
+   */
+  async ingestDiskPaths(relativePaths: string[]): Promise<void> {
+    return this.flushMutex.run(async () => {
+      await this.whenReady();
+      if (this.destroyed || relativePaths.length === 0) return;
+
+      const unique = [...new Set(relativePaths.filter((p) => p && !p.includes("\0")))];
+      const treeChanged: string[] = [];
+      let commentsChanged = false;
+
+      this.doc.transact(() => {
+        for (const filePath of unique) {
+          if (filePath.split("/").some((p) => p === ".git" || p === ".openleaf" || p === "node_modules")) {
+            continue;
+          }
+          let full: string;
+          try {
+            full = resolveProjectPath(this.projectId, filePath);
+          } catch {
+            continue;
+          }
+
+          let st: fsSync.Stats | null = null;
+          try {
+            st = fsSync.statSync(full);
+          } catch {
+            st = null;
+          }
+
+          if (!st) {
+            if (this.dirtyPaths.has(filePath)) continue;
+            if (this.files.has(filePath) || this.hasPathPrefix(filePath)) {
+              this.removePathPrefix(filePath);
+              treeChanged.push(filePath);
+            }
+            continue;
+          }
+          if (st.isDirectory()) {
+            treeChanged.push(filePath);
+            continue;
+          }
+          if (filePath === "comments.json") commentsChanged = true;
+          // Unflushed collab edits win over a concurrent disk write to the same path.
+          if (this.dirtyPaths.has(filePath)) continue;
+
+          if (!isCollabTextFile(this.projectId, filePath)) {
+            if (this.files.has(filePath)) {
+              this.files.delete(filePath);
+              this.dirtyPaths.delete(filePath);
+            }
+            treeChanged.push(filePath);
+            continue;
+          }
+
+          const existing = this.files.get(filePath);
+          let content = "";
+          try {
+            content = fsSync.readFileSync(full, "utf8");
+          } catch {
+            continue;
+          }
+          if (existing && existing.toString() === content) continue;
+          const isNew = !existing;
+          this.applyDiskContent(filePath);
+          this.dirtyPaths.delete(filePath);
+          // In-place Y.Text edits sync over the collab channel; only bump the tree
+          // when the set of files changed (or a non-collab/binary path did).
+          if (isNew) treeChanged.push(filePath);
+        }
+
+        if (treeChanged.length > 0) {
+          this.meta.set("treeVersion", Date.now());
+          this.meta.set("treeEvent", {
+            type: "tree-changed",
+            op: "bump",
+            paths: treeChanged,
+            at: Date.now(),
+          });
+        }
+        if (commentsChanged) {
+          this.meta.set("commentsVersion", Date.now());
+        }
+      }, "disk-seed");
+    });
   }
 
   /** Sync one path from disk into the CRDT (used after REST writes). */
@@ -386,6 +485,24 @@ export class ProjectRoom {
     }, "comments");
   }
 
+  private startDiskWatch(): void {
+    if (this.destroyed || this.closing || this.diskWatch) return;
+    this.diskWatch = new ProjectDiskWatch(this.projectId, projectDir(this.projectId), (paths) => {
+      void this.ingestDiskPaths(paths).catch((err) =>
+        console.error("[collab] disk ingest failed", err),
+      );
+    });
+    this.diskWatch.start();
+  }
+
+  private hasPathPrefix(prefix: string): boolean {
+    let found = false;
+    this.files.forEach((_t, p) => {
+      if (p === prefix || p.startsWith(prefix + "/")) found = true;
+    });
+    return found;
+  }
+
   private removePathPrefix(prefix: string): void {
     const toDelete: string[] = [];
     this.files.forEach((_t, p) => {
@@ -416,7 +533,10 @@ export class ProjectRoom {
   }
 
   async destroy(): Promise<void> {
-    if (this.destroyed) return;
+    if (this.destroyed || this.closing) return;
+    this.closing = true;
+    this.diskWatch?.stop();
+    this.diskWatch = null;
     if (this.flushTimer) clearTimeout(this.flushTimer);
     if (this.persistTimer) clearTimeout(this.persistTimer);
     try {

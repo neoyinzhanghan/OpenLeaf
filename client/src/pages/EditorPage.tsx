@@ -220,6 +220,38 @@ export function EditorPage() {
     void refreshTree();
   }, [collab.treeVersion, refreshTree]);
 
+  // Binary / oversized files are not in the CRDT — reload the open file from disk
+  // when the watcher reports that path changed. Collaborative text updates live.
+  useEffect(() => {
+    if (!id || !activePath || collabText || dirty) return;
+    if (!collab.treeEventPaths.includes(activePath)) return;
+    let cancelled = false;
+    const pathBeingLoaded = activePath;
+    (async () => {
+      try {
+        const forceText = forceTextPath === pathBeingLoaded;
+        const file = await readProjectFile(id, pathBeingLoaded, { forceText });
+        if (cancelled || activePathRef.current !== pathBeingLoaded) return;
+        if (!file.text && !forceText) {
+          setEditMode("binary");
+          setBinaryMeta({
+            contentType: file.contentType,
+            size: file.size,
+            base64: file.content,
+          });
+          return;
+        }
+        setContent(file.content);
+        setSavedContent(file.content);
+      } catch {
+        /* ignore — the next explicit open will surface the error */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id, activePath, collab.treeEventPaths, collabText, dirty, forceTextPath]);
+
   // Keep gutter marks / toolbar count fresh (panel may be closed)
   useEffect(() => {
     if (!id) return;
