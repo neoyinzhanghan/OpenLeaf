@@ -25,6 +25,14 @@ export type SynctexForwardHit = {
   height: number;
 };
 
+export type SynctexBox = {
+  page: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
 function isProjectSource(input: string): boolean {
   if (!input) return false;
   if (input.includes("texmf")) return false;
@@ -106,10 +114,23 @@ function nodeScore(
   return score;
 }
 
+type SynctexNode = {
+  tag: number;
+  line: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** TeX depth below baseline (hbox only) */
+  d: number;
+  /** '(' hbox, 'x' current-point, 'h' horizontal */
+  kind: string;
+};
+
 type ParsedSynctex = {
   inputs: Map<number, string>;
   /** page → nodes */
-  pages: Map<number, Array<{ tag: number; line: number; x: number; y: number; w: number; h: number }>>;
+  pages: Map<number, SynctexNode[]>;
 };
 
 function parseSynctexFile(synctexGz: string, cwd: string): ParsedSynctex | null {
@@ -120,30 +141,36 @@ function parseSynctexFile(synctexGz: string, cwd: string): ParsedSynctex | null 
       inputs.set(Number(m[1]), normalizeRel(cwd, m[2]));
     }
 
-    const pages = new Map<number, Array<{ tag: number; line: number; x: number; y: number; w: number; h: number }>>();
+    const pages = new Map<number, SynctexNode[]>();
     const sheetRe = /(?:^|\n)\{(\d+)(?:\n|$)/g;
     let sheetMatch: RegExpExecArray | null;
     while ((sheetMatch = sheetRe.exec(text))) {
       const page = Number(sheetMatch[1]);
       const start = sheetMatch.index + sheetMatch[0].length;
       const rest = text.slice(start);
-      const endRel = rest.search(/\n\}(?:\n|$)/);
-      const slice = endRel >= 0 ? rest.slice(0, endRel) : rest.slice(0, 50000);
-      const nodes: Array<{ tag: number; line: number; x: number; y: number; w: number; h: number }> = [];
+      // pdfTeX closes a sheet with "}N" (N = page), not a bare "}".
+      let endRel = rest.search(new RegExp(`\\n\\}${page}(?:\\n|$)`));
+      if (endRel < 0) endRel = rest.search(/\n\}(?:\n|$)/);
+      const slice = endRel >= 0 ? rest.slice(0, endRel) : rest.slice(0, 20_000);
+      const nodes: SynctexNode[] = [];
       // '(' hbox, 'x' current-point, 'h' horizontal — all carry tag,line:x,y
-      for (const m of slice.matchAll(/(?:^|\n)[xh(]([-\d]+),(\d+):([-\d]+),([-\d]+)(?::([-\d]+),([-\d]+)(?:,[-\d]+)?)?/g)) {
-        const tag = Number(m[1]);
-        const line = Number(m[2]);
-        const x = Number(m[3]) / 65536;
-        const y = Number(m[4]) / 65536;
-        const w = m[5] != null ? Number(m[5]) / 65536 : 12;
-        const h = m[6] != null ? Number(m[6]) / 65536 : 10;
+      for (const m of slice.matchAll(
+        /(?:^|\n)([xh(])([-\d]+),(\d+):([-\d]+),([-\d]+)(?::([-\d]+),([-\d]+)(?:,([-\d]+))?)?/g,
+      )) {
+        const kind = m[1]!;
+        const tag = Number(m[2]);
+        const line = Number(m[3]);
+        const x = Number(m[4]) / 65536;
+        const y = Number(m[5]) / 65536;
+        const w = m[6] != null ? Number(m[6]) / 65536 : 12;
+        const h = m[7] != null ? Number(m[7]) / 65536 : 10;
+        const d = m[8] != null ? Number(m[8]) / 65536 : 0;
         if (!line || !inputs.has(tag)) continue;
         const input = inputs.get(tag)!;
         if (!isProjectSource(input)) continue;
         // Skip empty glue-like boxes; keep current-point (default w/h) and real hboxes
-        if (m[5] != null && w <= 0 && h <= 0) continue;
-        nodes.push({ tag, line, x, y, w, h });
+        if (m[6] != null && w <= 0 && h <= 0) continue;
+        nodes.push({ tag, line, x, y, w, h, d, kind });
       }
       pages.set(page, nodes);
     }
@@ -279,6 +306,175 @@ export async function forwardSynctex(
   }
 
   return null;
+}
+
+function rectContains(outer: SynctexBox, inner: SynctexBox, slop = 1.25): boolean {
+  if (outer.page !== inner.page) return false;
+  return (
+    inner.x >= outer.x - slop &&
+    inner.y >= outer.y - slop &&
+    inner.x + inner.width <= outer.x + outer.width + slop &&
+    inner.y + inner.height <= outer.y + outer.height + slop &&
+    inner.width * inner.height < outer.width * outer.height - 4
+  );
+}
+
+function dropContainedBoxes(boxes: SynctexBox[]): SynctexBox[] {
+  return boxes.filter((a, i) => !boxes.some((b, j) => i !== j && rectContains(b, a)));
+}
+
+/**
+ * Map many source file:line sets onto PDF boxes in one SyncTeX parse.
+ * Uses real hboxes only: SyncTeX (x,y) is the baseline, height is above it, depth below.
+ */
+export async function boxesForFileLines(
+  id: string,
+  fileLines: Map<string, Set<number> | "all">,
+): Promise<SynctexBox[]> {
+  if (fileLines.size === 0) return [];
+  const cfg = await readProjectConfig(id);
+  const synctex = synctexPathAbs(id, cfg.mainFile);
+  const pdf = pdfPathAbs(id, cfg.mainFile);
+  if (!fs.existsSync(synctex) || !fs.existsSync(pdf)) return [];
+
+  const cwd = projectDir(id);
+  const parsed = parseSynctexFile(synctex, cwd);
+  if (!parsed) return [];
+
+  const wanted = new Map<string, Set<number> | "all">();
+  for (const [file, lines] of fileLines) {
+    wanted.set(file.replace(/\\/g, "/").replace(/^\.\//, "").toLowerCase(), lines);
+  }
+
+  const specFor = (input: string): Set<number> | "all" | undefined => {
+    const key = input.replace(/\\/g, "/").replace(/^\.\//, "").toLowerCase();
+    const direct = wanted.get(key);
+    if (direct) return direct;
+    for (const [file, spec] of wanted) {
+      if (pathsMatch(input, file, false)) return spec;
+    }
+    return undefined;
+  };
+
+  const lineWanted = (input: string, line: number): boolean => {
+    const spec = specFor(input);
+    if (!spec) return false;
+    if (spec === "all") return true;
+    return spec.has(line) || spec.has(line - 1) || spec.has(line + 1);
+  };
+
+  const raw: Array<SynctexBox & { input: string; line: number; yq: number }> = [];
+  for (const [page, nodes] of parsed.pages) {
+    for (const n of nodes) {
+      if (n.kind !== "(" || n.line <= 0) continue;
+      const input = parsed.inputs.get(n.tag);
+      if (!input || !lineWanted(input, n.line)) continue;
+      const boxH = n.h + n.d;
+      // One text line; skip glue, superscripts, and multi-line containers.
+      if (n.w < 20 || boxH < 4 || boxH > 22) continue;
+      const top = n.y - n.h;
+      if (top < 32 || top > 730) continue;
+      raw.push({
+        page,
+        x: n.x,
+        y: Math.max(0, top - 0.6),
+        width: n.w,
+        height: boxH + 1.4,
+        input,
+        line: n.line,
+        yq: Math.round(top),
+      });
+    }
+  }
+
+  return collapseOverlappingBoxes(dropContainedBoxes(dedupeBoxes(dropReusedFormBoxes(raw))));
+}
+
+/** Form XObject reuse copies the same hbox onto other pages — keep real shipouts, drop copies. */
+function dropReusedFormBoxes(
+  boxes: Array<SynctexBox & { input: string; line: number; yq: number }>,
+): SynctexBox[] {
+  const byLine = new Map<string, Array<SynctexBox & { input: string; line: number; yq: number }>>();
+  for (const b of boxes) {
+    const key = `${b.input}:${b.line}`;
+    const list = byLine.get(key) ?? [];
+    list.push(b);
+    byLine.set(key, list);
+  }
+
+  const keep = new Set<SynctexBox & { input: string; line: number; yq: number }>();
+  for (const group of byLine.values()) {
+    const byPage = new Map<number, typeof group>();
+    for (const b of group) {
+      const list = byPage.get(b.page) ?? [];
+      list.push(b);
+      byPage.set(b.page, list);
+    }
+    const pages = [...byPage.entries()].sort((a, b) => b[1].length - a[1].length || a[0] - b[0]);
+    const keptSigs: number[][] = [];
+    for (const [, list] of pages) {
+      const sig = [...new Set(list.map((b) => b.yq))].sort((a, b) => a - b);
+      const reused = keptSigs.some((prev) => ySignatureOverlap(prev, sig) > 0.55);
+      if (reused) continue;
+      keptSigs.push(sig);
+      for (const b of list) keep.add(b);
+    }
+  }
+
+  return [...keep].map(({ page, x, y, width, height }) => ({ page, x, y, width, height }));
+}
+
+function ySignatureOverlap(a: number[], b: number[]): number {
+  if (a.length === 0 || b.length === 0) return 0;
+  const bs = new Set(b);
+  let n = 0;
+  for (const y of a) {
+    if (bs.has(y) || bs.has(y - 1) || bs.has(y + 1)) n += 1;
+  }
+  return n / Math.min(a.length, b.length);
+}
+
+/** Two SyncTeX grids on one page (slightly offset) → one bar per visual line. */
+function collapseOverlappingBoxes(boxes: SynctexBox[]): SynctexBox[] {
+  const byPage = new Map<number, SynctexBox[]>();
+  for (const b of boxes) {
+    const list = byPage.get(b.page) ?? [];
+    list.push(b);
+    byPage.set(b.page, list);
+  }
+  const out: SynctexBox[] = [];
+  for (const [page, list] of byPage) {
+    const sorted = [...list].sort((a, b) => a.y - b.y || a.x - b.x);
+    const merged: SynctexBox[] = [];
+    for (const b of sorted) {
+      const prev = merged[merged.length - 1];
+      if (
+        prev &&
+        Math.abs(b.y - prev.y) < 5.5 &&
+        !(b.x > prev.x + prev.width + 8 || prev.x > b.x + b.width + 8)
+      ) {
+        const x0 = Math.min(prev.x, b.x);
+        const y0 = Math.min(prev.y, b.y);
+        const x1 = Math.max(prev.x + prev.width, b.x + b.width);
+        const y1 = Math.max(prev.y + prev.height, b.y + b.height);
+        merged[merged.length - 1] = { page, x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+      } else {
+        merged.push({ ...b });
+      }
+    }
+    out.push(...merged);
+  }
+  return out;
+}
+
+function dedupeBoxes(boxes: SynctexBox[]): SynctexBox[] {
+  const seen = new Set<string>();
+  return boxes.filter((b) => {
+    const k = `${b.page}:${b.x.toFixed(1)}:${b.y.toFixed(1)}:${b.width.toFixed(1)}:${b.height.toFixed(1)}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
 }
 
 /** Reverse: PDF → source via `synctex edit` */

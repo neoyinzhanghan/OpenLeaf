@@ -84,7 +84,7 @@ Then open [http://127.0.0.1:8787](http://127.0.0.1:8787) (API serves the built U
 |---------|----------------|
 | **You** dropdown | Pick your collab identity for this project (from `openleaf.json`) |
 | Theme toggle | Light / dark (default is dark; preference stored in the browser) |
-| **History** | Per-project git snapshots; restore a previous save |
+| **History** | Per-project git snapshots; restore a previous save; **Highlight since** marks later additions on the PDF |
 | **Comments** | Source-anchored review threads (`comments.json`); Shift+click PDF or Ctrl/Cmd+Alt+M in source |
 | **Save & sync** | Flush live collab edits to disk and commit a backup |
 | **Recompile** | Run the TeX engine |
@@ -100,6 +100,8 @@ Then open [http://127.0.0.1:8787](http://127.0.0.1:8787) (API serves the built U
 ### Version history
 
 Each project gets its own git repo under `projects/<id>/` (ignored by the OpenLeaf repo’s `.gitignore`). Explicit saves and file-tree mutations auto-commit; background collab flushes do not. Use **History** in the UI to browse and restore. Disable with `"git": { "enabled": false }` in config.
+
+**Highlight additions** (PDF toolbar) diffs manuscript `.tex` files against a chosen snapshot and paints those added lines on the preview via SyncTeX — the same yellow you’d get from `\hl{...}`, without wrapping source. Toggle off for a clean view; the downloaded PDF is unchanged. Pick a baseline from the dropdown or **Highlight since** in History. `misc/` notes are ignored. Recompile after edits so SyncTeX boxes match the current PDF.
 
 ## Project layout
 
@@ -150,7 +152,7 @@ Then open `http://127.0.0.1:5176`.
 - Monaco LaTeX editing with SyncTeX (click PDF → jump to source)
 - Auto-compile on save, compile logs, PDF.js preview, resizable panes
 - Realtime multi-user editing (Yjs) with preset identities
-- Per-project git backups and History UI
+- Per-project git backups, History UI, and PDF overlays for manuscript lines added since a snapshot
 - Light / dark theme
 - Download PDF or project ZIP (excludes `.openleaf/`)
 

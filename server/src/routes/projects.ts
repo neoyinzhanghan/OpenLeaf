@@ -42,6 +42,7 @@ import {
   writeFile,
   writeProjectConfig,
 } from "../services/projectFs.js";
+import { computeDiffHighlights } from "../services/diffHighlights.js";
 import { forwardSynctex, reverseSynctex } from "../services/synctex.js";
 import { streamProjectZip } from "../services/zip.js";
 import { IdentitySchema } from "../config.js";
@@ -356,6 +357,16 @@ projectsRouter.post("/:id/collab/ensure", async (req, res) => {
     const room = await getOrCreateRoom(req.params.id);
     await room.ensureFile(body.path);
     res.json({ ok: true, path: body.path });
+  } catch (err) {
+    res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
+projectsRouter.get("/:id/diff-highlights", async (req, res) => {
+  try {
+    const since = typeof req.query.since === "string" ? req.query.since : undefined;
+    const result = await computeDiffHighlights(req.params.id, since);
+    res.json(result);
   } catch (err) {
     res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed" });
   }

@@ -7,9 +7,11 @@ import {
   deleteProjectPath,
   downloadUrl,
   getConfig,
+  getDiffHighlights,
   getProject,
   getTree,
   listProjectComments,
+  listProjectHistory,
   mkdirProjectPath,
   pdfUrl,
   readProjectFile,
@@ -18,7 +20,7 @@ import {
   synctexLookup,
   writeProjectFile,
 } from "../api/client";
-import type { AppConfig, ProjectMeta, TreeNode } from "../api/types";
+import type { AppConfig, GitCommitInfo, ProjectMeta, TreeNode } from "../api/types";
 import { flushCollab, useProjectCollab } from "../collab/useProjectCollab";
 import { BinaryPane } from "../components/BinaryPane";
 import { CodeEditor } from "../components/CodeEditor";
@@ -26,7 +28,7 @@ import { CompileLog } from "../components/CompileLog";
 import { FileTree } from "../components/FileTree";
 import { CommentsPanel, type CommentDraft } from "../components/CommentsPanel";
 import { HistoryPanel } from "../components/HistoryPanel";
-import { PdfViewer, type PdfHighlight } from "../components/PdfViewer";
+import { PdfViewer, type PdfDiffOverlay, type PdfHighlight } from "../components/PdfViewer";
 import { SplitPane } from "../components/SplitPane";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { extractCitations, extractLabels } from "../latex/completions";
@@ -53,6 +55,28 @@ function parentDir(filePath: string | null): string {
 function joinPath(dir: string, name: string): string {
   const clean = name.replace(/^\/+/, "").replace(/\\/g, "/");
   return dir ? `${dir}/${clean}` : clean;
+}
+
+function diffHighlightKey(projectId: string): string {
+  return `openleaf.diffHighlight.${projectId}`;
+}
+
+function persistDiffHighlight(projectId: string, enabled: boolean, since: string): void {
+  localStorage.setItem(diffHighlightKey(projectId), JSON.stringify({ enabled, since: since || null }));
+}
+
+function readDiffHighlightPref(projectId: string): { enabled: boolean; since: string } {
+  try {
+    const raw = localStorage.getItem(diffHighlightKey(projectId));
+    if (!raw) return { enabled: false, since: "" };
+    const pref = JSON.parse(raw) as { enabled?: boolean; since?: string | null };
+    return {
+      enabled: Boolean(pref.enabled),
+      since: typeof pref.since === "string" ? pref.since : "",
+    };
+  } catch {
+    return { enabled: false, since: "" };
+  }
 }
 
 async function fileToBase64(file: File): Promise<string> {
@@ -115,6 +139,14 @@ export function EditorPage() {
   const [commentDraft, setCommentDraft] = useState<CommentDraft | null>(null);
   const [commentThreads, setCommentThreads] = useState<CommentThread[]>([]);
   const [lastCommit, setLastCommit] = useState<string | null>(null);
+  const [diffOn, setDiffOn] = useState(false);
+  const [diffSince, setDiffSince] = useState("");
+  const [diffCommits, setDiffCommits] = useState<GitCommitInfo[]>([]);
+  const [diffBoxes, setDiffBoxes] = useState<PdfDiffOverlay[]>([]);
+  const [diffLines, setDiffLines] = useState<number | null>(null);
+  const [diffFiles, setDiffFiles] = useState<number | null>(null);
+  const [diffLoading, setDiffLoading] = useState(false);
+  const [diffWarning, setDiffWarning] = useState<string | null>(null);
   const compileLock = useRef(false);
   const workspaceRef = useRef<HTMLDivElement>(null);
   const activePathRef = useRef(activePath);
@@ -204,6 +236,95 @@ export function EditorPage() {
       cancelled = true;
     };
   }, [id, collab.commentsVersion]);
+
+  useEffect(() => {
+    if (!id) {
+      setDiffOn(false);
+      setDiffSince("");
+      return;
+    }
+    const pref = readDiffHighlightPref(id);
+    setDiffOn(pref.enabled);
+    setDiffSince(pref.since);
+  }, [id]);
+
+  useEffect(() => {
+    if (!id || !diffOn) {
+      setDiffCommits([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const commits = await listProjectHistory(id, 80);
+        if (cancelled) return;
+        setDiffCommits(commits);
+        if (commits.length === 0) return;
+        setDiffSince((cur) => {
+          if (cur && commits.some((c) => c.hash === cur || c.shortHash === cur)) return cur;
+          const oldest = commits[commits.length - 1]!;
+          persistDiffHighlight(id, true, oldest.hash);
+          return oldest.hash;
+        });
+      } catch {
+        if (!cancelled) setDiffCommits([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id, diffOn]);
+
+  useEffect(() => {
+    if (!id || !diffOn || !diffSince) {
+      setDiffBoxes([]);
+      setDiffLines(null);
+      setDiffFiles(null);
+      setDiffWarning(null);
+      setDiffLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setDiffLoading(true);
+    (async () => {
+      try {
+        const result = await getDiffHighlights(id, diffSince);
+        if (cancelled) return;
+        setDiffBoxes(result.boxes);
+        setDiffLines(result.lines);
+        setDiffFiles(result.files);
+        setDiffWarning(result.warning ?? null);
+      } catch (err) {
+        if (!cancelled) {
+          setDiffBoxes([]);
+          setDiffLines(null);
+          setDiffFiles(null);
+          setDiffWarning(err instanceof Error ? err.message : "Could not load additions");
+        }
+      } finally {
+        if (!cancelled) setDiffLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id, diffOn, diffSince, pdfBust]);
+
+  const onDiffEnabledChange = useCallback(
+    (on: boolean) => {
+      setDiffOn(on);
+      if (id) persistDiffHighlight(id, on, diffSince);
+    },
+    [id, diffSince],
+  );
+
+  const onDiffSinceChange = useCallback(
+    (hash: string) => {
+      setDiffSince(hash);
+      if (id) persistDiffHighlight(id, diffOn, hash);
+    },
+    [id, diffOn],
+  );
 
   const labels = useMemo(() => {
     const textForLabels = collabText ? liveContent : content;
@@ -466,6 +587,16 @@ export function EditorPage() {
     setSyncToast(msg);
     window.setTimeout(() => setSyncToast((cur) => (cur === msg ? null : cur)), 2800);
   }, []);
+
+  const onHighlightSinceCommit = useCallback(
+    (commit: GitCommitInfo) => {
+      setDiffOn(true);
+      setDiffSince(commit.hash);
+      if (id) persistDiffHighlight(id, true, commit.hash);
+      showSyncToast(`Highlighting additions since ${commit.shortHash}`);
+    },
+    [id, showSyncToast],
+  );
 
   const normalizeSynctexPath = useCallback(
     (raw: string): string | null => {
@@ -935,6 +1066,7 @@ export function EditorPage() {
         identityId={collab.identity?.id}
         open={historyOpen}
         onClose={() => setHistoryOpen(false)}
+        onHighlightSince={config?.git?.enabled === false ? undefined : onHighlightSinceCommit}
         onRestored={() => {
           setHistoryOpen(false);
           showSyncToast("Restored snapshot — reloading file");
@@ -1042,6 +1174,22 @@ export function EditorPage() {
                   onReverseSearch={onReverseSearch}
                   onCommentAt={(page, x, y) => void onPdfComment(page, x, y)}
                   highlight={pdfHighlight}
+                  overlays={diffOn ? diffBoxes : undefined}
+                  diffHighlight={
+                    config?.git?.enabled === false
+                      ? null
+                      : {
+                          enabled: diffOn,
+                          since: diffSince,
+                          commits: diffCommits,
+                          lineCount: diffLines,
+                          fileCount: diffFiles,
+                          loading: diffLoading,
+                          warning: diffWarning,
+                          onEnabledChange: onDiffEnabledChange,
+                          onSinceChange: onDiffSinceChange,
+                        }
+                  }
                 />
               }
             />

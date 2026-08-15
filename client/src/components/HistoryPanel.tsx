@@ -8,6 +8,7 @@ type Props = {
   open: boolean;
   onClose: () => void;
   onRestored: () => void;
+  onHighlightSince?: (commit: GitCommitInfo) => void;
 };
 
 function formatWhen(iso: string): string {
@@ -24,7 +25,14 @@ function formatWhen(iso: string): string {
   }
 }
 
-export function HistoryPanel({ projectId, identityId, open, onClose, onRestored }: Props) {
+export function HistoryPanel({
+  projectId,
+  identityId,
+  open,
+  onClose,
+  onRestored,
+  onHighlightSince,
+}: Props) {
   const [commits, setCommits] = useState<GitCommitInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -78,7 +86,10 @@ export function HistoryPanel({ projectId, identityId, open, onClose, onRestored 
           </button>
         </div>
       </div>
-      <p className="history-hint">Automatic git snapshots on each save. Restore copies that revision into the working tree.</p>
+      <p className="history-hint">
+        Automatic git snapshots on each save. Restore copies that revision into the working tree.
+        Highlight additions maps new .tex lines since a snapshot onto the PDF (preview overlay).
+      </p>
       {error && <div className="error-banner">{error}</div>}
       {loading && commits.length === 0 ? (
         <div className="empty-hint">Loading…</div>
@@ -95,14 +106,29 @@ export function HistoryPanel({ projectId, identityId, open, onClose, onRestored 
                   {c.author} · {formatWhen(c.date)}
                 </span>
               </div>
-              <button
-                type="button"
-                className="btn"
-                disabled={busyHash === c.hash}
-                onClick={() => void onRestore(c.hash)}
-              >
-                {busyHash === c.hash ? "Restoring…" : "Restore"}
-              </button>
+              <div className="history-item-actions">
+                {onHighlightSince && (
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => {
+                      onHighlightSince(c);
+                      onClose();
+                    }}
+                    title="Highlight manuscript lines added after this snapshot"
+                  >
+                    Highlight since
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={busyHash === c.hash}
+                  onClick={() => void onRestore(c.hash)}
+                >
+                  {busyHash === c.hash ? "Restoring…" : "Restore"}
+                </button>
+              </div>
             </li>
           ))}
         </ul>

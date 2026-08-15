@@ -43,7 +43,7 @@ For human setup and usage, see [README.md](README.md).
 - Dev proxy: `client/vite.config.ts` reads `OPENLEAF_PORT` / `OPENLEAF_CLIENT_PORT` (no manual proxy edit needed)
 - Identities (collab): **per project** in `projects/<id>/openleaf.json` → `identities[]`. Seeded from `defaultIdentities` in app config on create. `GET/PUT /api/projects/:id/identities`. UI toggles among that project's presets (stored per-project in localStorage).
 - Collab: WebSocket `/collab/<project>?identity=<id>`; Yjs CRDT flushed to disk; snapshot under `projects/<id>/.openleaf/collab/`
-- Git backups: each project is its own git repo; auto-commit on explicit save / FS mutations (`.openleaf/` ignored). Background CRDT flush does **not** commit. `GET /api/projects/:id/history`, `POST .../history/restore`. Toggle via `git.enabled`.
+- Git backups: each project is its own git repo; auto-commit on explicit save / FS mutations (`.openleaf/` ignored). Background CRDT flush does **not** commit. `GET /api/projects/:id/history`, `POST .../history/restore`. Toggle via `git.enabled`. `GET /api/projects/:id/diff-highlights?since=<hash>` maps added manuscript `.tex` lines (not `misc/`) onto PDF boxes via SyncTeX.
 
 ## Commands
 

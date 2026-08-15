@@ -93,6 +93,23 @@ export type GitCommitInfo = {
   date: string;
 };
 
+export type DiffHighlightBox = {
+  page: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+export type DiffHighlightsResult = {
+  gitEnabled: boolean;
+  since: GitCommitInfo | null;
+  files: number;
+  lines: number;
+  boxes: DiffHighlightBox[];
+  warning?: string;
+};
+
 export type CommentAnchor = {
   file: string;
   line: number;

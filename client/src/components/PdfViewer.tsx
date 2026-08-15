@@ -23,12 +23,35 @@ export type PdfHighlight = {
   nonce?: number;
 };
 
+export type PdfDiffOverlay = {
+  page: number;
+  x: number;
+  y: number;
+  width?: number;
+  height?: number;
+};
+
+export type PdfDiffHighlightControls = {
+  enabled: boolean;
+  since: string;
+  commits: Array<{ hash: string; shortHash: string; message: string; date: string }>;
+  lineCount: number | null;
+  fileCount: number | null;
+  loading?: boolean;
+  warning?: string | null;
+  onEnabledChange: (on: boolean) => void;
+  onSinceChange: (hash: string) => void;
+};
+
 type Props = {
   url: string | null;
   onReverseSearch?: (page: number, x: number, y: number) => void;
   /** Shift+click PDF → create a comment at the SyncTeX source hit */
   onCommentAt?: (page: number, x: number, y: number) => void;
   highlight?: PdfHighlight | null;
+  /** Persistent git-diff addition marks (not the SyncTeX flash) */
+  overlays?: PdfDiffOverlay[];
+  diffHighlight?: PdfDiffHighlightControls | null;
 };
 
 type ScrollAnchor = {
@@ -40,6 +63,24 @@ type ScrollAnchor = {
 function clampScale(scale: number): number {
   const stepped = Math.round(scale / SCALE_STEP) * SCALE_STEP;
   return Math.min(MAX_SCALE, Math.max(MIN_SCALE, Number(stepped.toFixed(1))));
+}
+
+function formatDiffWhen(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
+}
+
+function truncateMsg(msg: string, max = 36): string {
+  const t = msg.trim() || "snapshot";
+  return t.length <= max ? t : `${t.slice(0, max - 1)}…`;
 }
 
 function captureScrollAnchor(scroller: HTMLElement, container: HTMLElement): ScrollAnchor | null {
@@ -74,7 +115,14 @@ function restoreScrollAnchor(
   scroller.style.scrollBehavior = prev;
 }
 
-export function PdfViewer({ url, onReverseSearch, onCommentAt, highlight }: Props) {
+export function PdfViewer({
+  url,
+  onReverseSearch,
+  onCommentAt,
+  highlight,
+  overlays,
+  diffHighlight,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const reverseRef = useRef(onReverseSearch);
@@ -94,6 +142,7 @@ export function PdfViewer({ url, onReverseSearch, onCommentAt, highlight }: Prop
   const [fullscreen, setFullscreen] = useState(false);
   /** Bumps when the loaded document identity changes so pages re-render. */
   const [docVersion, setDocVersion] = useState(0);
+  const [pagesReady, setPagesReady] = useState(false);
 
   scaleRef.current = scale;
 
@@ -122,6 +171,7 @@ export function PdfViewer({ url, onReverseSearch, onCommentAt, highlight }: Prop
       docRef.current?.destroy().catch(() => undefined);
       docRef.current = null;
       setPageCount(0);
+      setPagesReady(false);
       setLoading(false);
       setError(null);
       if (containerRef.current) containerRef.current.innerHTML = "";
@@ -144,6 +194,7 @@ export function PdfViewer({ url, onReverseSearch, onCommentAt, highlight }: Prop
         prev?.destroy().catch(() => undefined);
         if (containerRef.current) containerRef.current.innerHTML = "";
         renderedScaleRef.current = scaleRef.current;
+        setPagesReady(false);
         setPageCount(doc.numPages);
         setDocVersion((v) => v + 1);
       } catch (err) {
@@ -261,7 +312,10 @@ export function PdfViewer({ url, onReverseSearch, onCommentAt, highlight }: Prop
           if (cancelled) return;
         }
 
-        if (!cancelled) renderedScaleRef.current = renderScale;
+        if (!cancelled) {
+          renderedScaleRef.current = renderScale;
+          setPagesReady(true);
+        }
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "Failed to render PDF");
@@ -336,6 +390,32 @@ export function PdfViewer({ url, onReverseSearch, onCommentAt, highlight }: Prop
     }
   }, [flash, scale, pageCount, loading]);
 
+  // Git-diff addition overlays — persist until toggled off; no scroll jump.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    container.querySelectorAll(".pdf-diff-mark").forEach((el) => el.remove());
+    if (!overlays?.length || !pagesReady || loading) return;
+
+    for (const box of overlays) {
+      const wrap = container.querySelector(
+        `.pdf-page-wrap[data-page="${box.page}"]`,
+      ) as HTMLElement | null;
+      if (!wrap) continue;
+        const h = Math.max((box.height ?? 12) * scale, 8);
+        const top = Math.max(0, box.y * scale);
+        const left = Math.max(0, box.x * scale);
+        const width = Math.max((box.width ?? 40) * scale, 8);
+      const mark = document.createElement("div");
+      mark.className = "pdf-diff-mark";
+      mark.style.left = `${left}px`;
+      mark.style.top = `${top}px`;
+      mark.style.width = `${width}px`;
+      mark.style.height = `${h}px`;
+      wrap.appendChild(mark);
+    }
+  }, [overlays, scale, pagesReady, loading, docVersion]);
+
   return (
     <div
       className={`pane pdf-pane${fullscreen ? " pdf-pane--fullscreen" : ""}`}
@@ -351,6 +431,64 @@ export function PdfViewer({ url, onReverseSearch, onCommentAt, highlight }: Prop
         >
           SyncTeX
         </span>
+        {diffHighlight && (
+          <div className="pdf-diff-controls">
+            <button
+              type="button"
+              className={`btn btn-ghost${diffHighlight.enabled ? " pdf-diff-toggle-on" : ""}`}
+              aria-pressed={diffHighlight.enabled}
+              title="Highlight manuscript text added since a git snapshot. Overlay only — the downloaded PDF stays clean."
+              onClick={() => diffHighlight.onEnabledChange(!diffHighlight.enabled)}
+            >
+              {diffHighlight.enabled ? "Additions on" : "Highlight additions"}
+            </button>
+            {diffHighlight.enabled && (
+              <>
+                <label className="pdf-diff-since">
+                  <span>since</span>
+                  <select
+                    value={diffHighlight.since}
+                    onChange={(e) => diffHighlight.onSinceChange(e.target.value)}
+                    aria-label="Highlight additions since this snapshot"
+                    disabled={diffHighlight.commits.length === 0}
+                  >
+                    {diffHighlight.commits.length === 0 ? (
+                      <option value="">No snapshots</option>
+                    ) : (
+                      <>
+                        {diffHighlight.since &&
+                          !diffHighlight.commits.some((c) => c.hash === diffHighlight.since) && (
+                            <option value={diffHighlight.since}>
+                              {diffHighlight.since.slice(0, 7)}
+                            </option>
+                          )}
+                        {diffHighlight.commits.map((c) => (
+                          <option key={c.hash} value={c.hash}>
+                            {c.shortHash} · {formatDiffWhen(c.date)} · {truncateMsg(c.message)}
+                          </option>
+                        ))}
+                      </>
+                    )}
+                  </select>
+                </label>
+                <span
+                  className="status-pill"
+                  title={diffHighlight.warning ?? "Added .tex lines mapped onto the PDF via SyncTeX"}
+                >
+                  {diffHighlight.loading
+                    ? "…"
+                    : diffHighlight.lineCount != null
+                      ? `${diffHighlight.lineCount} line${diffHighlight.lineCount === 1 ? "" : "s"}${
+                          diffHighlight.fileCount != null && diffHighlight.fileCount > 0
+                            ? ` · ${diffHighlight.fileCount} file${diffHighlight.fileCount === 1 ? "" : "s"}`
+                            : ""
+                        }`
+                      : "—"}
+                </span>
+              </>
+            )}
+          </div>
+        )}
         <div className="spacer" />
         <button
           type="button"
