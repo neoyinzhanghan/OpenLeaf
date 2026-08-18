@@ -42,7 +42,7 @@ For human setup and usage, see [README.md](README.md).
 - HTTP: `GET/PATCH /api/config`
 - Dev proxy: `client/vite.config.ts` reads `OPENLEAF_PORT` / `OPENLEAF_CLIENT_PORT` (no manual proxy edit needed)
 - Identities (collab): **per project** in `projects/<id>/openleaf.json` → `identities[]`. Seeded from `defaultIdentities` in app config on create. `GET/PUT /api/projects/:id/identities`. UI toggles among that project's presets (stored per-project in localStorage).
-- Collab: WebSocket `/collab/<project>?identity=<id>`; Yjs CRDT flushed to disk; snapshot under `projects/<id>/.openleaf/collab/`. While a room is open, a lightweight per-directory `fs.watch` (skips `.git` / `.openleaf` / `node_modules`; no file cache) pushes external disk edits into the live CRDT so the editor updates without a refresh. Unflushed editor edits to the same path win.
+- Collab: WebSocket `/collab/<project>?identity=<id>`; Yjs CRDT flushed to disk; snapshot under `projects/<id>/.openleaf/collab/`. While a room is open, a lightweight per-directory `fs.watch` (skips `.git` / `.openleaf` / `node_modules`; no file cache) pushes external disk edits into the live CRDT so the editor updates without a refresh. Concurrent unflushed editor edits are 3-way merged with disk (disk wins on overlapping hunks); flush will not overwrite an external write it has not ingested.
 - Git backups: each project is its own git repo; auto-commit on explicit save / FS mutations (`.openleaf/` ignored). Background CRDT flush does **not** commit. `GET /api/projects/:id/history`, `POST .../history/restore`. Toggle via `git.enabled`. `GET /api/projects/:id/diff-highlights?since=<hash>` maps added manuscript `.tex` lines (not `misc/`) onto PDF boxes via SyncTeX.
 
 ## Commands
@@ -53,6 +53,7 @@ npm run dev   # API :8787 + Vite :5173 — open the Vite URL for the UI
 npm run build
 npm start     # NODE_ENV=production; API serves built client on :8787
 npm run typecheck
+npm test
 ```
 
 ## Prerequisites

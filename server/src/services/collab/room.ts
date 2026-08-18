@@ -13,6 +13,7 @@ import {
   type TreeNode,
 } from "../projectFs.js";
 import { ProjectDiskWatch } from "./diskWatch.js";
+import { patchYText, threeWayMerge } from "./textMerge.js";
 
 const FILES_MAP = "files";
 const META_MAP = "meta";
@@ -96,6 +97,8 @@ export class ProjectRoom {
   readonly generation: number;
   private clients = new Set<unknown>();
   private dirtyPaths = new Set<string>();
+  /** Last content written to disk or ingested from disk — the 3-way merge base. */
+  private diskBaseline = new Map<string, string>();
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
   private seeding = new Map<string, Promise<Y.Text>>();
@@ -123,7 +126,17 @@ export class ProjectRoom {
       this.schedulePersist();
     };
     this.doc.on("update", this.updateHandler);
-    this.files.observeDeep((events) => {
+    this.files.observeDeep((events, transaction) => {
+      // Disk-origin txns must not mark paths dirty: observers fire *after* the
+      // transact, which would undo ingest's dirtyPaths.delete and then a later
+      // flushNow would clobber subsequent external writes.
+      if (
+        transaction.origin === "disk-seed" ||
+        transaction.origin === "disk-flush" ||
+        transaction.origin === "tree-sync"
+      ) {
+        return;
+      }
       for (const event of events) {
         if (event.target === this.files) {
           const mapEvent = event as Y.YMapEvent<Y.Text>;
@@ -195,12 +208,37 @@ export class ProjectRoom {
       }
       const paths = [...this.dirtyPaths];
       this.dirtyPaths.clear();
+
+      // If disk changed under us (external write while the path was dirty),
+      // merge that in *before* writing CRDT → disk so we never revert it.
+      const diskNow = new Map<string, string | null>();
+      this.doc.transact(() => {
+        for (const filePath of paths) {
+          const ytext = this.files.get(filePath);
+          if (!ytext) continue;
+          const disk = this.readDiskText(filePath);
+          diskNow.set(filePath, disk);
+          if (disk === null) continue;
+          const ours = ytext.toString();
+          const base = this.diskBaseline.get(filePath) ?? ours;
+          if (disk !== ours && disk !== base) {
+            this.mergeDiskIntoYText(filePath, disk);
+          }
+        }
+      }, "disk-seed");
+
       for (const filePath of paths) {
         const ytext = this.files.get(filePath);
         if (!ytext) continue;
         const content = ytext.toString();
+        const disk = diskNow.has(filePath) ? diskNow.get(filePath)! : this.readDiskText(filePath);
+        if (disk === content) {
+          this.diskBaseline.set(filePath, content);
+          continue;
+        }
         try {
           await writeFile(this.projectId, filePath, content, "utf8");
+          this.diskBaseline.set(filePath, content);
         } catch (err) {
           this.dirtyPaths.add(filePath);
           throw err;
@@ -237,7 +275,10 @@ export class ProjectRoom {
       this.files.forEach((_t, p) => {
         if (!onDisk.has(p)) stale.push(p);
       });
-      for (const p of stale) this.files.delete(p);
+      for (const p of stale) {
+        this.files.delete(p);
+        this.diskBaseline.delete(p);
+      }
 
       for (const filePath of textPaths) {
         this.applyDiskContent(filePath);
@@ -250,7 +291,7 @@ export class ProjectRoom {
 
   /**
    * Apply external working-tree edits to the live CRDT.
-   * Skips paths with unflushed editor edits so typing is not overwritten.
+   * Unflushed editor edits are 3-way merged with disk (disk wins on overlap).
    * No-ops when disk already matches Y.Text (our own flush echo).
    */
   async ingestDiskPaths(relativePaths: string[]): Promise<void> {
@@ -261,6 +302,7 @@ export class ProjectRoom {
       const unique = [...new Set(relativePaths.filter((p) => p && !p.includes("\0")))];
       const treeChanged: string[] = [];
       let commentsChanged = false;
+      let mergedDirty = false;
 
       this.doc.transact(() => {
         for (const filePath of unique) {
@@ -282,7 +324,11 @@ export class ProjectRoom {
           }
 
           if (!st) {
-            if (this.dirtyPaths.has(filePath)) continue;
+            const ytext = this.files.get(filePath);
+            const ours = ytext?.toString() ?? "";
+            const base = this.diskBaseline.get(filePath) ?? ours;
+            // Real unflushed editor edits keep the CRDT path; flush can recreate.
+            if (this.dirtyPaths.has(filePath) && ours !== base) continue;
             if (this.files.has(filePath) || this.hasPathPrefix(filePath)) {
               this.removePathPrefix(filePath);
               treeChanged.push(filePath);
@@ -294,13 +340,12 @@ export class ProjectRoom {
             continue;
           }
           if (filePath === "comments.json") commentsChanged = true;
-          // Unflushed collab edits win over a concurrent disk write to the same path.
-          if (this.dirtyPaths.has(filePath)) continue;
 
           if (!isCollabTextFile(this.projectId, filePath)) {
             if (this.files.has(filePath)) {
               this.files.delete(filePath);
               this.dirtyPaths.delete(filePath);
+              this.diskBaseline.delete(filePath);
             }
             treeChanged.push(filePath);
             continue;
@@ -313,12 +358,23 @@ export class ProjectRoom {
           } catch {
             continue;
           }
-          if (existing && existing.toString() === content) continue;
+          if (existing && existing.toString() === content) {
+            this.diskBaseline.set(filePath, content);
+            continue;
+          }
+
+          const ours = existing?.toString() ?? "";
+          const base = this.diskBaseline.get(filePath) ?? ours;
+          const editorDirty = this.dirtyPaths.has(filePath) && ours !== base;
+          if (editorDirty) {
+            this.mergeDiskIntoYText(filePath, content);
+            mergedDirty = true;
+            continue;
+          }
+
           const isNew = !existing;
-          this.applyDiskContent(filePath);
+          this.applyDiskContent(filePath, content);
           this.dirtyPaths.delete(filePath);
-          // In-place Y.Text edits sync over the collab channel; only bump the tree
-          // when the set of files changed (or a non-collab/binary path did).
           if (isNew) treeChanged.push(filePath);
         }
 
@@ -335,6 +391,8 @@ export class ProjectRoom {
           this.meta.set("commentsVersion", Date.now());
         }
       }, "disk-seed");
+
+      if (mergedDirty) this.scheduleFlush();
     });
   }
 
@@ -349,6 +407,7 @@ export class ProjectRoom {
         }, "disk-seed");
       }
       this.dirtyPaths.delete(relativePath);
+      this.diskBaseline.delete(relativePath);
       return;
     }
     this.doc.transact(() => {
@@ -358,26 +417,44 @@ export class ProjectRoom {
     this.dirtyPaths.delete(relativePath);
   }
 
-  private applyDiskContent(filePath: string): void {
-    const full = resolveProjectPath(this.projectId, filePath);
-    let content = "";
+  private readDiskText(filePath: string): string | null {
     try {
-      content = fsSync.readFileSync(full, "utf8");
+      return fsSync.readFileSync(resolveProjectPath(this.projectId, filePath), "utf8");
     } catch {
-      content = "";
+      return null;
     }
+  }
+
+  /** Force Y.Text = disk (hydrate, REST write, non-dirty ingest). */
+  private applyDiskContent(filePath: string, content?: string): void {
+    const next = content ?? this.readDiskText(filePath) ?? "";
     const existing = this.files.get(filePath);
     if (existing) {
-      const cur = existing.toString();
-      if (cur !== content) {
-        existing.delete(0, cur.length);
-        if (content) existing.insert(0, content);
-      }
+      patchYText(existing, next);
     } else {
       const ytext = new Y.Text();
-      if (content) ytext.insert(0, content);
+      if (next) ytext.insert(0, next);
       this.files.set(filePath, ytext);
     }
+    this.diskBaseline.set(filePath, next);
+  }
+
+  /**
+   * Fold an external disk snapshot into a possibly editor-dirty Y.Text.
+   * Baseline becomes `diskContent` so a later flush writes the merge instead
+   * of 3-way-merging against the merged string and dropping editor edits.
+   */
+  private mergeDiskIntoYText(filePath: string, diskContent: string): void {
+    const ytext = this.files.get(filePath);
+    if (!ytext) {
+      this.applyDiskContent(filePath, diskContent);
+      return;
+    }
+    const ours = ytext.toString();
+    const base = this.diskBaseline.get(filePath) ?? ours;
+    const merged = threeWayMerge(base, ours, diskContent);
+    patchYText(ytext, merged);
+    this.diskBaseline.set(filePath, diskContent);
   }
 
   async persistSnapshot(): Promise<void> {
@@ -423,7 +500,10 @@ export class ProjectRoom {
       this.files.forEach((_t, p) => {
         if (!onDisk.has(p)) stale.push(p);
       });
-      for (const p of stale) this.files.delete(p);
+      for (const p of stale) {
+        this.files.delete(p);
+        this.diskBaseline.delete(p);
+      }
 
       if (!this.meta.has("treeVersion")) {
         this.meta.set("treeVersion", Date.now());
@@ -511,6 +591,7 @@ export class ProjectRoom {
     for (const p of toDelete) {
       this.files.delete(p);
       this.dirtyPaths.delete(p);
+      this.diskBaseline.delete(p);
     }
   }
 
@@ -525,9 +606,12 @@ export class ProjectRoom {
     for (const m of moves) {
       this.files.delete(m.from);
       this.dirtyPaths.delete(m.from);
+      const baseline = this.diskBaseline.get(m.from);
+      this.diskBaseline.delete(m.from);
       // Keep the same Y.Text instance so live bindings / CRDT history survive
       this.files.set(m.to, m.ytext);
       this.dirtyPaths.add(m.to);
+      if (baseline !== undefined) this.diskBaseline.set(m.to, baseline);
     }
     this.scheduleFlush();
   }
