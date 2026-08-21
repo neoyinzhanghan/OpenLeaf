@@ -114,12 +114,32 @@ function defaultMessage(hint?: string): string {
 }
 
 /**
- * Stage all tracked/untracked source files and commit if there are changes.
- * Safe to call after every save/flush.
+ * Normalize commit pathspecs and reject `..` / escapes. Returns undefined when
+ * the caller wants a full-tree snapshot (`git add -A`).
+ */
+function commitPathspecs(id: string, paths?: string[]): string[] | undefined {
+  if (!paths?.length) return undefined;
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of paths) {
+    const normalized = raw.replace(/\\/g, "/").replace(/^\/+/, "");
+    if (!normalized) continue;
+    resolveProjectPath(id, normalized);
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out.length ? out : undefined;
+}
+
+/**
+ * Stage source files and commit if there are changes.
+ * Pass `paths` to snapshot only those files (e.g. comments.json); otherwise
+ * stages the whole tree (`git add -A`). Safe to call after every save/flush.
  */
 export async function autoCommitProject(
   id: string,
-  opts?: { message?: string; author?: GitAuthor },
+  opts?: { message?: string; author?: GitAuthor; paths?: string[] },
 ): Promise<GitCommitResult> {
   if (!isGitEnabled()) {
     return { committed: false, hash: null, message: "", skipped: "disabled" };
@@ -127,9 +147,16 @@ export async function autoCommitProject(
 
   try {
     await ensureProjectGit(id);
-    await runGit(id, ["add", "-A"]);
+    const paths = commitPathspecs(id, opts?.paths);
+    if (paths) {
+      await runGit(id, ["add", "--", ...paths]);
+    } else {
+      await runGit(id, ["add", "-A"]);
+    }
 
-    const status = await runGit(id, ["status", "--porcelain"], { allowFailure: true });
+    const status = paths
+      ? await runGit(id, ["diff", "--cached", "--name-only", "--", ...paths], { allowFailure: true })
+      : await runGit(id, ["status", "--porcelain"], { allowFailure: true });
     if (!status.stdout.trim()) {
       return { committed: false, hash: null, message: "", skipped: "clean" };
     }
@@ -137,7 +164,9 @@ export async function autoCommitProject(
     const message = defaultMessage(opts?.message);
     const commit = await runGit(
       id,
-      ["commit", "-m", message, "--no-gpg-sign"],
+      paths
+        ? ["commit", "-m", message, "--no-gpg-sign", "--", ...paths]
+        : ["commit", "-m", message, "--no-gpg-sign"],
       { author: opts?.author, allowFailure: true },
     );
 

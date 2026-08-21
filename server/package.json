@@ -8,7 +8,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "NODE_ENV=production node dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test src/services/collab/*.test.ts"
+    "test": "tsx --test src/services/collab/*.test.ts src/services/projectGit.test.ts"
   },
   "dependencies": {
     "archiver": "^7.0.1",
