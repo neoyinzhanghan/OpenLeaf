@@ -57,6 +57,18 @@ function joinPath(dir: string, name: string): string {
   return dir ? `${dir}/${clean}` : clean;
 }
 
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function isHintIndexPath(filePath: string): boolean {
+  return !filePath.split("/").some(
+    (p) => p === ".openleaf" || p === "data" || p === "private" || p === "tmp" || p === "vendor",
+  );
+}
+
 function diffHighlightKey(projectId: string): string {
   return `openleaf.diffHighlight.${projectId}`;
 }
@@ -152,6 +164,7 @@ export function EditorPage() {
   const activePathRef = useRef(activePath);
   activePathRef.current = activePath;
   const [fileReady, setFileReady] = useState(false);
+  const [tooLargeBytes, setTooLargeBytes] = useState<number | null>(null);
 
   const collabText = editMode === "text" && yText != null;
   const dirty =
@@ -165,14 +178,14 @@ export function EditorPage() {
   }, [id]);
 
   const loadIndexHints = useCallback(async (projectId: string, nodes: TreeNode[]) => {
-    const files = flattenFiles(nodes);
+    const files = flattenFiles(nodes).filter(isHintIndexPath);
     const bibPaths = files.filter((f) => f.endsWith(".bib"));
-    const texPaths = files.filter((f) => f.endsWith(".tex") && !f.includes(".openleaf/"));
+    const texPaths = files.filter((f) => f.endsWith(".tex"));
     const bibTexts = await Promise.all(
       bibPaths.map(async (f) => {
         try {
           const file = await readProjectFile(projectId, f, { forceText: true });
-          return file.content;
+          return file.contentOmitted ? "" : file.content;
         } catch {
           return "";
         }
@@ -188,6 +201,7 @@ export function EditorPage() {
     for (const f of texPaths) {
       try {
         const file = await readProjectFile(projectId, f, { forceText: true });
+        if (file.contentOmitted) continue;
         for (const key of extractLabels(file.content)) labelKeys.add(key);
       } catch {
         /* ignore */
@@ -381,6 +395,7 @@ export function EditorPage() {
     const pathBeingLoaded = activePath;
     setFileReady(false);
     setYText(null);
+    setTooLargeBytes(null);
     (async () => {
       try {
         const forceText = forceTextPath === pathBeingLoaded;
@@ -388,6 +403,26 @@ export function EditorPage() {
         const file = await readProjectFile(id, pathBeingLoaded, { forceText });
         if (cancelled || activePathRef.current !== pathBeingLoaded) return;
         setError(null);
+        if (file.contentOmitted) {
+          setYText(null);
+          setTooLargeBytes(file.size);
+          setBinaryMeta(
+            file.text
+              ? null
+              : {
+                  contentType: file.contentType,
+                  size: file.size,
+                  base64: "",
+                },
+          );
+          setEditMode(file.text ? "text" : "binary");
+          setContent("");
+          setSavedContent("");
+          setFileReady(true);
+          setStatus("idle");
+          return;
+        }
+        setTooLargeBytes(null);
         if (forceBase64 || (!file.text && !forceText)) {
           if (forceBase64) {
             setEditMode("base64");
@@ -509,6 +544,7 @@ export function EditorPage() {
   const save = useCallback(async () => {
     if (!id || !activePath || editMode === "binary") return;
     if (!fileReady) return;
+    if (tooLargeBytes != null) return;
 
     // Collaborative text: flush CRDT → disk, then optional compile
     if (collabText) {
@@ -595,6 +631,7 @@ export function EditorPage() {
     collabText,
     yText,
     collab.identity?.id,
+    tooLargeBytes,
   ]);
 
   useEffect(() => {
@@ -1066,7 +1103,7 @@ export function EditorPage() {
             type="button"
             className="btn"
             onClick={() => void save()}
-            disabled={!activePath || !fileReady || editMode === "binary" || status === "saving"}
+            disabled={!activePath || !fileReady || editMode === "binary" || tooLargeBytes != null || status === "saving"}
           >
             {fileReady ? (collabText ? "Save & sync" : "Save") : "Loading…"}
           </button>
@@ -1151,7 +1188,16 @@ export function EditorPage() {
               initialLeftRatio={0.52}
               left={
                 <div className="pane editor-pane" style={{ height: "100%" }}>
-                  {editMode === "binary" && activePath && binaryMeta ? (
+                  {tooLargeBytes != null ? (
+                    <div className="empty-hint" style={{ padding: "1.25rem" }}>
+                      <strong>{activePath}</strong>
+                      <p style={{ marginTop: "0.75rem" }}>
+                        This file is {formatBytes(tooLargeBytes)} — too large to open in the
+                        browser editor (limit 1.5 MB). Edit it on disk, or replace a binary
+                        via upload.
+                      </p>
+                    </div>
+                  ) : editMode === "binary" && activePath && binaryMeta ? (
                     <BinaryPane
                       path={activePath}
                       contentType={binaryMeta.contentType}

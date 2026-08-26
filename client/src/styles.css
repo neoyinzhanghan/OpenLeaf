@@ -1171,6 +1171,12 @@ a {
   margin: 0 auto 1.25rem;
 }
 
+.pdf-page-wrap.is-placeholder {
+  background: color-mix(in srgb, var(--panel, #f8fafc) 88%, #94a3b8);
+  box-shadow: 0 0 0 1px rgba(16, 26, 35, 0.06);
+  border-radius: 3px;
+}
+
 .pdf-page {
   display: block;
   background: white;

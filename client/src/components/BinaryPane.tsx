@@ -42,7 +42,9 @@ export function BinaryPane({
       )}
       {!dataUrl && (
         <p className="empty-hint" style={{ paddingTop: "0.5rem" }}>
-          Binary file — replace via upload, or force-open as text / base64.
+          {size > 0 && !base64
+            ? "Too large to preview in the browser. Replace via upload, or edit the file on disk."
+            : "Binary file — replace via upload, or force-open as text / base64."}
         </p>
       )}
       <div className="binary-actions">

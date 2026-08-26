@@ -49,6 +49,8 @@ export type FilePayload = {
   contentType: string;
   size: number;
   text: boolean;
+  /** True when the body was skipped because the file exceeds the inline limit. */
+  contentOmitted?: boolean;
 };
 
 export type CompileResult = {

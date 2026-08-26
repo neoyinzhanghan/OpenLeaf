@@ -22,8 +22,35 @@ const META_MAP = "meta";
 const MAX_COLLAB_FILE_BYTES = 256 * 1024;
 const MAX_COLLAB_SNAPSHOT_BYTES = 2 * 1024 * 1024;
 
+/** Path segments that are research artifacts / deps, not the manuscript. */
+const COLLAB_SKIP_DIRS = new Set(["data", "private", "tmp", "vendor", "node_modules"]);
+/** Build/run logs and aux files — view via REST, never hydrate into the CRDT. */
+const COLLAB_NEVER_EXT = new Set([
+  ".log",
+  ".aux",
+  ".out",
+  ".toc",
+  ".lof",
+  ".lot",
+  ".nav",
+  ".snm",
+  ".vrb",
+]);
+/** Seed these into the room on open so the editor is live without opening every file. */
+const EAGER_COLLAB_EXT = new Set([".tex", ".bib", ".sty", ".cls", ".ltx", ".bst", ".md", ".txt"]);
+
+function pathExt(relativePath: string): string {
+  return path.extname(relativePath).toLowerCase();
+}
+
+function hasSkippedCollabDir(relativePath: string): boolean {
+  const parts = relativePath.replace(/\\/g, "/").split("/").filter(Boolean);
+  return parts.slice(0, -1).some((p) => COLLAB_SKIP_DIRS.has(p.toLowerCase()));
+}
+
 function isCollabTextFile(projectId: string, relativePath: string): boolean {
   if (!relativePath || relativePath.includes(".openleaf/")) return false;
+  if (COLLAB_NEVER_EXT.has(pathExt(relativePath))) return false;
   const full = resolveProjectPath(projectId, relativePath);
   if (!isTextPath(relativePath) && !isTextPath(full)) return false;
   try {
@@ -35,6 +62,15 @@ function isCollabTextFile(projectId: string, relativePath: string): boolean {
   return true;
 }
 
+/** Hydrate on room open. Other small text files join the CRDT only when opened (ensureFile). */
+function isEagerCollabFile(projectId: string, relativePath: string): boolean {
+  if (!isCollabTextFile(projectId, relativePath)) return false;
+  if (hasSkippedCollabDir(relativePath)) return false;
+  const ext = pathExt(relativePath);
+  if (EAGER_COLLAB_EXT.has(ext)) return true;
+  return !relativePath.includes("/");
+}
+
 function flattenCollabTextFiles(
   projectId: string,
   nodes: TreeNode[],
@@ -42,7 +78,7 @@ function flattenCollabTextFiles(
 ): string[] {
   for (const n of nodes) {
     if (n.type === "file") {
-      if (isCollabTextFile(projectId, n.path)) out.push(n.path);
+      if (isEagerCollabFile(projectId, n.path)) out.push(n.path);
     } else if (n.children) {
       flattenCollabTextFiles(projectId, n.children, out);
     }
@@ -154,6 +190,8 @@ export class ProjectRoom {
     void this.ready.then(
       () => {
         this.startDiskWatch();
+        // Shrink a previous data/-bloated ydoc.bin after eager-only hydrate.
+        void this.persistSnapshot().catch((err) => console.error("[collab] persist failed", err));
       },
       () => undefined,
     );
@@ -267,20 +305,23 @@ export class ProjectRoom {
   async reseedFromDisk(): Promise<void> {
     await this.whenReady();
     const tree = await getTree(this.projectId);
-    const textPaths = flattenCollabTextFiles(this.projectId, tree);
-    const onDisk = new Set(textPaths);
+    const eager = flattenCollabTextFiles(this.projectId, tree);
+    const keep = new Set(eager);
+    this.files.forEach((_t, p) => {
+      if (isCollabTextFile(this.projectId, p)) keep.add(p);
+    });
 
     this.doc.transact(() => {
       const stale: string[] = [];
       this.files.forEach((_t, p) => {
-        if (!onDisk.has(p)) stale.push(p);
+        if (!keep.has(p)) stale.push(p);
       });
       for (const p of stale) {
         this.files.delete(p);
         this.diskBaseline.delete(p);
       }
 
-      for (const filePath of textPaths) {
+      for (const filePath of keep) {
         this.applyDiskContent(filePath);
       }
       this.meta.set("treeVersion", Date.now());
@@ -352,6 +393,11 @@ export class ProjectRoom {
           }
 
           const existing = this.files.get(filePath);
+          if (!existing && !isEagerCollabFile(this.projectId, filePath)) {
+            treeChanged.push(filePath);
+            continue;
+          }
+
           let content = "";
           try {
             content = fsSync.readFileSync(full, "utf8");
@@ -550,7 +596,9 @@ export class ProjectRoom {
       } else if (event.op === "rename" && event.from && event.to) {
         this.renamePathPrefix(event.from, event.to);
       } else if ((event.op === "create" || event.op === "write") && event.path) {
-        if (isCollabTextFile(this.projectId, event.path)) this.applyDiskContent(event.path);
+        if (isEagerCollabFile(this.projectId, event.path) || this.files.has(event.path)) {
+          this.applyDiskContent(event.path);
+        }
       }
       this.meta.set("treeVersion", Date.now());
       this.meta.set("treeEvent", { ...event, type: "tree-changed", at: Date.now() });

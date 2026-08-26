@@ -115,6 +115,11 @@ function restoreScrollAnchor(
   scroller.style.scrollBehavior = prev;
 }
 
+function releaseCanvas(canvas: HTMLCanvasElement): void {
+  canvas.width = 0;
+  canvas.height = 0;
+}
+
 export function PdfViewer({
   url,
   onReverseSearch,
@@ -133,6 +138,8 @@ export function PdfViewer({
   const scaleRef = useRef(1.2);
   const renderedScaleRef = useRef(1.2);
   const scrolledFlashNonceRef = useRef<number | null>(null);
+  const pageSizesRef = useRef<Array<{ width: number; height: number }>>([]);
+  const paintTokenRef = useRef(0);
 
   const [pageCount, setPageCount] = useState(0);
   const [scale, setScale] = useState(1.2);
@@ -168,8 +175,10 @@ export function PdfViewer({
   // Load / replace the PDF document only when the URL changes.
   useEffect(() => {
     if (!url) {
+      paintTokenRef.current += 1;
       docRef.current?.destroy().catch(() => undefined);
       docRef.current = null;
+      pageSizesRef.current = [];
       setPageCount(0);
       setPagesReady(false);
       setLoading(false);
@@ -179,18 +188,33 @@ export function PdfViewer({
     }
 
     let cancelled = false;
+    let transferred = false;
+    const loadingTask = pdfjs.getDocument(url);
     setLoading(true);
     setError(null);
 
     (async () => {
       try {
-        const doc = await pdfjs.getDocument(url).promise;
+        const doc = await loadingTask.promise;
         if (cancelled) {
           await doc.destroy().catch(() => undefined);
           return;
         }
+        const sizes: Array<{ width: number; height: number }> = [];
+        for (let i = 1; i <= doc.numPages; i += 1) {
+          const page = await doc.getPage(i);
+          const viewport = page.getViewport({ scale: 1 });
+          sizes.push({ width: viewport.width, height: viewport.height });
+        }
+        if (cancelled) {
+          await doc.destroy().catch(() => undefined);
+          return;
+        }
+        paintTokenRef.current += 1;
         const prev = docRef.current;
         docRef.current = doc;
+        transferred = true;
+        pageSizesRef.current = sizes;
         prev?.destroy().catch(() => undefined);
         if (containerRef.current) containerRef.current.innerHTML = "";
         renderedScaleRef.current = scaleRef.current;
@@ -209,125 +233,205 @@ export function PdfViewer({
 
     return () => {
       cancelled = true;
+      paintTokenRef.current += 1;
+      if (!transferred) {
+        void Promise.resolve(loadingTask.destroy()).catch(() => undefined);
+      }
     };
   }, [url]);
 
-  // Render (or re-render) pages when the document or zoom changes — no loading flash on zoom.
+  useEffect(() => {
+    return () => {
+      paintTokenRef.current += 1;
+      docRef.current?.destroy().catch(() => undefined);
+      docRef.current = null;
+    };
+  }, []);
+
+  // Lay out page boxes and paint only those near the viewport (keeps canvas GPU memory bounded).
   useEffect(() => {
     const doc = docRef.current;
     const container = containerRef.current;
     const scroller = scrollRef.current;
-    if (!doc || !container || !url) return;
+    if (!doc || !container || pageCount === 0) return;
 
     let cancelled = false;
-    let activeRender: { cancel: () => void } | null = null;
+    const token = ++paintTokenRef.current;
     const renderScale = scale;
+    const sizes = pageSizesRef.current;
     const anchor = scroller ? captureScrollAnchor(scroller, container) : null;
-    const wraps = [...container.querySelectorAll(".pdf-page-wrap")] as HTMLElement[];
-    const hadPages = wraps.length > 0;
+    const inflight = new Map<number, { cancel: () => void }>();
+    const painting = new Set<number>();
+    const visible = new Set<number>();
 
-    // Instantly rescale existing page boxes (stretch old bitmaps) and pin scroll
-    // before the async crisp re-paint, so zoom never jumps to the top.
-    if (hadPages && scroller) {
-      const prevScale = renderedScaleRef.current;
-      if (prevScale > 0 && prevScale !== renderScale) {
-        const ratio = renderScale / prevScale;
-        for (const wrap of wraps) {
-          wrap.style.width = `${wrap.offsetWidth * ratio}px`;
-          wrap.style.height = `${wrap.offsetHeight * ratio}px`;
-        }
+    const ensureWrap = (pageNum: number, width: number, height: number): HTMLElement => {
+      let wrap = container.querySelector(
+        `.pdf-page-wrap[data-page="${pageNum}"]`,
+      ) as HTMLElement | null;
+      if (wrap) {
+        wrap.style.width = `${width}px`;
+        wrap.style.height = `${height}px`;
+        return wrap;
       }
-      restoreScrollAnchor(scroller, container, anchor);
-      renderedScaleRef.current = renderScale;
+      wrap = document.createElement("div");
+      wrap.className = "pdf-page-wrap is-placeholder";
+      wrap.dataset.page = String(pageNum);
+      wrap.style.width = `${width}px`;
+      wrap.style.height = `${height}px`;
+      const canvas = document.createElement("canvas");
+      canvas.className = "pdf-page";
+      canvas.dataset.page = String(pageNum);
+      canvas.style.display = "none";
+      canvas.title = "Click → source · Shift+click → comment";
+      wrap.addEventListener("click", (ev) => {
+        const target = ev.currentTarget as HTMLElement;
+        const rect = target.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return;
+        const currentScale = scaleRef.current;
+        const x = ((ev.clientX - rect.left) / rect.width) * (target.offsetWidth / currentScale);
+        const y = ((ev.clientY - rect.top) / rect.height) * (target.offsetHeight / currentScale);
+
+        target.querySelectorAll(".pdf-click-pulse").forEach((el) => el.remove());
+        const pulse = document.createElement("div");
+        pulse.className = "pdf-click-pulse";
+        pulse.style.left = `${ev.clientX - rect.left - 10}px`;
+        pulse.style.top = `${ev.clientY - rect.top - 10}px`;
+        target.appendChild(pulse);
+        window.setTimeout(() => pulse.remove(), 700);
+
+        if (ev.shiftKey && commentRef.current) {
+          commentRef.current(pageNum, x, y);
+          return;
+        }
+        reverseRef.current?.(pageNum, x, y);
+      });
+      wrap.appendChild(canvas);
+      container.appendChild(wrap);
+      return wrap;
+    };
+
+    for (let pageNum = 1; pageNum <= pageCount; pageNum += 1) {
+      const size = sizes[pageNum - 1];
+      const width = (size?.width ?? 612) * renderScale;
+      const height = (size?.height ?? 792) * renderScale;
+      ensureWrap(pageNum, width, height);
     }
 
-    (async () => {
+    if (scroller) restoreScrollAnchor(scroller, container, anchor);
+    renderedScaleRef.current = renderScale;
+    setPagesReady(true);
+
+    const releasePageCanvas = (pageNum: number) => {
+      const wrap = container.querySelector(
+        `.pdf-page-wrap[data-page="${pageNum}"]`,
+      ) as HTMLElement | null;
+      const canvas = wrap?.querySelector("canvas") as HTMLCanvasElement | null;
+      if (canvas) {
+        releaseCanvas(canvas);
+        canvas.style.display = "none";
+      }
+      wrap?.classList.add("is-placeholder");
+    };
+
+    const isCancelledRender = (err: unknown): boolean => {
+      if (cancelled || token !== paintTokenRef.current) return true;
+      const name = err && typeof err === "object" && "name" in err ? String(err.name) : "";
+      const message = err instanceof Error ? err.message : String(err ?? "");
+      return (
+        name === "RenderingCancelledException" ||
+        message.includes("Rendering cancelled") ||
+        message.includes("Cannot use the same canvas")
+      );
+    };
+
+    const paint = async (pageNum: number) => {
+      if (cancelled || token !== paintTokenRef.current) return;
+      if (painting.has(pageNum)) return;
+      painting.add(pageNum);
+      const wrap = container.querySelector(
+        `.pdf-page-wrap[data-page="${pageNum}"]`,
+      ) as HTMLElement | null;
+      const canvas = wrap?.querySelector("canvas") as HTMLCanvasElement | null;
+      if (!wrap || !canvas) {
+        painting.delete(pageNum);
+        return;
+      }
       try {
-        for (let pageNum = 1; pageNum <= doc.numPages; pageNum += 1) {
-          if (cancelled) return;
-          const page = await doc.getPage(pageNum);
-          if (cancelled) return;
-          const viewport = page.getViewport({ scale: renderScale });
-
-          let wrap = container.querySelector(
-            `.pdf-page-wrap[data-page="${pageNum}"]`,
-          ) as HTMLElement | null;
-          let canvas: HTMLCanvasElement;
-
-          if (!wrap) {
-            wrap = document.createElement("div");
-            wrap.className = "pdf-page-wrap";
-            wrap.dataset.page = String(pageNum);
-            canvas = document.createElement("canvas");
-            canvas.className = "pdf-page";
-            canvas.dataset.page = String(pageNum);
-            canvas.title = "Click → source · Shift+click → comment";
-            canvas.addEventListener("click", (ev) => {
-              const rect = canvas.getBoundingClientRect();
-              if (rect.width <= 0 || rect.height <= 0) return;
-              const currentScale = scaleRef.current;
-              const canvasX = ((ev.clientX - rect.left) / rect.width) * canvas.width;
-              const canvasY = ((ev.clientY - rect.top) / rect.height) * canvas.height;
-              const x = canvasX / currentScale;
-              const y = canvasY / currentScale;
-
-              wrap!.querySelectorAll(".pdf-click-pulse").forEach((el) => el.remove());
-              const pulse = document.createElement("div");
-              pulse.className = "pdf-click-pulse";
-              pulse.style.left = `${ev.clientX - rect.left - 10}px`;
-              pulse.style.top = `${ev.clientY - rect.top - 10}px`;
-              wrap!.appendChild(pulse);
-              window.setTimeout(() => pulse.remove(), 700);
-
-              if (ev.shiftKey && commentRef.current) {
-                commentRef.current(pageNum, x, y);
-                return;
-              }
-              reverseRef.current?.(pageNum, x, y);
-            });
-            wrap.appendChild(canvas);
-            container.appendChild(wrap);
-          } else {
-            canvas = wrap.querySelector("canvas") as HTMLCanvasElement;
-            if (!canvas) continue;
-          }
-
-          wrap.style.width = `${viewport.width}px`;
-          wrap.style.height = `${viewport.height}px`;
-          canvas.width = viewport.width;
-          canvas.height = viewport.height;
-          const ctx = canvas.getContext("2d");
-          if (!ctx) continue;
-          const task = page.render({ canvasContext: ctx, viewport });
-          activeRender = task;
-          try {
-            await task.promise;
-          } catch {
-            // Cancelled renders reject — ignore when superseded by a newer zoom.
-            if (cancelled) return;
-            throw new Error("Failed to render PDF page");
-          } finally {
-            if (activeRender === task) activeRender = null;
-          }
-          if (cancelled) return;
+        const page = await doc.getPage(pageNum);
+        if (cancelled || token !== paintTokenRef.current || !visible.has(pageNum)) return;
+        const viewport = page.getViewport({ scale: renderScale });
+        wrap.style.width = `${viewport.width}px`;
+        wrap.style.height = `${viewport.height}px`;
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        canvas.style.display = "block";
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+        const task = page.render({ canvasContext: ctx, viewport });
+        inflight.set(pageNum, task);
+        await task.promise;
+        if (cancelled || token !== paintTokenRef.current) return;
+        if (!visible.has(pageNum)) {
+          releasePageCanvas(pageNum);
+          return;
         }
-
-        if (!cancelled) {
-          renderedScaleRef.current = renderScale;
-          setPagesReady(true);
-        }
+        wrap.classList.remove("is-placeholder");
       } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to render PDF");
+        if (isCancelledRender(err)) return;
+        if (!cancelled && token === paintTokenRef.current) {
+          setError(err instanceof Error ? err.message : "Failed to render PDF page");
+        }
+      } finally {
+        inflight.delete(pageNum);
+        painting.delete(pageNum);
+      }
+    };
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const pageNum = Number((entry.target as HTMLElement).dataset.page);
+          if (!pageNum) continue;
+          if (entry.isIntersecting) {
+            visible.add(pageNum);
+            void paint(pageNum);
+          } else {
+            visible.delete(pageNum);
+            inflight.get(pageNum)?.cancel();
+            if (!painting.has(pageNum)) releasePageCanvas(pageNum);
+          }
+        }
+      },
+      { root: scroller, rootMargin: "140% 0px", threshold: 0 },
+    );
+
+    for (const wrap of container.querySelectorAll(".pdf-page-wrap")) {
+      observer.observe(wrap);
+    }
+
+    const kick = window.requestAnimationFrame(() => {
+      if (cancelled || !scroller) return;
+      const rootRect = scroller.getBoundingClientRect();
+      const margin = Math.max(rootRect.height, 1) * 1.4;
+      for (const wrap of [...container.querySelectorAll(".pdf-page-wrap")] as HTMLElement[]) {
+        const rect = wrap.getBoundingClientRect();
+        const pageNum = Number(wrap.dataset.page);
+        if (!pageNum) continue;
+        if (rect.bottom >= rootRect.top - margin && rect.top <= rootRect.bottom + margin) {
+          visible.add(pageNum);
+          void paint(pageNum);
         }
       }
-    })();
+    });
 
     return () => {
       cancelled = true;
-      activeRender?.cancel();
+      window.cancelAnimationFrame(kick);
+      observer.disconnect();
+      for (const task of inflight.values()) task.cancel();
+      inflight.clear();
     };
-  }, [url, docVersion, scale]);
+  }, [docVersion, scale, pageCount]);
 
   // Ctrl/Cmd + mouse wheel zoom (browser-style).
   useEffect(() => {
