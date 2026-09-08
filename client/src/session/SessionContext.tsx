@@ -40,11 +40,40 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     void refresh();
   }, [refresh]);
 
-  // Guests: poll so an expired / ended session drops them back to a clear message.
+  // Guests: poll often so ending the session (or expiry) kicks them to a clear
+  // screen without needing a manual refresh.
   useEffect(() => {
-    if (session.kind !== "guest") return;
-    const t = window.setInterval(() => void refresh(), 20_000);
+    if (session.kind !== "guest" && session.kind !== "guest-login") return;
+    const t = window.setInterval(() => void refresh(), 3000);
     return () => window.clearInterval(t);
+  }, [session.kind, refresh]);
+
+  // Exact deadline: don't wait for the next poll tick.
+  useEffect(() => {
+    if (session.kind !== "guest" && session.kind !== "guest-login") return;
+    const exp = session.share.expiresAt;
+    if (exp == null) return;
+    const delay = exp - Date.now();
+    if (delay <= 0) {
+      void refresh();
+      return;
+    }
+    const t = window.setTimeout(() => void refresh(), delay + 250);
+    return () => window.clearTimeout(t);
+  }, [session, refresh]);
+
+  // Coming back to the tab: re-check immediately.
+  useEffect(() => {
+    if (session.kind !== "guest" && session.kind !== "guest-login") return;
+    const onVis = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("focus", onVis);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("focus", onVis);
+    };
   }, [session.kind, refresh]);
 
   const value = useMemo(() => ({ session, refresh }), [session, refresh]);

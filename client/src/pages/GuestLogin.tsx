@@ -111,12 +111,12 @@ export function GuestInactive({ reason }: { reason: "no-session" | "expired" }) 
       </div>
       <div className="guest-card">
         <p className="guest-kicker">Share link</p>
-        <h1>{reason === "expired" ? "This link has expired" : "This link is no longer active"}</h1>
+        <h1>{reason === "expired" ? "This session has ended" : "This session is no longer active"}</h1>
         <p className="guest-lead">
           {reason === "expired"
-            ? "The host set an expiry on this session and it has passed."
-            : "The host ended the session, or the link was for a session that no longer exists."}{" "}
-          Ask the host for a fresh link; every new session gets a new address and new credentials.
+            ? "The host’s deadline for this link has passed, so editing and the live connection have stopped."
+            : "The host ended this share session (or the tunnel went down). Your tab was disconnected automatically."}{" "}
+          Ask the host for a fresh invitation link — every new session gets a new address and new credentials.
         </p>
       </div>
     </div>

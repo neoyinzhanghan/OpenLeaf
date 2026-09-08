@@ -66,6 +66,16 @@ async function fileToBase64(file: File): Promise<string> {
   return btoa(binary);
 }
 
+function formatLastSaved(ms: number): string {
+  return new Date(ms).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
 function formatShareLeft(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
   const d = Math.floor(s / 86400);
@@ -176,6 +186,9 @@ export function EditorPage() {
   const [forceBase64Path, setForceBase64Path] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [lastCommit, setLastCommit] = useState<string | null>(null);
+  const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
+  const [flushedContent, setFlushedContent] = useState("");
+  const saveLock = useRef(false);
   const compileLock = useRef(false);
   const workspaceRef = useRef<HTMLDivElement>(null);
   const activePathRef = useRef(activePath);
@@ -184,9 +197,10 @@ export function EditorPage() {
 
   const collabText = editMode === "text" && yText != null;
   const dirty =
+    !readOnly &&
     editMode !== "binary" &&
     fileReady &&
-    (collabText ? false : content !== savedContent);
+    (collabText ? liveContent !== flushedContent : content !== savedContent);
 
   const refreshTree = useCallback(async () => {
     if (!id) return;
@@ -323,6 +337,8 @@ export function EditorPage() {
 
         // Wait for collab sync before binding — avoids dropping pre-sync keystrokes
         if (collab.doc && !collab.synced) {
+          setFlushedContent(file.content);
+          setLiveContent(file.content);
           setFileReady(true);
           setStatus("idle");
           return;
@@ -332,9 +348,12 @@ export function EditorPage() {
           const text = await collab.ensureFile(pathBeingLoaded);
           if (cancelled || activePathRef.current !== pathBeingLoaded) return;
           if (text) {
+            const body = text.toString();
             setYText(text);
-            setContent(text.toString());
-            setSavedContent(text.toString());
+            setContent(body);
+            setSavedContent(body);
+            setFlushedContent(body);
+            setLiveContent(body);
             setFileReady(true);
             setStatus("ok");
             return;
@@ -345,6 +364,8 @@ export function EditorPage() {
         setYText(null);
         setContent(file.content);
         setSavedContent(file.content);
+        setFlushedContent(file.content);
+        setLiveContent(file.content);
         setFileReady(true);
         setStatus("idle");
       } catch (err) {
@@ -418,101 +439,129 @@ export function EditorPage() {
     }
   }, [id, refreshTree, canCompile]);
 
-  const save = useCallback(async () => {
-    if (!id || !activePath || editMode === "binary") return;
-    if (!fileReady) return;
-    if (readOnly) {
-      setError("This share link is read-only.");
-      return;
-    }
+  const save = useCallback(
+    async (opts?: { compile?: boolean; silent?: boolean }) => {
+      if (!id || !activePath || editMode === "binary") return;
+      if (!fileReady) return;
+      if (readOnly) {
+        if (!opts?.silent) setError("This share link is read-only.");
+        return;
+      }
+      if (saveLock.current) return;
+      saveLock.current = true;
 
-    // Collaborative text: flush CRDT → disk, then optional compile
-    if (collabText) {
+      const wantCompile = opts?.compile === true && config?.latex.autoCompile !== false;
       setStatus("saving");
-      setError(null);
+      if (!opts?.silent) setError(null);
+
       try {
-        const result = await flushCollab(id, {
-          identityId: collab.identity?.id,
-          message: `Save & sync (${activePath})`,
-        });
-        if (result.git?.committed && result.git.hash) {
-          setLastCommit(result.git.hash.slice(0, 7));
+        if (collabText) {
+          const result = await flushCollab(id, {
+            identityId: collab.identity?.id,
+            message: `Save (${activePath})`,
+          });
+          if (result.git?.committed && result.git.hash) {
+            setLastCommit(result.git.hash.slice(0, 7));
+          }
+          const text = yText?.toString() ?? liveContent;
+          setFlushedContent(text);
+          setSavedContent(text);
+          setContent(text);
+          setLastSavedAt(Date.now());
+          if (activePath.endsWith(".bib")) setCitations(extractCitations(text));
+          if (activePath.endsWith(".tex")) {
+            setExtraLabels((prev) => {
+              const set = new Set([...prev, ...extractLabels(text)]);
+              return [...set].sort();
+            });
+          }
+          const shouldCompile =
+            wantCompile &&
+            (activePath.endsWith(".tex") ||
+              activePath.endsWith(".bib") ||
+              activePath.endsWith(".cls") ||
+              activePath.endsWith(".sty") ||
+              activePath.includes("figures/"));
+          if (shouldCompile) await runCompile();
+          else setStatus("ok");
+          return;
         }
-        const text = yText?.toString() ?? "";
-        if (activePath.endsWith(".bib")) setCitations(extractCitations(text));
-        if (activePath.endsWith(".tex")) {
+
+        if (content.length === 0 && savedContent.length > 0 && activePath.endsWith(".tex")) {
+          setError("Refusing to save empty .tex over non-empty content.");
+          setStatus("err");
+          return;
+        }
+        const encoding = editMode === "base64" ? "base64" : "utf8";
+        await writeProjectFile(id, activePath, content, encoding);
+        setSavedContent(content);
+        setFlushedContent(content);
+        setLastSavedAt(Date.now());
+        if (activePath.endsWith(".bib") && encoding === "utf8") {
+          setCitations(extractCitations(content));
+        }
+        if (activePath.endsWith(".tex") && encoding === "utf8") {
           setExtraLabels((prev) => {
-            const set = new Set([...prev, ...extractLabels(text)]);
+            const set = new Set([...prev, ...extractLabels(content)]);
             return [...set].sort();
           });
         }
         const shouldCompile =
-          config?.latex.autoCompile !== false &&
+          wantCompile &&
+          encoding === "utf8" &&
           (activePath.endsWith(".tex") ||
             activePath.endsWith(".bib") ||
             activePath.endsWith(".cls") ||
             activePath.endsWith(".sty") ||
+            activePath.endsWith(".png") ||
             activePath.includes("figures/"));
         if (shouldCompile) await runCompile();
         else setStatus("ok");
       } catch (err) {
         setStatus("err");
-        setError(err instanceof Error ? err.message : "Flush failed");
+        const msg = err instanceof Error ? err.message : "Save failed";
+        setError(msg);
+        if (isGuest) void refreshSession();
+      } finally {
+        saveLock.current = false;
       }
-      return;
-    }
+    },
+    [
+      id,
+      activePath,
+      content,
+      savedContent,
+      liveContent,
+      config,
+      runCompile,
+      editMode,
+      fileReady,
+      collabText,
+      yText,
+      collab.identity?.id,
+      readOnly,
+      isGuest,
+      refreshSession,
+    ],
+  );
 
-    if (content.length === 0 && savedContent.length > 0 && activePath.endsWith(".tex")) {
-      setError("Refusing to save empty .tex over non-empty content.");
-      return;
-    }
-    setStatus("saving");
-    setError(null);
-    try {
-      const encoding = editMode === "base64" ? "base64" : "utf8";
-      await writeProjectFile(id, activePath, content, encoding);
-      setSavedContent(content);
-      if (activePath.endsWith(".bib") && encoding === "utf8") {
-        setCitations(extractCitations(content));
-      }
-      if (activePath.endsWith(".tex") && encoding === "utf8") {
-        setExtraLabels((prev) => {
-          const set = new Set([...prev, ...extractLabels(content)]);
-          return [...set].sort();
-        });
-      }
-      const shouldCompile =
-        config?.latex.autoCompile !== false &&
-        encoding === "utf8" &&
-        (activePath.endsWith(".tex") ||
-          activePath.endsWith(".bib") ||
-          activePath.endsWith(".cls") ||
-          activePath.endsWith(".sty") ||
-          activePath.endsWith(".png") ||
-          activePath.includes("figures/"));
-      if (shouldCompile) {
-        await runCompile();
-      } else {
-        setStatus("ok");
-      }
-    } catch (err) {
-      setStatus("err");
-      setError(err instanceof Error ? err.message : "Save failed");
-    }
-  }, [
-    id,
-    activePath,
-    content,
-    savedContent,
-    config,
-    runCompile,
-    editMode,
-    fileReady,
-    collabText,
-    yText,
-    collab.identity?.id,
-    readOnly,
-  ]);
+  // Autosave always on for editable text/base64 buffers (no compile — keep it light).
+  useEffect(() => {
+    if (!dirty || readOnly || !fileReady) return;
+    if (status === "saving" || status === "compiling") return;
+    const t = window.setTimeout(() => {
+      void save({ compile: false, silent: true });
+    }, 1500);
+    return () => window.clearTimeout(t);
+  }, [dirty, liveContent, content, readOnly, fileReady, status, save]);
+
+  // Guest: if the live socket drops, re-check the share session promptly.
+  useEffect(() => {
+    if (!isGuest) return;
+    if (collab.status !== "disconnected") return;
+    const t = window.setTimeout(() => void refreshSession(), 1200);
+    return () => window.clearTimeout(t);
+  }, [isGuest, collab.status, refreshSession]);
 
   useEffect(() => {
     if (dirty) setStatus((s) => (s === "compiling" || s === "saving" ? s : "dirty"));
@@ -738,26 +787,19 @@ export function EditorPage() {
   };
 
   const statusLabel = useMemo(() => {
+    if (status === "saving") return "Saving…";
+    if (status === "compiling") return "Compiling…";
+    if (status === "err") return "Error";
+    if (status === "dirty") return "Unsaved changes";
     if (collabText && status === "idle") {
       if (collab.status === "connecting") return "Connecting…";
-      if (collab.status === "connected" && collab.synced) return "Live";
-      if (collab.status === "connected") return "Syncing…";
+      if (collab.status === "connected" && !collab.synced) return "Syncing…";
     }
-    switch (status) {
-      case "dirty":
-        return "Unsaved";
-      case "saving":
-        return collabText ? "Flushing…" : "Saving…";
-      case "compiling":
-        return "Compiling…";
-      case "ok":
-        return collabText ? "Live" : "Up to date";
-      case "err":
-        return "Error";
-      default:
-        return collab.synced ? "Live" : "Ready";
-    }
-  }, [status, collabText, collab.status, collab.synced]);
+    if (lastSavedAt) return `Last saved ${formatLastSaved(lastSavedAt)}`;
+    if (collabText && collab.status === "connected" && collab.synced) return "Live";
+    if (status === "ok") return collabText ? "Live" : "Up to date";
+    return collab.synced ? "Live" : "Ready";
+  }, [status, collabText, collab.status, collab.synced, lastSavedAt]);
 
   // Unique peers by awareness client (two people can share a name in different sessions)
   const presence = useMemo(() => {
@@ -794,7 +836,20 @@ export function EditorPage() {
           )}
           <strong style={{ letterSpacing: "-0.02em" }}>{project?.id ?? id}</strong>
           <span className="badge">{project?.engine ?? "pdflatex"}</span>
-          <span className={`status-pill ${status === "ok" && collabText ? "ok" : status}`}>{statusLabel}</span>
+          <span
+            className={`status-pill ${
+              status === "saving" || status === "compiling"
+                ? "saving"
+                : status === "dirty"
+                  ? "dirty"
+                  : status === "ok" || (lastSavedAt && status !== "err")
+                    ? "ok"
+                    : status
+            }`}
+            title={lastSavedAt ? `Last saved ${formatLastSaved(lastSavedAt)}` : "Autosave is on — edits flush to disk shortly"}
+          >
+            {statusLabel}
+          </span>
           {activePath && <span className="status-pill">{activePath}</span>}
           {editMode === "base64" && <span className="status-pill warn">base64</span>}
           {readOnly && <span className="status-pill warn">read-only</span>}
@@ -899,10 +954,11 @@ export function EditorPage() {
             <button
               type="button"
               className="btn"
-              onClick={() => void save()}
+              onClick={() => void save({ compile: true })}
               disabled={!activePath || !fileReady || editMode === "binary" || status === "saving"}
+              title="Save now (autosave is already on). Also recompiles when auto-compile is enabled."
             >
-              {fileReady ? (collabText ? "Save & sync" : "Save") : "Loading…"}
+              {status === "saving" ? "Saving…" : fileReady ? (collabText ? "Save & sync" : "Save") : "Loading…"}
             </button>
           )}
           {canCompile && (
@@ -1030,7 +1086,7 @@ export function EditorPage() {
                         path={activePath}
                         value={content}
                         onChange={setContent}
-                        onSave={() => void save()}
+                        onSave={() => void save({ compile: true })}
                         jumpTo={jumpTo}
                         citations={citations}
                         labels={labels}
