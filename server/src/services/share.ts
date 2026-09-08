@@ -44,6 +44,8 @@ export type Guest = {
 
 export type ShareStatus = "starting" | "active" | "stopped" | "error";
 
+export type ShareEvent = { at: number; text: string };
+
 export type ShareSession = {
   id: string;
   projectId: string;
@@ -57,14 +59,20 @@ export type ShareSession = {
   createdAt: number;
   settings: ShareSettings;
   /** ip -> first seen */
+  /** Distinct client addresses admitted, with first-seen time. */
   ips: Map<string, number>;
+  /** Addresses turned away by the device cap (never admitted). */
+  rejectedIps: Set<string>;
   guests: Map<string, Guest>;
   loginFailures: Map<string, { count: number; first: number }>;
   proc: ChildProcess | null;
   status: ShareStatus;
   error?: string;
   expiryTimer: NodeJS.Timeout | null;
+  /** Raw cloudflared output (diagnostics). */
   logTail: string[];
+  /** Host-facing activity feed: joins, limits, extensions. */
+  events: ShareEvent[];
 };
 
 export type ShareError = Error & { status: number };
@@ -204,9 +212,49 @@ export function hostView(s: ShareSession) {
     createdAt: s.createdAt,
     settings: s.settings,
     ipsUsed: s.ips.size,
+    ips: Array.from(s.ips.entries()).map(([ip, firstSeen]) => ({
+      ip,
+      firstSeen,
+      guests: Array.from(s.guests.values())
+        .filter((g) => g.ip === ip)
+        .map((g) => g.name),
+      blockedLogins: s.loginFailures.get(ip)?.count ?? 0,
+    })),
+    rejectedIps: s.rejectedIps.size,
     guests: Array.from(s.guests.values()).map((g) => ({ ...g })),
     logTail: s.logTail.slice(-12),
+    events: s.events.slice(-40),
   };
+}
+
+export type ShareUpdate = Partial<Pick<ShareSettings, "expiresAt" | "maxIps" | "maxGuests">>;
+
+/**
+ * Live adjustment of a running session: extend (or shorten) the deadline and
+ * raise/lower the device and guest caps without rotating link or credentials.
+ */
+export function updateShare(projectId: string, patch: ShareUpdate): ShareSession {
+  const s = sessionsByProject.get(projectId);
+  if (!s || s.status !== "active") throw shareError(404, "No active share session for this project");
+  const next = normalizeSettings({ ...s.settings, ...patch });
+  const changes: string[] = [];
+  if (next.expiresAt !== s.settings.expiresAt) {
+    const delta = next.expiresAt - s.settings.expiresAt;
+    changes.push(`${delta > 0 ? "extended" : "shortened"} the deadline by ${humanDuration(Math.abs(delta))}`);
+    if (s.expiryTimer) clearTimeout(s.expiryTimer);
+    s.expiryTimer = setTimeout(() => {
+      logEvent(s, "Session expired");
+      void stopShare(projectId, "expired");
+    }, Math.min(next.expiresAt - Date.now(), 2 ** 31 - 1));
+  }
+  if (next.maxIps !== s.settings.maxIps) changes.push(`device limit ${s.settings.maxIps} → ${next.maxIps}`);
+  if (next.maxGuests !== s.settings.maxGuests) changes.push(`guest limit ${s.settings.maxGuests} → ${next.maxGuests}`);
+  s.settings = next;
+  if (changes.length) {
+    logEvent(s, `Host ${changes.join("; ")}`);
+    console.log(`[share] ${projectId}: ${changes.join("; ")}`);
+  }
+  return s;
 }
 
 /** What a guest may learn about the session they are in. */
@@ -239,6 +287,20 @@ export function isExpired(s: ShareSession): boolean {
   return Date.now() >= s.settings.expiresAt;
 }
 
+function humanDuration(ms: number): string {
+  const m = Math.round(ms / 60_000);
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  const rem = m % 60;
+  if (h < 48) return rem ? `${h} h ${rem} min` : `${h} h`;
+  return `${Math.round(h / 24)} days`;
+}
+
+function logEvent(s: ShareSession, text: string) {
+  s.events.push({ at: Date.now(), text });
+  if (s.events.length > 200) s.events.splice(0, s.events.length - 200);
+}
+
 function pushLog(s: ShareSession, line: string) {
   s.logTail.push(line);
   if (s.logTail.length > 60) s.logTail.splice(0, s.logTail.length - 60);
@@ -269,12 +331,14 @@ export async function startShare(projectId: string, input: Partial<ShareSettings
     createdAt: Date.now(),
     settings,
     ips: new Map(),
+    rejectedIps: new Set(),
     guests: new Map(),
     loginFailures: new Map(),
     proc: null,
     status: "starting",
     expiryTimer: null,
     logTail: [],
+    events: [],
   };
   sessionsByProject.set(projectId, session);
 
@@ -347,8 +411,9 @@ export async function startShare(projectId: string, input: Partial<ShareSettings
   }
 
   session.status = "active";
+  logEvent(session, `Link opened for ${humanDuration(settings.expiresAt - Date.now())}`);
   session.expiryTimer = setTimeout(() => {
-    pushLog(session, "Session expired");
+    logEvent(session, "Session expired");
     void stopShare(projectId, "expired");
   }, Math.min(settings.expiresAt - Date.now(), 2 ** 31 - 1));
   console.log(`[share] ${projectId} -> ${session.url} (expires ${new Date(settings.expiresAt).toISOString()})`);
@@ -387,7 +452,7 @@ function teardown(s: ShareSession) {
 export async function stopShare(projectId: string, reason = "stopped by host"): Promise<boolean> {
   const s = sessionsByProject.get(projectId);
   if (!s) return false;
-  pushLog(s, `Stopping: ${reason}`);
+  logEvent(s, `Stopping: ${reason}`);
   s.status = "stopped";
   killProc(s);
   teardown(s);
@@ -401,6 +466,7 @@ export function revokeGuest(projectId: string, guestId: string): boolean {
   const g = s?.guests.get(guestId);
   if (!s || !g) return false;
   g.revoked = true;
+  logEvent(s, `Host removed guest "${g.name}"`);
   return true;
 }
 
@@ -448,8 +514,16 @@ export function makeGuestToken(s: ShareSession, guestId: string): string {
 /** Admits `ip` if it is already known or there is room; returns false when the IP cap is hit. */
 function admitIp(s: ShareSession, ip: string): boolean {
   if (s.ips.has(ip)) return true;
-  if (s.ips.size >= s.settings.maxIps) return false;
+  if (s.ips.size >= s.settings.maxIps) {
+    if (!s.rejectedIps.has(ip)) {
+      s.rejectedIps.add(ip);
+      logEvent(s, `Device limit reached; turned away ${ip}`);
+    }
+    return false;
+  }
   s.ips.set(ip, Date.now());
+  s.rejectedIps.delete(ip);
+  logEvent(s, `New device ${ip} (${s.ips.size}/${s.settings.maxIps})`);
   return true;
 }
 
@@ -515,6 +589,7 @@ export function guestLogin(
   const guest: Guest = { id, name, color, ip, joinedAt: now, lastSeen: now, revoked: false };
   s.guests.set(id, guest);
   s.loginFailures.delete(ip);
+  logEvent(s, `Guest "${name}" joined from ${ip}`);
   console.log(`[share] ${s.projectId}: guest "${name}" joined from ${ip}`);
   return { guest, token: makeGuestToken(s, id) };
 }
@@ -526,5 +601,8 @@ export function verifyLinkToken(s: ShareSession, token: string | undefined): boo
 
 export function guestLogout(s: ShareSession, guestId: string): void {
   const g = s.guests.get(guestId);
-  if (g) g.revoked = true;
+  if (g && !g.revoked) {
+    g.revoked = true;
+    logEvent(s, `Guest "${g.name}" left`);
+  }
 }

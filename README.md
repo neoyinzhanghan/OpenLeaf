@@ -164,6 +164,8 @@ Each session gets three independent secrets, all regenerated every time:
 - **Username** — `<creature>-<4 digits>` from a bank of 1,000 animals and mythical beings (`griffin-4821`, `axolotl-2093`, `kitsune-7310`).
 - **Password** — 16 characters, Chrome-style: upper/lower/digit/symbol guaranteed, ambiguous glyphs (`0 O 1 l I`) excluded.
 
+While a session runs the host panel shows a live countdown, device and guest usage meters, every IP seen (with who signed in from it and failed-login counts) and an activity feed. The deadline can be extended (+15 min / +1 h / +4 h / +1 day, or an exact time) and the device / guest caps raised or lowered on the fly (`PATCH /api/projects/:id/share`) without ending the session: link, username and password stay the same and signed-in guests are not interrupted.
+
 Guests open the invitation link, enter the username and password, and **must give a display name**, which becomes their cursor label and their git author name. The host sees who is connected (name, IP, join time) and can kick anyone. A guest link only ever reaches `/api/projects/<that project>/…` and the collab socket for that project; the project list, server config, identities and sharing controls are host-only.
 
 New `trycloudflare.com` hostnames can take 10–30 s to resolve everywhere; if a guest sees "could not resolve host" right after you create the link, have them retry.

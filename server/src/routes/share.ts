@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { z } from "zod";
+import { z, ZodError } from "zod";
 import {
   cloudflaredAvailable,
   getShare,
@@ -8,6 +8,7 @@ import {
   revokeGuest,
   startShare,
   stopShare,
+  updateShare,
 } from "../services/share.js";
 import { hostOnly } from "../services/shareAuth.js";
 
@@ -16,6 +17,7 @@ function pid(req: { params: unknown }): string {
 }
 
 function statusOf(err: unknown): number {
+  if (err instanceof ZodError) return 400;
   if (err && typeof err === "object" && "status" in err && typeof (err as { status: unknown }).status === "number") {
     return (err as { status: number }).status;
   }
@@ -33,6 +35,16 @@ const SettingsSchema = z
     allowCompile: z.boolean().optional(),
     allowDownload: z.boolean().optional(),
     allowHistory: z.boolean().optional(),
+  })
+  .strict();
+
+const UpdateSchema = z
+  .object({
+    expiresAt: z.number().int().optional(),
+    /** Add this many minutes to the current deadline. */
+    extendMinutes: z.number().int().optional(),
+    maxIps: z.number().int().optional(),
+    maxGuests: z.number().int().optional(),
   })
   .strict();
 
@@ -65,6 +77,25 @@ projectShareRouter.post("/", async (req, res) => {
     res.status(201).json({ active: true, session: hostView(s) });
   } catch (err) {
     res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed to start share" });
+  }
+});
+
+/** Live adjustments: extend the deadline, raise/lower device and guest caps. */
+projectShareRouter.patch("/", (req, res) => {
+  try {
+    const body = UpdateSchema.parse(req.body ?? {});
+    const current = getShare(pid(req));
+    if (!current) {
+      res.status(404).json({ error: "No active share session for this project" });
+      return;
+    }
+    const { extendMinutes, ...rest } = body;
+    const expiresAt =
+      rest.expiresAt ?? (extendMinutes !== undefined ? current.settings.expiresAt + extendMinutes * 60_000 : undefined);
+    const s = updateShare(pid(req), { ...rest, ...(expiresAt !== undefined ? { expiresAt } : {}) });
+    res.json({ active: true, session: hostView(s) });
+  } catch (err) {
+    res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed to update share" });
   }
 });
 

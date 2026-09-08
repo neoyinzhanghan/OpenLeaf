@@ -72,13 +72,20 @@ export function resolveGuest(req: IncomingMessage): GuestResolution {
   return { session, guest, reason: "ok" };
 }
 
-export function cookieHeader(token: string, expiresAt: number): string {
-  const exp = new Date(expiresAt).toUTCString();
+/**
+ * Cookies outlive the session's current deadline on purpose: the host may
+ * extend it live, and validity is enforced server-side anyway (the HMAC secret
+ * rotates when the session ends).
+ */
+const COOKIE_HORIZON_MS = 31 * 24 * 3600_000;
+
+export function cookieHeader(token: string, _expiresAt: number): string {
+  const exp = new Date(Date.now() + COOKIE_HORIZON_MS).toUTCString();
   return `${GUEST_COOKIE}=${encodeURIComponent(token)}; Path=/; Expires=${exp}; HttpOnly; Secure; SameSite=Lax`;
 }
 
-export function linkCookieHeader(token: string, expiresAt: number): string {
-  const exp = new Date(expiresAt).toUTCString();
+export function linkCookieHeader(token: string, _expiresAt: number): string {
+  const exp = new Date(Date.now() + COOKIE_HORIZON_MS).toUTCString();
   return `${LINK_COOKIE}=${encodeURIComponent(token)}; Path=/; Expires=${exp}; HttpOnly; Secure; SameSite=Lax`;
 }
 

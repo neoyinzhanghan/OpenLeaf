@@ -33,8 +33,22 @@ export type ShareSessionView = {
   createdAt: number;
   settings: ShareSettings;
   ipsUsed: number;
+  ips: ShareDevice[];
+  /** Addresses refused because the device cap was full. */
+  rejectedIps: number;
   guests: ShareGuest[];
   logTail: string[];
+  events: ShareEvent[];
+};
+
+export type ShareDevice = { ip: string; firstSeen: number; guests: string[]; blockedLogins: number };
+export type ShareEvent = { at: number; text: string };
+
+export type UpdateShareInput = {
+  expiresAt?: number;
+  extendMinutes?: number;
+  maxIps?: number;
+  maxGuests?: number;
 };
 
 export type ShareStatusResponse = { active: boolean; session?: ShareSessionView };
@@ -89,6 +103,13 @@ export function getProjectShare(projectId: string): Promise<ShareStatusResponse>
 export function startProjectShare(projectId: string, input: StartShareInput): Promise<ShareStatusResponse> {
   return request(`/api/projects/${encodeURIComponent(projectId)}/share`, {
     method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function updateProjectShare(projectId: string, input: UpdateShareInput): Promise<ShareStatusResponse> {
+  return request(`/api/projects/${encodeURIComponent(projectId)}/share`, {
+    method: "PATCH",
     body: JSON.stringify(input),
   });
 }

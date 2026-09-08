@@ -1245,12 +1245,22 @@ a {
 }
 
 .share-section-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
   padding: 0.8rem 0.85rem 0.3rem;
   font-size: 0.72rem;
   font-weight: 700;
   color: var(--ink-muted);
   text-transform: uppercase;
   letter-spacing: 0.05em;
+}
+
+.share-section-title .share-muted {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
 }
 
 .share-guests {
@@ -1369,6 +1379,157 @@ a {
 .share-individual .share-cred {
   padding-left: 0;
   padding-right: 0;
+}
+
+.share-countdown {
+  font-family: var(--mono);
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--accent-strong);
+  letter-spacing: 0.02em;
+}
+
+.share-countdown.is-urgent {
+  color: var(--danger, #ef4444);
+}
+
+.share-timer,
+.share-usage {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.25rem 0.85rem 0.6rem;
+}
+
+.share-timer-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+}
+
+.share-meter {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.share-meter-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent-strong);
+  transition: width 400ms ease;
+}
+
+.share-meter-time {
+  background: linear-gradient(90deg, var(--accent-strong), var(--accent));
+}
+
+.share-usage-row.is-full .share-meter-fill {
+  background: var(--danger, #ef4444);
+}
+
+.share-extend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+}
+
+.share-chip {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.78rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+.share-usage-row {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-elevated);
+}
+
+.share-usage-head,
+.share-usage-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+}
+
+.share-usage-count strong {
+  font-size: 1rem;
+  color: var(--ink);
+}
+
+.share-usage-full {
+  margin-left: 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--danger, #ef4444);
+}
+
+.share-stepper {
+  display: inline-flex;
+  gap: 0.15rem;
+}
+
+.share-stepper .btn {
+  padding: 0.15rem 0.55rem;
+  font-size: 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  min-width: 2rem;
+}
+
+.share-usage-note {
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.share-devices,
+.share-events {
+  list-style: none;
+  margin: 0;
+  padding: 0 0.85rem 0.5rem;
+  display: grid;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+}
+
+.share-devices li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+
+.share-devices code {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+
+.share-events {
+  padding-left: 0;
+  padding-right: 0;
+  max-height: 14rem;
+  overflow: auto;
+}
+
+.share-events li {
+  line-height: 1.4;
+}
+
+.share-events .share-muted {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  margin-right: 0.4rem;
 }
 
 .share-access {

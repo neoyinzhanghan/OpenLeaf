@@ -4,7 +4,9 @@ import {
   revokeShareGuest,
   startProjectShare,
   stopProjectShare,
+  updateProjectShare,
   type ShareSessionView,
+  type UpdateShareInput,
 } from "../api/share";
 
 type Props = {
@@ -47,6 +49,85 @@ function formatRemaining(ms: number): string {
   if (h > 0) return `${h}h ${m}m`;
   if (m > 0) return `${m}m`;
   return `${s}s`;
+}
+
+const EXTEND_PRESETS = [
+  { label: "15 min", minutes: 15 },
+  { label: "1 h", minutes: 60 },
+  { label: "4 h", minutes: 240 },
+  { label: "1 day", minutes: 1440 },
+];
+
+function formatCountdown(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  if (d > 0) return `${d}d ${pad(h)}:${pad(m)}:${pad(sec)}`;
+  return `${pad(h)}:${pad(m)}:${pad(sec)}`;
+}
+
+function formatAgo(ms: number): string {
+  if (ms < 15_000) return "now";
+  return `${formatRemaining(ms)} ago`;
+}
+
+function formatClock(ms: number): string {
+  return new Date(ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function UsageMeter({
+  label,
+  hint,
+  used,
+  max,
+  extra,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  used: number;
+  max: number;
+  extra?: string;
+  disabled: boolean;
+  onChange: (next: number) => void;
+}) {
+  const pct = Math.min(100, (used / Math.max(1, max)) * 100);
+  const full = used >= max;
+  return (
+    <div className={`share-usage-row${full ? " is-full" : ""}`}>
+      <div className="share-usage-head">
+        <span className="share-field-label">{label}</span>
+        <span className="share-usage-count">
+          <strong>{used}</strong> / {max}
+          {full && <span className="share-usage-full">limit reached</span>}
+        </span>
+      </div>
+      <div className="share-meter">
+        <div className="share-meter-fill" style={{ width: `${pct}%` }} />
+      </div>
+      <div className="share-usage-foot">
+        <span className="share-muted">
+          {hint}
+          {extra ? ` · ${extra}` : ""}
+        </span>
+        <span className="share-stepper" aria-label={`Adjust ${label.toLowerCase()} limit`}>
+          <button type="button" className="btn btn-ghost" disabled={disabled || max <= 1} onClick={() => onChange(max - 1)}>
+            −
+          </button>
+          <button type="button" className="btn btn-ghost" disabled={disabled} onClick={() => onChange(max + 1)}>
+            +
+          </button>
+          <button type="button" className="btn btn-ghost" disabled={disabled} onClick={() => onChange(max + 5)}>
+            +5
+          </button>
+        </span>
+      </div>
+    </div>
+  );
 }
 
 function selectAll(el: HTMLElement): void {
@@ -122,6 +203,9 @@ export function SharePanel({ projectId, open, onClose, onActiveChange }: Props) 
   const [allowDownload, setAllowDownload] = useState(true);
   const [allowHistory, setAllowHistory] = useState(true);
   const [showPassword, setShowPassword] = useState(true);
+  const [adjusting, setAdjusting] = useState(false);
+  const [showExtendPicker, setShowExtendPicker] = useState(false);
+  const [extendTo, setExtendTo] = useState(() => toLocalInputValue(Date.now() + 24 * 3600_000));
 
   const refresh = useCallback(async () => {
     try {
@@ -143,10 +227,12 @@ export function SharePanel({ projectId, open, onClose, onActiveChange }: Props) 
   // Poll while open and active so the guest list / countdown stay fresh.
   useEffect(() => {
     if (!open) return;
+    let tick = 0;
     const t = window.setInterval(() => {
       setNow(Date.now());
-      if (session) void refresh();
-    }, 5000);
+      tick += 1;
+      if (session && tick % 5 === 0) void refresh();
+    }, 1000);
     return () => window.clearInterval(t);
   }, [open, session, refresh]);
 
@@ -201,6 +287,19 @@ export function SharePanel({ projectId, open, onClose, onActiveChange }: Props) 
     }
   };
 
+  const onUpdate = async (patch: UpdateShareInput) => {
+    setAdjusting(true);
+    setError(null);
+    try {
+      const r = await updateProjectShare(projectId, patch);
+      setSession(r.session ?? null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update share");
+    } finally {
+      setAdjusting(false);
+    }
+  };
+
   const onRevoke = async (guestId: string, name: string) => {
     if (!window.confirm(`Kick "${name}"? They will need to sign in again (if the limits allow).`)) return;
     try {
@@ -215,6 +314,10 @@ export function SharePanel({ projectId, open, onClose, onActiveChange }: Props) 
 
   const liveGuests = session ? session.guests.filter((g) => !g.revoked) : [];
   const inviteText = session ? buildInvitation(session) : "";
+  const remaining = session ? session.settings.expiresAt - now : 0;
+  const elapsedPct = session
+    ? Math.min(100, Math.max(0, ((now - session.createdAt) / (session.settings.expiresAt - session.createdAt)) * 100))
+    : 0;
 
   return (
     <aside className="history-drawer share-drawer" aria-label="Share project">
@@ -289,35 +392,124 @@ export function SharePanel({ projectId, open, onClose, onActiveChange }: Props) 
             </div>
           </details>
 
-          <dl className="share-facts">
-            <dt>Expires</dt>
-            <dd>
-              {formatWhen(session.settings.expiresAt)}{" "}
-              <span className="share-muted">(in {formatRemaining(session.settings.expiresAt - now)})</span>
-            </dd>
-            <dt>Mode</dt>
-            <dd>{session.settings.readOnly ? "Read-only" : "Read & write"}</dd>
-            <dt>Devices</dt>
-            <dd>
-              {session.ipsUsed} / {session.settings.maxIps} unique IPs used
-            </dd>
-            <dt>Guests</dt>
-            <dd>
-              {liveGuests.length} / {session.settings.maxGuests} signed in
-            </dd>
-            <dt>Guests may</dt>
-            <dd>
+          <div className="share-section-title">
+            Time left
+            <span className={`share-countdown${remaining < 5 * 60_000 ? " is-urgent" : ""}`}>{formatCountdown(remaining)}</span>
+          </div>
+          <div className="share-timer">
+            <div className="share-meter">
+              <div className="share-meter-fill share-meter-time" style={{ width: `${elapsedPct}%` }} />
+            </div>
+            <div className="share-timer-row">
+              <span className="share-muted">
+                Opened {formatWhen(session.createdAt)} · ends {formatWhen(session.settings.expiresAt)}
+              </span>
+            </div>
+            <div className="share-extend">
+              <span className="share-muted">Extend</span>
+              {EXTEND_PRESETS.map((p) => (
+                <button
+                  key={p.minutes}
+                  type="button"
+                  className="btn btn-ghost share-chip"
+                  disabled={adjusting}
+                  onClick={() => void onUpdate({ extendMinutes: p.minutes })}
+                >
+                  +{p.label}
+                </button>
+              ))}
+              <button
+                type="button"
+                className="btn btn-ghost share-chip"
+                disabled={adjusting}
+                onClick={() => setShowExtendPicker((v) => !v)}
+              >
+                until…
+              </button>
+            </div>
+            {showExtendPicker && (
+              <div className="share-inline">
+                <input type="datetime-local" value={extendTo} onChange={(e) => setExtendTo(e.target.value)} />
+                <button
+                  type="button"
+                  className="btn btn-ghost share-chip"
+                  disabled={adjusting}
+                  onClick={() => {
+                    const t = new Date(extendTo).getTime();
+                    if (!Number.isFinite(t)) {
+                      setError("Pick a valid date and time");
+                      return;
+                    }
+                    void onUpdate({ expiresAt: Math.round(t) }).then(() => setShowExtendPicker(false));
+                  }}
+                >
+                  Set deadline
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="share-section-title">Limits &amp; usage</div>
+          <div className="share-usage">
+            <UsageMeter
+              label="Devices"
+              hint="distinct IP addresses admitted"
+              used={session.ipsUsed}
+              max={session.settings.maxIps}
+              extra={session.rejectedIps > 0 ? `${session.rejectedIps} turned away` : undefined}
+              disabled={adjusting}
+              onChange={(v) => void onUpdate({ maxIps: v })}
+            />
+            <UsageMeter
+              label="Guests"
+              hint="signed in right now"
+              used={liveGuests.length}
+              max={session.settings.maxGuests}
+              extra={
+                session.guests.length > liveGuests.length
+                  ? `${session.guests.length} joined in total, ${session.guests.length - liveGuests.length} left or kicked`
+                  : undefined
+              }
+              disabled={adjusting}
+              onChange={(v) => void onUpdate({ maxGuests: v })}
+            />
+            <div className="share-muted share-usage-note">
+              Changes apply instantly; the link and credentials stay the same. Lowering a limit below current usage
+              only blocks newcomers.
+            </div>
+          </div>
+
+          {session.ips.length > 0 && (
+            <>
+              <div className="share-section-title">Devices seen</div>
+              <ul className="share-devices">
+                {session.ips.map((d) => (
+                  <li key={d.ip}>
+                    <code>{d.ip}</code>
+                    <span className="share-muted">
+                      first seen {formatWhen(d.firstSeen)}
+                      {d.guests.length > 0 ? ` · ${d.guests.join(", ")}` : " · no sign-in yet"}
+                      {d.blockedLogins > 0 ? ` · ${d.blockedLogins} failed login${d.blockedLogins === 1 ? "" : "s"}` : ""}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+
+          <div className="share-section-title">
+            Signed-in guests
+            <span className="share-muted">
+              {session.settings.readOnly ? "read-only" : "read & write"} ·{" "}
               {[
                 session.settings.allowCompile ? "compile" : null,
                 session.settings.allowDownload ? "download" : null,
-                session.settings.allowHistory ? "view history" : null,
+                session.settings.allowHistory ? "history" : null,
               ]
                 .filter(Boolean)
-                .join(", ") || "only read"}
-            </dd>
-          </dl>
-
-          <div className="share-section-title">Signed-in guests</div>
+                .join(", ") || "no extras"}
+            </span>
+          </div>
           {liveGuests.length === 0 ? (
             <p className="share-muted share-pad">Nobody has joined yet.</p>
           ) : (
@@ -328,7 +520,7 @@ export function SharePanel({ projectId, open, onClose, onActiveChange }: Props) 
                     {g.name}
                   </span>
                   <span className="share-muted">
-                    {g.ip} · joined {formatWhen(g.joinedAt)}
+                    {g.ip} · joined {formatWhen(g.joinedAt)} · active {formatAgo(now - g.lastSeen)}
                   </span>
                   <button type="button" className="btn btn-ghost share-copy" onClick={() => void onRevoke(g.id, g.name)}>
                     Kick
@@ -337,6 +529,20 @@ export function SharePanel({ projectId, open, onClose, onActiveChange }: Props) 
               ))}
             </ul>
           )}
+
+          <details className="share-individual">
+            <summary>Activity ({session.events.length})</summary>
+            <ul className="share-events">
+              {session.events
+                .slice()
+                .reverse()
+                .map((e, i) => (
+                  <li key={`${e.at}-${i}`}>
+                    <span className="share-muted">{formatClock(e.at)}</span> {e.text}
+                  </li>
+                ))}
+            </ul>
+          </details>
 
           <div className="share-footer">
             <button type="button" className="btn btn-danger" onClick={() => void onStop()} disabled={busy}>
