@@ -69,6 +69,9 @@ export type ShareSession = {
   status: ShareStatus;
   error?: string;
   expiryTimer: NodeJS.Timeout | null;
+  dnsProbeTimer: NodeJS.Timeout | null;
+  /** False until the trycloudflare.com hostname resolves publicly (Quick Tunnel lag). */
+  dnsReady: boolean;
   /** Raw cloudflared output (diagnostics). */
   logTail: string[];
   /** Host-facing activity feed: joins, limits, extensions. */
@@ -208,6 +211,7 @@ export function hostView(s: ShareSession) {
     url: s.url,
     inviteUrl: s.url ? `${s.url}/join/${s.linkToken}` : "",
     hostname: s.hostname,
+    dnsReady: s.dnsReady,
     username: s.username,
     password: s.password,
     createdAt: s.createdAt,
@@ -300,6 +304,10 @@ function armExpiry(s: ShareSession, projectId: string, expiresAt: number): void 
     clearTimeout(s.expiryTimer);
     s.expiryTimer = null;
   }
+  if (s.dnsProbeTimer) {
+    clearTimeout(s.dnsProbeTimer);
+    s.dnsProbeTimer = null;
+  }
   s.expiryTimer = setTimeout(() => {
     logEvent(s, "Session expired");
     void stopShare(projectId, "expired");
@@ -323,6 +331,55 @@ function logEvent(s: ShareSession, text: string) {
 function pushLog(s: ShareSession, line: string) {
   s.logTail.push(line);
   if (s.logTail.length > 60) s.logTail.splice(0, s.logTail.length - 60);
+}
+
+
+/** Ask Cloudflare DoH whether the Quick Tunnel hostname is publicly resolvable. */
+async function hostnameResolves(hostname: string): Promise<boolean> {
+  try {
+    const res = await fetch(
+      `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(hostname)}&type=A`,
+      { headers: { accept: "application/dns-json" }, signal: AbortSignal.timeout(5000) },
+    );
+    if (!res.ok) return false;
+    const body = (await res.json()) as { Status?: number; Answer?: Array<{ type: number }> };
+    return body.Status === 0 && Array.isArray(body.Answer) && body.Answer.some((a) => a.type === 1);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Quick Tunnel prints a URL before the name is in public DNS. Guests who open
+ * it in that window (especially on Windows) get ERR_NAME_NOT_RESOLVED, and the
+ * negative answer can stick in their resolver cache. Probe until it resolves.
+ */
+function startDnsProbe(s: ShareSession): void {
+  if (!s.hostname || s.dnsReady) return;
+  let attempts = 0;
+  const maxAttempts = 90; // ~3 minutes at 2s
+  const tick = async () => {
+    if (s.status !== "active" || s.dnsReady) return;
+    attempts += 1;
+    const ok = await hostnameResolves(s.hostname);
+    if (ok) {
+      s.dnsReady = true;
+      s.dnsProbeTimer = null;
+      logEvent(s, "Public DNS is ready — safe to share the link");
+      console.log(`[share] ${s.projectId}: DNS ready for ${s.hostname}`);
+      return;
+    }
+    if (attempts === 1 || attempts % 15 === 0) {
+      logEvent(s, `Waiting for Cloudflare to publish DNS (${attempts * 2}s)…`);
+    }
+    if (attempts >= maxAttempts) {
+      s.dnsProbeTimer = null;
+      logEvent(s, "DNS still not resolving after 3 minutes — try ending and recreating the link");
+      return;
+    }
+    s.dnsProbeTimer = setTimeout(() => void tick(), 2000);
+  };
+  void tick();
 }
 
 const TUNNEL_URL_RE = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/i;
@@ -356,6 +413,8 @@ export async function startShare(projectId: string, input: Partial<ShareSettings
     proc: null,
     status: "starting",
     expiryTimer: null,
+    dnsProbeTimer: null,
+    dnsReady: false,
     logTail: [],
     events: [],
   };
@@ -430,6 +489,7 @@ export async function startShare(projectId: string, input: Partial<ShareSettings
   }
 
   session.status = "active";
+  startDnsProbe(session);
   if (settings.expiresAt === null) {
     logEvent(session, "Link opened with no expiry");
     console.log(`[share] ${projectId} -> ${session.url} (indefinite)`);

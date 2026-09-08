@@ -29,6 +29,8 @@ export type ShareSessionView = {
   /** What to send to guests: tunnel origin + themed /join/<token> path. */
   inviteUrl: string;
   hostname: string;
+  /** False until trycloudflare.com DNS is publicly resolvable. */
+  dnsReady: boolean;
   username: string;
   password: string;
   createdAt: number;

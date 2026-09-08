@@ -168,7 +168,7 @@ While a session runs the host panel shows a live countdown, device and guest usa
 
 Guests open the invitation link, enter the username and password, and **must give a display name**, which becomes their cursor label and their git author name. The host sees who is connected (name, IP, join time) and can kick anyone. A guest link only ever reaches `/api/projects/<that project>/…` and the collab socket for that project; the project list, server config, identities and sharing controls are host-only.
 
-New `trycloudflare.com` hostnames can take 10–30 s to resolve everywhere; if a guest sees "could not resolve host" right after you create the link, have them retry.
+New `trycloudflare.com` hostnames often take 30–90 s (sometimes a couple of minutes) to appear in public DNS. The share panel waits for that and shows **Public DNS is ready** before you should send the link. If a guest already hit `ERR_NAME_NOT_RESOLVED` on Windows, have them wait a minute or run `ipconfig /flushdns`, then retry — negative DNS answers are cached.
 
 ## Security note
 

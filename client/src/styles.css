@@ -1368,6 +1368,34 @@ a {
   min-width: 0;
 }
 
+.share-dns-wait,
+.share-dns-ready {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0.4rem 0.85rem 0;
+  padding: 0.7rem 0.85rem;
+  border-radius: 10px;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.share-dns-wait {
+  background: color-mix(in srgb, #f59e0b 14%, var(--bg-elevated));
+  border: 1px solid color-mix(in srgb, #f59e0b 45%, var(--line));
+  color: var(--ink);
+}
+
+.share-dns-wait strong {
+  color: #d97706;
+}
+
+.share-dns-ready {
+  background: color-mix(in srgb, var(--accent-strong) 12%, var(--bg-elevated));
+  border: 1px solid color-mix(in srgb, var(--accent-strong) 40%, var(--line));
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
 .share-invite {
   display: grid;
   gap: 0.55rem;

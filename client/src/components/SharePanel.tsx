@@ -375,6 +375,22 @@ export function SharePanel({ projectId, open, onClose, onActiveChange }: Props) 
             session kills the link and all guest sign-ins; the next session gets a new link and new credentials.
           </p>
 
+          {!session.dnsReady && (
+            <div className="share-dns-wait" role="status">
+              <strong>Hold on — Cloudflare is still publishing this hostname.</strong>
+              <span>
+                Opening the link too early shows <code>ERR_NAME_NOT_RESOLVED</code>. This often takes 30–90 seconds.
+                On Windows, a failed lookup can stick: wait for the green ready state below, or run{" "}
+                <code>ipconfig /flushdns</code> in Command Prompt and retry.
+              </span>
+            </div>
+          )}
+          {session.dnsReady && (
+            <div className="share-dns-ready" role="status">
+              Public DNS is ready — safe to send the invitation.
+            </div>
+          )}
+
           <div className="share-invite">
             <div className="share-invite-head">
               <span className="share-field-label">Invitation</span>
@@ -391,10 +407,12 @@ export function SharePanel({ projectId, open, onClose, onActiveChange }: Props) 
               {showPassword ? inviteText : inviteText.replace(session.password, "••••••••••••••••")}
             </pre>
             <CopyButton value={inviteText} label="invitation" primary>
-              Copy invitation
+              {session.dnsReady ? "Copy invitation" : "Copy anyway (DNS not ready)"}
             </CopyButton>
             <span className="share-muted">
-              Paste it into chat or email — it has the link, the username and the password (even when masked above).
+              {session.dnsReady
+                ? "Paste it into chat or email — it has the link, the username and the password (even when masked above)."
+                : "Wait for “Public DNS is ready” before sending this to guests if you can — early opens fail DNS on their machine."}
             </span>
           </div>
 
