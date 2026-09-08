@@ -155,7 +155,10 @@ export function bindYTextToMonaco(
             let startOff = change.rangeOffset;
             let deleteLen = change.rangeLength;
             if (eol !== "\n") {
-              startOff = yOffsetAt(model, change.range.getStartPosition());
+              startOff = yOffsetAt(model, {
+                lineNumber: change.range.startLineNumber,
+                column: change.range.startColumn,
+              });
               deleteLen = Math.max(
                 0,
                 change.rangeLength - (change.range.endLineNumber - change.range.startLineNumber),
