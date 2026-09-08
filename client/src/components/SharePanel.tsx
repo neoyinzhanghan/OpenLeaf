@@ -354,13 +354,32 @@ export function SharePanel({ projectId, open, onClose, onActiveChange }: Props) 
               </label>
             </div>
 
-            <label className="share-check">
-              <input type="checkbox" checked={readOnly} onChange={(e) => setReadOnly(e.target.checked)} />
-              <span>
-                <strong>Read-only</strong>
-                <span className="share-muted"> — guests follow along; edits, uploads and renames are blocked</span>
-              </span>
-            </label>
+            <div className="share-field">
+              <span className="share-field-label">Guest access</span>
+              <div className="share-access">
+                <label className={`share-access-option${!readOnly ? " is-selected" : ""}`}>
+                  <input type="radio" name="share-access" checked={!readOnly} onChange={() => setReadOnly(false)} />
+                  <span>
+                    <strong>Read &amp; write</strong>
+                    <span className="share-muted">
+                      Guests edit the source live with you, add/rename/upload files and save. Their changes are committed
+                      under their display name.
+                    </span>
+                  </span>
+                </label>
+                <label className={`share-access-option${readOnly ? " is-selected" : ""}`}>
+                  <input type="radio" name="share-access" checked={readOnly} onChange={() => setReadOnly(true)} />
+                  <span>
+                    <strong>Read-only</strong>
+                    <span className="share-muted">
+                      Guests follow along and see your cursor, but every edit, upload or rename is rejected by the server.
+                    </span>
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            <span className="share-field-label">Guests may also…</span>
             <label className="share-check">
               <input type="checkbox" checked={allowCompile} onChange={(e) => setAllowCompile(e.target.checked)} />
               <span>
@@ -386,7 +405,7 @@ export function SharePanel({ projectId, open, onClose, onActiveChange }: Props) 
 
           <div className="share-footer">
             <button type="button" className="btn btn-primary" onClick={() => void onStart()} disabled={busy}>
-              {busy ? "Opening tunnel…" : "Create public link"}
+              {busy ? "Opening tunnel…" : readOnly ? "Create read-only link" : "Create read & write link"}
             </button>
           </div>
           <p className="share-muted share-pad">

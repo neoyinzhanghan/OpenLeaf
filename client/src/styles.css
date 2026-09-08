@@ -1321,6 +1321,40 @@ a {
   min-width: 0;
 }
 
+.share-access {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.share-access-option {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.6rem;
+  align-items: start;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.share-access-option input {
+  margin-top: 0.15rem;
+}
+
+.share-access-option .share-muted {
+  display: block;
+  margin-top: 0.15rem;
+  line-height: 1.4;
+}
+
+.share-access-option.is-selected {
+  border-color: var(--accent-strong);
+  box-shadow: 0 0 0 1px var(--accent-strong) inset;
+}
+
 .share-check {
   display: grid;
   grid-template-columns: auto 1fr;
