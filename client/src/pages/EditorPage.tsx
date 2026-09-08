@@ -267,12 +267,20 @@ export function EditorPage() {
     return () => yText.unobserve(sync);
   }, [yText]);
 
+  const lastTextPathRef = useRef<string | null>(null);
+
   useEffect(() => {
     if (!id || !activePath) return;
     let cancelled = false;
     const pathBeingLoaded = activePath;
-    setFileReady(false);
-    setYText(null);
+    const pathChanged = lastTextPathRef.current !== pathBeingLoaded;
+    // Only blank the editor when switching files. Re-running because collab
+    // just synced must keep showing disk content (otherwise the host sees an
+    // empty buffer until a full refresh).
+    if (pathChanged) {
+      setFileReady(false);
+      setYText(null);
+    }
     (async () => {
       try {
         const forceText = forceTextPath === pathBeingLoaded;
@@ -281,6 +289,7 @@ export function EditorPage() {
         if (cancelled || activePathRef.current !== pathBeingLoaded) return;
         setError(null);
         if (forceBase64 || (!file.text && !forceText)) {
+          lastTextPathRef.current = pathBeingLoaded;
           if (forceBase64) {
             setEditMode("base64");
             setBinaryMeta(null);
@@ -298,6 +307,7 @@ export function EditorPage() {
             setContent("");
             setSavedContent("");
           }
+          setYText(null);
           setFileReady(true);
           setStatus("idle");
           return;
@@ -305,10 +315,15 @@ export function EditorPage() {
 
         setBinaryMeta(null);
         setEditMode("text");
+        // Always paint disk content immediately so the buffer is never blank
+        // while we wait for the Yjs room to finish syncing.
+        setContent(file.content);
+        setSavedContent(file.content);
+        lastTextPathRef.current = pathBeingLoaded;
 
         // Wait for collab sync before binding — avoids dropping pre-sync keystrokes
         if (collab.doc && !collab.synced) {
-          setFileReady(false);
+          setFileReady(true);
           setStatus("idle");
           return;
         }
@@ -1022,7 +1037,7 @@ export function EditorPage() {
                         onForwardSearch={(line, col) => void onForwardSearch(line, col)}
                         yText={collabText ? yText : null}
                         awareness={collabText ? collab.awareness : null}
-                        readOnly={readOnly}
+                        readOnly={readOnly || (editMode === "text" && Boolean(collab.doc) && !yText)}
                       />
                     </>
                   )}

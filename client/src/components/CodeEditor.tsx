@@ -184,7 +184,11 @@ export function CodeEditor({
     });
   };
 
-  // MonacoBinding for collaborative text — one model URI per project path
+  // MonacoBinding for collaborative text.
+  // Bind the *visible* @monaco-editor/react model (keyed by `path`) — a parallel
+  // inmemory:// model left the UI on an empty cached buffer. Also force LF so
+  // Monaco offsets match Y.Text indices (CRLF hosts/guests otherwise see the
+  // caret sit one character behind; see y-monaco#6).
   useEffect(() => {
     bindingRef.current?.destroy();
     bindingRef.current = null;
@@ -193,15 +197,19 @@ export function CodeEditor({
     const monacoApi = monacoRef.current;
     if (!ed || !yText || !path || !monacoApi) return;
 
-    const uri = monacoApi.Uri.parse(`inmemory://openleaf/${encodeURIComponent(path)}`);
-    let model = monacoApi.editor.getModel(uri);
-    if (!model) {
-      model = monacoApi.editor.createModel(yText.toString(), languageFor(path), uri);
-    } else if (model.getLanguageId() !== languageFor(path)) {
-      monacoApi.editor.setModelLanguage(model, languageFor(path));
+    const model = ed.getModel();
+    if (!model) return;
+    const lang = languageFor(path);
+    if (model.getLanguageId() !== lang) {
+      monacoApi.editor.setModelLanguage(model, lang);
     }
-    if (ed.getModel() !== model) {
-      ed.setModel(model);
+
+    const yValue = yText.toString();
+    model.pushEOL(monacoApi.editor.EndOfLineSequence.LF);
+    if (model.getValue() !== yValue) {
+      model.setValue(yValue);
+      // setValue can restore the platform default EOL — pin LF again.
+      model.pushEOL(monacoApi.editor.EndOfLineSequence.LF);
     }
 
     const binding = new MonacoBinding(yText, model, new Set([ed]), awareness ?? undefined);

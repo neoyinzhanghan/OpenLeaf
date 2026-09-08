@@ -230,7 +230,9 @@ export class ProjectRoom {
     const full = resolveProjectPath(this.projectId, filePath);
     let content = "";
     try {
-      content = fsSync.readFileSync(full, "utf8");
+      // Normalize to LF so Y.Text indices match Monaco when guests are on Windows
+      // (Monaco defaults to CRLF there; y-monaco maps offsets 1:1).
+      content = fsSync.readFileSync(full, "utf8").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
     } catch {
       content = "";
     }
