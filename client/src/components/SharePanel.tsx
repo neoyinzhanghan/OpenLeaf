@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   getProjectShare,
   revokeShareGuest,
@@ -215,16 +215,22 @@ export function SharePanel({ projectId, open, onClose, onActiveChange }: Props) 
   const [showExtendPicker, setShowExtendPicker] = useState(false);
   const [extendTo, setExtendTo] = useState(() => toLocalInputValue(Date.now() + 24 * 3600_000));
 
+  const onActiveChangeRef = useRef(onActiveChange);
+  onActiveChangeRef.current = onActiveChange;
+
   const refresh = useCallback(async () => {
     try {
       const r = await getProjectShare(projectId);
       const s = r.active && r.session ? r.session : null;
       setSession(s);
-      onActiveChange?.({ active: Boolean(s), expiresAt: s ? s.settings.expiresAt : undefined });
+      onActiveChangeRef.current?.({
+        active: Boolean(s),
+        expiresAt: s ? s.settings.expiresAt : undefined,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load share status");
     }
-  }, [projectId, onActiveChange]);
+  }, [projectId]);
 
   useEffect(() => {
     if (!open) return;
@@ -232,19 +238,26 @@ export function SharePanel({ projectId, open, onClose, onActiveChange }: Props) 
     void refresh().finally(() => setLoading(false));
   }, [open, refresh]);
 
-  // Poll while open and active so the guest list / countdown stay fresh.
+  // Live clock: ticks whenever a session exists, even with the drawer closed, so
+  // opening the panel never shows a stale remaining time. Deliberately does not
+  // depend on `refresh` — that callback used to change every parent render and
+  // tear this interval down before it could fire.
+  const sessionId = session?.id;
   useEffect(() => {
-    if (!open) return;
-    let tick = 0;
-    const t = window.setInterval(() => {
-      setNow(Date.now());
-      tick += 1;
-      if (session && tick % 5 === 0) void refresh();
-    }, 1000);
+    if (!sessionId) return;
+    setNow(Date.now());
+    const t = window.setInterval(() => setNow(Date.now()), 250);
     return () => window.clearInterval(t);
-  }, [open, session, refresh]);
+  }, [sessionId]);
 
-  // Keep the header badge accurate even when the drawer is closed.
+  // Guest list / usage while the drawer is open.
+  useEffect(() => {
+    if (!open || !sessionId) return;
+    const t = window.setInterval(() => void refresh(), 5000);
+    return () => window.clearInterval(t);
+  }, [open, sessionId, refresh]);
+
+  // Keep the toolbar badge accurate even when the drawer is closed.
   useEffect(() => {
     void refresh();
     const t = window.setInterval(() => void refresh(), 30_000);

@@ -94,14 +94,44 @@ export function EditorPage() {
   const [shareOpen, setShareOpen] = useState(false);
   const [shareActive, setShareActive] = useState(false);
   const [shareExpiresAt, setShareExpiresAt] = useState<number | null | undefined>(undefined);
-  const [shareNow, setShareNow] = useState(() => Date.now());
+  const [shareTimerLabel, setShareTimerLabel] = useState("Live link");
+  const [shareUrgent, setShareUrgent] = useState(false);
+  const shareExpiresAtRef = useRef(shareExpiresAt);
+  shareExpiresAtRef.current = shareExpiresAt;
 
+  const onShareStatus = useCallback((info: { active: boolean; expiresAt: number | null | undefined }) => {
+    setShareActive(info.active);
+    setShareExpiresAt(info.expiresAt);
+  }, []);
+
+  // Drive the toolbar label from an interval so it visibly ticks even if other
+  // state updates are batched or bailed out.
   useEffect(() => {
-    if (!shareActive) return;
-    setShareNow(Date.now());
-    const t = window.setInterval(() => setShareNow(Date.now()), 1000);
+    if (!shareActive) {
+      setShareTimerLabel("Live link");
+      setShareUrgent(false);
+      return;
+    }
+    const tick = () => {
+      const exp = shareExpiresAtRef.current;
+      if (exp === null) {
+        setShareTimerLabel("Live · no expiry");
+        setShareUrgent(false);
+        return;
+      }
+      if (exp === undefined) {
+        setShareTimerLabel("Live link");
+        setShareUrgent(false);
+        return;
+      }
+      const left = exp - Date.now();
+      setShareTimerLabel(`Live · ${formatShareLeft(left)}`);
+      setShareUrgent(left < 5 * 60_000);
+    };
+    tick();
+    const t = window.setInterval(tick, 250);
     return () => window.clearInterval(t);
-  }, [shareActive]);
+  }, [shareActive, shareExpiresAt]);
 
   const [project, setProject] = useState<ProjectMeta | null>(null);
   const [config, setConfig] = useState<AppConfig | null>(null);
@@ -817,13 +847,7 @@ export function EditorPage() {
               {shareActive && (
                 <button
                   type="button"
-                  className={`btn share-timer-chip${
-                    shareExpiresAt !== null &&
-                    shareExpiresAt !== undefined &&
-                    shareExpiresAt - shareNow < 5 * 60_000
-                      ? " is-urgent"
-                      : ""
-                  }`}
+                  className={`btn share-timer-chip${shareUrgent ? " is-urgent" : ""}`}
                   onClick={() => setShareOpen(true)}
                   title={
                     shareExpiresAt === null
@@ -836,11 +860,7 @@ export function EditorPage() {
                   <span className="share-timer-dot" aria-hidden>
                     ●
                   </span>
-                  {shareExpiresAt === null
-                    ? "Live · no expiry"
-                    : shareExpiresAt
-                      ? `Live · ${formatShareLeft(shareExpiresAt - shareNow)}`
-                      : "Live link"}
+                  {shareTimerLabel}
                 </button>
               )}
               {!shareActive && (
@@ -904,10 +924,7 @@ export function EditorPage() {
           projectId={id}
           open={shareOpen}
           onClose={() => setShareOpen(false)}
-          onActiveChange={(info) => {
-            setShareActive(info.active);
-            setShareExpiresAt(info.expiresAt);
-          }}
+          onActiveChange={onShareStatus}
         />
       )}
 
