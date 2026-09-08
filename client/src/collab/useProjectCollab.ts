@@ -27,7 +27,11 @@ function collabWsBase(): string {
   return `${proto}//${window.location.host}/collab`;
 }
 
-export function useProjectCollab(projectId: string | undefined): ProjectCollab {
+/**
+ * @param fixedIdentity When set (guest via share link), the identity is fixed by
+ *   the server-side sign-in and the project identity list is not consulted.
+ */
+export function useProjectCollab(projectId: string | undefined, fixedIdentity?: Identity | null): ProjectCollab {
   const [identities, setIdentities] = useState<Identity[]>([]);
   const [identityId, setIdentityIdState] = useState<string | null>(null);
   const [status, setStatus] = useState<CollabStatus>("disconnected");
@@ -41,19 +45,24 @@ export function useProjectCollab(projectId: string | undefined): ProjectCollab {
   } | null>(null);
   const [filesTick, setFilesTick] = useState(0);
 
-  const identity = pickIdentity(identities, identityId);
+  const identity = fixedIdentity ?? pickIdentity(identities, identityId);
 
   const setIdentityId = useCallback(
     (id: string) => {
-      if (!projectId) return;
+      if (!projectId || fixedIdentity) return;
       storeIdentityId(projectId, id);
       setIdentityIdState(id);
     },
-    [projectId],
+    [projectId, fixedIdentity],
   );
 
   // Load per-project identities
   useEffect(() => {
+    if (fixedIdentity) {
+      setIdentities([fixedIdentity]);
+      setIdentityIdState(fixedIdentity.id);
+      return;
+    }
     if (!projectId) {
       setIdentities([]);
       setIdentityIdState(null);
@@ -85,7 +94,7 @@ export function useProjectCollab(projectId: string | undefined): ProjectCollab {
     return () => {
       cancelled = true;
     };
-  }, [projectId]);
+  }, [projectId, fixedIdentity]);
 
   // Connect (or reconnect when project / identity changes — identity is part of the handshake)
   useEffect(() => {

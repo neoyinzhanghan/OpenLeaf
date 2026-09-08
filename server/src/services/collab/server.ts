@@ -7,6 +7,7 @@ import * as awarenessProtocol from "y-protocols/awareness";
 import * as syncProtocol from "y-protocols/sync";
 import type { Identity } from "../../config.js";
 import { getProjectIdentity, projectDir } from "../projectFs.js";
+import { isTunnelRequest, resolveGuest } from "../shareAuth.js";
 import { getOrCreateRoom, releaseRoomIfEmpty, type ProjectRoom } from "./room.js";
 
 const messageSync = 0;
@@ -68,6 +69,14 @@ function parseCollabUrl(req: IncomingMessage): { projectId: string; identityId: 
   }
 }
 
+/** Well-formed HTTP rejection for a failed upgrade (proxies choke on header-less replies). */
+function rejectUpgrade(socket: import("node:stream").Duplex, code: number, text: string): void {
+  socket.write(
+    `HTTP/1.1 ${code} ${text}\r\nContent-Type: text/plain\r\nContent-Length: ${text.length}\r\nConnection: close\r\n\r\n${text}`,
+  );
+  socket.destroy();
+}
+
 function send(conn: WebSocket, encoder: encoding.Encoder): void {
   if (conn.readyState === WebSocket.OPEN) {
     conn.send(encoding.toUint8Array(encoder));
@@ -82,8 +91,7 @@ export function attachCollabServer(httpServer: HttpServer): WebSocketServer {
       const parsed = parseCollabUrl(req);
       if (!parsed) {
         if ((req.url ?? "").startsWith("/collab")) {
-          socket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
-          socket.destroy();
+          rejectUpgrade(socket, 400, "Bad Request");
         }
         return;
       }
@@ -91,25 +99,39 @@ export function attachCollabServer(httpServer: HttpServer): WebSocketServer {
       try {
         const dir = projectDir(parsed.projectId);
         if (!fs.existsSync(dir)) {
-          socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
-          socket.destroy();
+          rejectUpgrade(socket, 404, "Not Found");
           return;
         }
       } catch {
-        socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
-        socket.destroy();
+        rejectUpgrade(socket, 404, "Not Found");
         return;
       }
 
-      const identity = await getProjectIdentity(parsed.projectId, parsed.identityId);
+      let identity: Identity | undefined;
+      let readOnly = false;
+      if (isTunnelRequest(req)) {
+        // Guest via share link: identity comes from the signed-in guest, never from the URL.
+        const r = resolveGuest(req);
+        if (r.reason !== "ok") {
+          rejectUpgrade(socket, 401, "Unauthorized");
+          return;
+        }
+        if (r.session.projectId !== parsed.projectId) {
+          rejectUpgrade(socket, 403, "Forbidden");
+          return;
+        }
+        identity = { id: r.guest.id, name: r.guest.name, color: r.guest.color };
+        readOnly = r.session.settings.readOnly;
+      } else {
+        identity = await getProjectIdentity(parsed.projectId, parsed.identityId);
+      }
       if (!identity) {
-        socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-        socket.destroy();
+        rejectUpgrade(socket, 403, "Forbidden");
         return;
       }
 
       wss.handleUpgrade(req, socket, head, (ws) => {
-        wss.emit("connection", ws, req, { ...parsed, identity });
+        wss.emit("connection", ws, req, { ...parsed, identity, readOnly });
       });
     })();
   });
@@ -119,7 +141,7 @@ export function attachCollabServer(httpServer: HttpServer): WebSocketServer {
     async (
       conn: WebSocket,
       _req: IncomingMessage,
-      parsed: { projectId: string; identityId: string; identity: Identity },
+      parsed: { projectId: string; identityId: string; identity: Identity; readOnly: boolean },
     ) => {
       let room: ProjectRoom;
       try {
@@ -176,7 +198,16 @@ export function attachCollabServer(httpServer: HttpServer): WebSocketServer {
             case messageSync: {
               const encoder = encoding.createEncoder();
               encoding.writeVarUint(encoder, messageSync);
-              syncProtocol.readSyncMessage(decoder, encoder, room.doc, conn);
+              if (parsed.readOnly) {
+                // Read-only guests may request state (step 1) but any update they
+                // send (step 2 / update) is dropped so the shared doc never changes.
+                const syncType = decoding.readVarUint(decoder);
+                if (syncType === syncProtocol.messageYjsSyncStep1) {
+                  syncProtocol.readSyncStep1(decoder, encoder, room.doc);
+                }
+              } else {
+                syncProtocol.readSyncMessage(decoder, encoder, room.doc, conn);
+              }
               if (encoding.length(encoder) > 1) send(conn, encoder);
               break;
             }

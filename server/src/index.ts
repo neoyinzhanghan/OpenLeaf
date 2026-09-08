@@ -8,8 +8,11 @@ import { getPublicConfig, loadConfig, REPO_ROOT } from "./config.js";
 import { attachCollabServer } from "./services/collab/server.js";
 import { ensureProjectsRoot } from "./services/projectFs.js";
 import { configRouter } from "./routes/config.js";
+import { guestRouter } from "./routes/guest.js";
 import { identitiesRouter } from "./routes/identities.js";
 import { projectsRouter } from "./routes/projects.js";
+import { shareRouter } from "./routes/share.js";
+import { hostOnly, shareGate } from "./services/shareAuth.js";
 
 function lanIp(): string | undefined {
   for (const nets of Object.values(os.networkInterfaces())) {
@@ -29,13 +32,18 @@ async function main() {
 
   app.use(cors());
   app.use(express.json({ limit: "20mb" }));
+  // Classifies every request as host (direct) or guest (via a share tunnel)
+  // and enforces guest sign-in + per-share permissions before any router.
+  app.use(shareGate);
 
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true, name: "openleaf" });
   });
 
-  app.use("/api/config", configRouter);
-  app.use("/api/identities", identitiesRouter);
+  app.use("/api/guest", guestRouter);
+  app.use("/api/share", shareRouter);
+  app.use("/api/config", hostOnly, configRouter);
+  app.use("/api/identities", hostOnly, identitiesRouter);
   app.use("/api/projects", projectsRouter);
 
   // Serve built client only in production (`npm start`). In `npm run dev`, Vite

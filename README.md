@@ -142,10 +142,29 @@ If you change the API port, update the Vite proxy target in [`client/vite.config
 - Per-project git backups and History UI
 - Light / dark theme
 - Download PDF or project ZIP (excludes `.openleaf/`)
+- Temporary public links per project (Cloudflare Quick Tunnel + one-off credentials), see below
+
+## Sharing a project publicly
+
+The **Share** button in the editor opens a temporary public link for *that project only*. Under the hood OpenLeaf spawns `cloudflared tunnel --url http://127.0.0.1:<port>` and gets a random `https://<words>.trycloudflare.com` address; nothing is stored, so ending the session (or restarting the server) kills the link, and the next session gets a new address and new credentials.
+
+Requirements: [`cloudflared`](https://github.com/cloudflare/cloudflared/releases) on the host machine (found via `PATH`, `~/.local/bin`, `/usr/local/bin`, or `OPENLEAF_CLOUDFLARED=/path/to/cloudflared`). No Cloudflare account or domain is needed.
+
+When creating a link the host chooses:
+
+- **Expiry** (preset or exact date/time, max 30 days) — the session self-terminates and all guest cookies fail.
+- **Max unique IPs** — how many distinct client addresses may ever authenticate on this link.
+- **Max guests** — how many people may be signed in.
+- **Read-only** — guests can follow along; file writes, uploads, renames and even Yjs updates over the WebSocket are dropped server-side.
+- **Allow compile / downloads / history** — restore from history is always host-only.
+
+Guests open the link, enter the generated username and password, and **must give a display name**, which becomes their cursor label and their git author name. The host sees who is connected (name, IP, join time) and can kick anyone. A guest link only ever reaches `/api/projects/<that project>/…` and the collab socket for that project; the project list, server config, identities and sharing controls are host-only.
+
+New `trycloudflare.com` hostnames can take 10–30 s to resolve everywhere; if a guest sees "could not resolve host" right after you create the link, have them retry.
 
 ## Security note
 
-OpenLeaf is meant for trusted local or LAN use. There is **no authentication**. Anyone who can reach the host can read and write project files and trigger compiles. Do not expose it to the public internet without putting it behind your own access control.
+OpenLeaf is meant for trusted local or LAN use. On the local port there is **no authentication**: anyone who can reach the host directly can read and write project files and trigger compiles. Do not port-forward it; use the Share feature above (which adds sign-in, project scoping and limits) when someone remote needs access, and only give the credentials to people you trust — a guest with write access can still put arbitrary files into the shared project and run `latexmk` on your machine.
 
 ## Repository layout
 

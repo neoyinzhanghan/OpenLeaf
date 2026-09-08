@@ -12,6 +12,8 @@ type Props = {
   onRename: (path?: string) => void;
   onMove: (from: string, toDir: string) => void;
   canMutateActive: boolean;
+  /** Hide every mutating control (read-only guest). */
+  readOnly?: boolean;
 };
 
 type MenuState = {
@@ -122,6 +124,7 @@ export function FileTree({
   onRename,
   onMove,
   canMutateActive,
+  readOnly = false,
 }: Props) {
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [dragOverDir, setDragOverDir] = useState<string | null>(null);
@@ -218,6 +221,13 @@ export function FileTree({
 
   return (
     <div className="file-tree-wrap">
+      {readOnly ? (
+        <div className="file-tree-actions">
+          <span className="status-pill warn" title="This share link is read-only">
+            Read-only
+          </span>
+        </div>
+      ) : (
       <div className="file-tree-actions">
         <button type="button" className="btn btn-ghost tree-action" onClick={() => onNewFile()} title="New file">
           + File
@@ -256,6 +266,7 @@ export function FileTree({
           Del
         </button>
       </div>
+      )}
       <div
         className={`file-tree${dragOverDir === "" ? " drag-over-root" : ""}`}
         onContextMenu={(e) => openMenu(e, null)}
@@ -307,6 +318,8 @@ export function FileTree({
               <div className="context-menu-sep" />
             </>
           )}
+          {!readOnly && (
+          <>
           <button type="button" onClick={() => runMenuAction(() => onNewFile(menuDir))}>
             New file{menuDir ? ` in ${menuDir}/` : ""}
           </button>
@@ -330,6 +343,8 @@ export function FileTree({
                 Delete {menuNode.type === "directory" ? "folder" : "file"}
               </button>
             </>
+          )}
+          </>
           )}
         </div>
       )}

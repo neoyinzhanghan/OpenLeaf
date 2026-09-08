@@ -1,6 +1,5 @@
 import Editor, { type BeforeMount, type OnMount } from "@monaco-editor/react";
 import { useEffect, useRef, useState } from "react";
-import * as monaco from "monaco-editor";
 import { editor as monacoEditor, type editor } from "monaco-editor";
 import type { Awareness } from "y-protocols/awareness";
 import type * as Y from "yjs";
@@ -36,6 +35,8 @@ type Props = {
   /** Collaborative binding */
   yText?: Y.Text | null;
   awareness?: Awareness | null;
+  /** Guest read-only mode: the server also drops any update, this just makes the UI honest. */
+  readOnly?: boolean;
 };
 
 function languageFor(path: string | null): string {
@@ -83,6 +84,7 @@ export function CodeEditor({
   onForwardSearch,
   yText = null,
   awareness = null,
+  readOnly = false,
 }: Props) {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof import("monaco-editor") | null>(null);
@@ -273,6 +275,7 @@ export function CodeEditor({
         onMount={handleMount}
         theme={monacoTheme}
         options={{
+          readOnly,
           fontFamily: "'JetBrains Mono', ui-monospace, monospace",
           fontSize: 13,
           minimap: { enabled: false },

@@ -36,9 +36,12 @@ import {
 import { forwardSynctex, reverseSynctex } from "../services/synctex.js";
 import { streamProjectZip } from "../services/zip.js";
 import { IdentitySchema } from "../config.js";
+import type { Access } from "../services/shareAuth.js";
+import { projectShareRouter } from "./share.js";
 
 export const projectsRouter = Router();
 const filesRouter = Router({ mergeParams: true });
+projectsRouter.use("/:id/share", projectShareRouter);
 
 function statusOf(err: unknown): number {
   if (err && typeof err === "object" && "status" in err && typeof (err as { status: unknown }).status === "number") {
@@ -49,8 +52,13 @@ function statusOf(err: unknown): number {
 
 async function authorFromRequest(
   projectId: string,
-  req: { body?: unknown; query?: unknown; headers: Record<string, unknown> },
+  req: { body?: unknown; query?: unknown; headers: Record<string, unknown>; access?: Access },
 ): Promise<GitAuthor | undefined> {
+  // Guests arriving through a share link are attributed by the name they signed in with.
+  if (req.access?.mode === "guest") {
+    const g = req.access.guest;
+    return { name: g.name, email: `${g.id}@guest.openleaf.local` };
+  }
   const header = req.headers["x-openleaf-identity"];
   const fromHeader = typeof header === "string" ? header : undefined;
   const body = req.body && typeof req.body === "object" ? (req.body as { identityId?: string }) : {};

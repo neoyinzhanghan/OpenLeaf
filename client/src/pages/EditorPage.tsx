@@ -18,6 +18,7 @@ import {
   writeProjectFile,
 } from "../api/client";
 import type { AppConfig, ProjectMeta, TreeNode } from "../api/types";
+import { guestLogout } from "../api/share";
 import { flushCollab, useProjectCollab } from "../collab/useProjectCollab";
 import { BinaryPane } from "../components/BinaryPane";
 import { CodeEditor } from "../components/CodeEditor";
@@ -25,9 +26,11 @@ import { CompileLog } from "../components/CompileLog";
 import { FileTree } from "../components/FileTree";
 import { HistoryPanel } from "../components/HistoryPanel";
 import { PdfViewer, type PdfHighlight } from "../components/PdfViewer";
+import { SharePanel } from "../components/SharePanel";
 import { SplitPane } from "../components/SplitPane";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { extractCitations, extractLabels } from "../latex/completions";
+import { useGuest, useSession } from "../session/SessionContext";
 
 type Status = "idle" | "dirty" | "saving" | "compiling" | "ok" | "err";
 type EditMode = "text" | "binary" | "base64";
@@ -65,7 +68,20 @@ async function fileToBase64(file: File): Promise<string> {
 
 export function EditorPage() {
   const { id = "" } = useParams();
-  const collab = useProjectCollab(id || undefined);
+  const guest = useGuest();
+  const { refresh: refreshSession } = useSession();
+  const guestIdentity = useMemo(
+    () => (guest ? { id: guest.guest.id, name: guest.guest.name, color: guest.guest.color } : null),
+    [guest?.guest.id, guest?.guest.name, guest?.guest.color],
+  );
+  const isGuest = guest !== null;
+  const readOnly = guest?.share.readOnly ?? false;
+  const canCompile = !guest || guest.share.allowCompile;
+  const canDownload = !guest || guest.share.allowDownload;
+  const canHistory = !guest || guest.share.allowHistory;
+  const collab = useProjectCollab(id || undefined, guestIdentity);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareActive, setShareActive] = useState(false);
   const [project, setProject] = useState<ProjectMeta | null>(null);
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [tree, setTree] = useState<TreeNode[]>([]);
@@ -162,7 +178,8 @@ export function EditorPage() {
     if (!id) return;
     (async () => {
       try {
-        const [p, t, cfg] = await Promise.all([getProject(id), getTree(id), getConfig()]);
+        // Guests cannot read the server config (host-only); defaults apply.
+        const [p, t, cfg] = await Promise.all([getProject(id), getTree(id), isGuest ? null : getConfig()]);
         setProject(p);
         setTree(t);
         setConfig(cfg);
@@ -174,7 +191,7 @@ export function EditorPage() {
         setError(err instanceof Error ? err.message : "Failed to open project");
       }
     })();
-  }, [id, loadIndexHints]);
+  }, [id, loadIndexHints, isGuest]);
 
   // Refresh tree when remote FS ops bump treeVersion
   useEffect(() => {
@@ -310,7 +327,7 @@ export function EditorPage() {
   }, [treeDragging, treeWidth]);
 
   const runCompile = useCallback(async () => {
-    if (!id || compileLock.current) return;
+    if (!id || compileLock.current || !canCompile) return;
     compileLock.current = true;
     setStatus("compiling");
     setLog("");
@@ -333,11 +350,15 @@ export function EditorPage() {
     } finally {
       compileLock.current = false;
     }
-  }, [id, refreshTree]);
+  }, [id, refreshTree, canCompile]);
 
   const save = useCallback(async () => {
     if (!id || !activePath || editMode === "binary") return;
     if (!fileReady) return;
+    if (readOnly) {
+      setError("This share link is read-only.");
+      return;
+    }
 
     // Collaborative text: flush CRDT → disk, then optional compile
     if (collabText) {
@@ -424,6 +445,7 @@ export function EditorPage() {
     collabText,
     yText,
     collab.identity?.id,
+    readOnly,
   ]);
 
   useEffect(() => {
@@ -695,14 +717,21 @@ export function EditorPage() {
       <div className="editor-toolbar">
         <div className="toolbar-cluster">
           <img className="toolbar-logo" src="/logo.png" alt="OpenLeaf logo" />
-          <Link className="btn btn-ghost" to="/">
-            ← Projects
-          </Link>
+          {isGuest ? (
+            <span className="badge share-guest-badge" title="You joined through a share link">
+              Shared with you
+            </span>
+          ) : (
+            <Link className="btn btn-ghost" to="/">
+              ← Projects
+            </Link>
+          )}
           <strong style={{ letterSpacing: "-0.02em" }}>{project?.id ?? id}</strong>
           <span className="badge">{project?.engine ?? "pdflatex"}</span>
           <span className={`status-pill ${status === "ok" && collabText ? "ok" : status}`}>{statusLabel}</span>
           {activePath && <span className="status-pill">{activePath}</span>}
           {editMode === "base64" && <span className="status-pill warn">base64</span>}
+          {readOnly && <span className="status-pill warn">read-only</span>}
         </div>
 
         <div className="toolbar-cluster toolbar-collab">
@@ -718,7 +747,24 @@ export function EditorPage() {
             ))}
           </div>
 
-          {collab.identities.length > 0 ? (
+          {isGuest && guest ? (
+            <span className="identity-picker" title="Signed in as a guest">
+              <span className="identity-picker-label">You</span>
+              <span className="presence-chip me" style={{ ["--presence" as string]: guest.guest.color }}>
+                {guest.guest.name}
+              </span>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => {
+                  void guestLogout().finally(() => void refreshSession());
+                }}
+                title="Leave this session"
+              >
+                Leave
+              </button>
+            </span>
+          ) : collab.identities.length > 0 ? (
             <label className="identity-picker">
               <span className="identity-picker-label">You</span>
               <select
@@ -745,26 +791,46 @@ export function EditorPage() {
 
         <div className="toolbar-actions">
           <ThemeToggle />
-          <button type="button" className="btn" onClick={() => setHistoryOpen(true)}>
-            History{lastCommit ? ` (${lastCommit})` : ""}
-          </button>
-          <button
-            type="button"
-            className="btn"
-            onClick={() => void save()}
-            disabled={!activePath || !fileReady || editMode === "binary" || status === "saving"}
-          >
-            {fileReady ? (collabText ? "Save & sync" : "Save") : "Loading…"}
-          </button>
-          <button type="button" className="btn btn-primary" onClick={() => void runCompile()} disabled={status === "compiling"}>
-            Recompile
-          </button>
-          <a className="btn" href={downloadUrl(id, "pdf")} download={`${id}.pdf`}>
-            PDF
-          </a>
-          <a className="btn" href={downloadUrl(id, "zip")} download={`${id}.zip`}>
-            ZIP
-          </a>
+          {!isGuest && (
+            <button
+              type="button"
+              className={`btn${shareActive ? " share-live" : ""}`}
+              onClick={() => setShareOpen(true)}
+              title={shareActive ? "Public link is live — manage" : "Create a temporary public link"}
+            >
+              {shareActive ? "● Live link" : "Share"}
+            </button>
+          )}
+          {canHistory && (
+            <button type="button" className="btn" onClick={() => setHistoryOpen(true)}>
+              History{lastCommit ? ` (${lastCommit})` : ""}
+            </button>
+          )}
+          {!readOnly && (
+            <button
+              type="button"
+              className="btn"
+              onClick={() => void save()}
+              disabled={!activePath || !fileReady || editMode === "binary" || status === "saving"}
+            >
+              {fileReady ? (collabText ? "Save & sync" : "Save") : "Loading…"}
+            </button>
+          )}
+          {canCompile && (
+            <button type="button" className="btn btn-primary" onClick={() => void runCompile()} disabled={status === "compiling"}>
+              Recompile
+            </button>
+          )}
+          {canDownload && (
+            <>
+              <a className="btn" href={downloadUrl(id, "pdf")} download={`${id}.pdf`}>
+                PDF
+              </a>
+              <a className="btn" href={downloadUrl(id, "zip")} download={`${id}.zip`}>
+                ZIP
+              </a>
+            </>
+          )}
         </div>
       </div>
 
@@ -779,9 +845,19 @@ export function EditorPage() {
 
       {syncToast && <div className="sync-toast">{syncToast}</div>}
 
+      {!isGuest && (
+        <SharePanel
+          projectId={id}
+          open={shareOpen}
+          onClose={() => setShareOpen(false)}
+          onActiveChange={setShareActive}
+        />
+      )}
+
       <HistoryPanel
         projectId={id}
         identityId={collab.identity?.id}
+        canRestore={!isGuest}
         open={historyOpen}
         onClose={() => setHistoryOpen(false)}
         onRestored={() => {
@@ -808,8 +884,11 @@ export function EditorPage() {
               onUpload={(files, dir) => void onUpload(files, dir)}
               onDelete={(path) => void onDelete(path)}
               onRename={(path) => void onRename(path)}
-              onMove={(from, toDir) => void onMove(from, toDir)}
+              onMove={(from, toDir) => {
+                if (!readOnly) void onMove(from, toDir);
+              }}
               canMutateActive={Boolean(activePath)}
+              readOnly={readOnly}
             />
           </div>
           <div
@@ -830,7 +909,10 @@ export function EditorPage() {
                       contentType={binaryMeta.contentType}
                       size={binaryMeta.size}
                       base64={binaryMeta.base64}
-                      onReplace={(file) => void onReplaceBinary(file)}
+                      onReplace={(file) => {
+                        if (readOnly) setError("This share link is read-only.");
+                        else void onReplaceBinary(file);
+                      }}
                       onEditAsText={() => {
                         setForceBase64Path(null);
                         setForceTextPath(activePath);
@@ -866,6 +948,7 @@ export function EditorPage() {
                         onForwardSearch={(line, col) => void onForwardSearch(line, col)}
                         yText={collabText ? yText : null}
                         awareness={collabText ? collab.awareness : null}
+                        readOnly={readOnly}
                       />
                     </>
                   )}
