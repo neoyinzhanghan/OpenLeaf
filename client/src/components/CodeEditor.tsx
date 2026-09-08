@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { editor as monacoEditor, type editor } from "monaco-editor";
 import type { Awareness } from "y-protocols/awareness";
 import type * as Y from "yjs";
-import { MonacoBinding } from "y-monaco";
+import { bindYTextToMonaco, type YMonacoBinding } from "../collab/bindYTextToMonaco";
 import {
   BIBTEX_LANGUAGE,
   LATEX_LANGUAGE,
@@ -107,7 +107,7 @@ export function CodeEditor({
   labelsRef.current = labels;
   const pathRef = useRef(path);
   pathRef.current = path;
-  const bindingRef = useRef<MonacoBinding | null>(null);
+  const bindingRef = useRef<YMonacoBinding | null>(null);
   /** Once a SyncTeX jump is applied, never re-apply it on typing */
   const appliedJumpKeyRef = useRef<string | null>(null);
   const collab = Boolean(yText);
@@ -196,11 +196,8 @@ export function CodeEditor({
     });
   };
 
-  // MonacoBinding for collaborative text.
-  // Bind the *visible* @monaco-editor/react model (keyed by `path`). Keep the
-  // model on LF: y-monaco's constructor may call setValue() which resets EOL to
-  // the platform default (CRLF on Windows), after which the caret paints one
-  // place and keystrokes land one character over (y-monaco#6).
+  // Collaborative text: LF-safe binder (see bindYTextToMonaco). Stock y-monaco
+  // leaves the local caret one character off for Windows guests.
   useEffect(() => {
     bindingRef.current?.destroy();
     bindingRef.current = null;
@@ -216,44 +213,27 @@ export function CodeEditor({
       monacoApi.editor.setModelLanguage(model, lang);
     }
 
-    const rawY = yText.toString();
-    const yValue = rawY.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-    if (yValue !== rawY && yText.doc) {
-      // Strip any CR that leaked in from a Windows guest before we bind offsets.
-      yText.doc.transact(() => {
-        yText.delete(0, rawY.length);
-        if (yValue) yText.insert(0, yValue);
-      }, "eol-normalize");
-    }
     forceModelLf(model, monacoApi);
-    if (model.getValue() !== yValue) {
-      model.setValue(yValue);
-    }
-    forceModelLf(model, monacoApi);
-
-    const binding = new MonacoBinding(yText, model, new Set([ed]), awareness ?? undefined);
+    const binding = bindYTextToMonaco(yText, model, new Set([ed]), awareness ?? undefined);
     bindingRef.current = binding;
-    // Constructor setValue undoes LF on Windows — pin it again immediately.
     forceModelLf(model, monacoApi);
 
-    let fixingEol = false;
-    const eolWatch = model.onDidChangeContent(() => {
-      if (fixingEol || model.getEOL() === "\n") return;
-      fixingEol = true;
+    // Custom fonts load async; until metrics match, the caret paints at the
+    // wrong x-position even when the model offsets are correct.
+    const remountFonts = () => {
       try {
-        forceModelLf(model, monacoApi);
-      } finally {
-        fixingEol = false;
+        monacoApi.editor.remeasureFonts();
+      } catch {
+        /* older monaco */
       }
-    });
-    // Also re-assert when the local selection moves (cheap, catches any reset).
-    const selWatch = ed.onDidChangeCursorSelection(() => {
-      forceModelLf(model, monacoApi);
-    });
+      ed.layout();
+    };
+    remountFonts();
+    void document.fonts?.ready?.then(remountFonts);
+    window.addEventListener("focus", remountFonts);
 
     return () => {
-      eolWatch.dispose();
-      selWatch.dispose();
+      window.removeEventListener("focus", remountFonts);
       binding.destroy();
       if (bindingRef.current === binding) bindingRef.current = null;
     };
@@ -322,8 +302,12 @@ export function CodeEditor({
         theme={monacoTheme}
         options={{
           readOnly,
-          fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+          fontFamily: "JetBrains Mono, Consolas, Menlo, Monaco, monospace",
           fontSize: 13,
+          lineHeight: 20,
+          cursorStyle: "line",
+          cursorWidth: 2,
+          cursorSmoothCaretAnimation: "off",
           minimap: { enabled: false },
           wordWrap: "on",
           scrollBeyondLastLine: true,
@@ -331,10 +315,10 @@ export function CodeEditor({
           padding: { top: 12, bottom: 48 },
           renderLineHighlight: "all",
           tabSize: 2,
-          // Bracket-match boxes look like extra carets and confuse the "where am I
-          // typing?" question, especially next to remote collab cursors.
-          matchBrackets: "near",
-          bracketPairColorization: { enabled: true },
+          // Bracket match draws hollow boxes on `{` / `}` that look like a second
+          // caret sitting next to yours — turn them off so only the real caret shows.
+          matchBrackets: "never",
+          bracketPairColorization: { enabled: false },
           guides: { bracketPairs: false, indentation: true },
           fontLigatures: false,
           suggestOnTriggerCharacters: true,

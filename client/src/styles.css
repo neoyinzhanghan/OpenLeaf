@@ -1048,15 +1048,22 @@ a {
   min-height: 0;
 }
 
-/* Peer carets from y-monaco — colored bars, not hollow boxes that look like
-   a second local cursor sitting one character away. */
+/* Make the REAL local caret unmistakable (guests were mistaking bracket boxes
+   and peer carets for their own insertion point). */
+.monaco-host .monaco-editor .cursor {
+  background-color: #2dd4bf !important;
+  width: 2px !important;
+  border: none !important;
+}
+
+/* Peer carets from collab — colored bars, clearly not the local caret. */
 .yRemoteSelection {
-  background-color: rgba(45, 212, 191, 0.22);
+  background-color: rgba(251, 146, 60, 0.25);
 }
 
 .yRemoteSelectionHead {
   position: absolute;
-  border-left: 2px solid #2dd4bf;
+  border-left: 2px solid #fb923c;
   height: 100%;
   box-sizing: border-box;
 }
@@ -1064,12 +1071,11 @@ a {
 .yRemoteSelectionHead::after {
   content: "";
   position: absolute;
-  top: -2px;
-  left: -3px;
-  width: 4px;
-  height: 4px;
-  background-color: #2dd4bf;
-  border-radius: 2px;
+  top: -3px;
+  left: -4px;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 4px solid #fb923c;
 }
 
 .compile-log {
