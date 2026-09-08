@@ -1321,6 +1321,56 @@ a {
   min-width: 0;
 }
 
+.share-invite {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.6rem 0.85rem 0.2rem;
+}
+
+.share-invite-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.share-invite-text {
+  margin: 0;
+  padding: 0.75rem 0.85rem;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: text;
+}
+
+.share-copy-primary {
+  justify-self: stretch;
+  padding: 0.6rem 1rem;
+  font-weight: 700;
+}
+
+.share-individual {
+  padding: 0.2rem 0.85rem 0.4rem;
+}
+
+.share-individual > summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: var(--ink-muted);
+  padding: 0.3rem 0;
+  user-select: none;
+}
+
+.share-individual .share-cred {
+  padding-left: 0;
+  padding-right: 0;
+}
+
 .share-access {
   display: grid;
   gap: 0.45rem;

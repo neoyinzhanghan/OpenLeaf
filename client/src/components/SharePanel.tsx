@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   getProjectShare,
   revokeShareGuest,
@@ -49,12 +49,48 @@ function formatRemaining(ms: number): string {
   return `${s}s`;
 }
 
-function CopyButton({ value, label }: { value: string; label: string }) {
+function selectAll(el: HTMLElement): void {
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  const sel = window.getSelection();
+  sel?.removeAllRanges();
+  sel?.addRange(range);
+}
+
+/** Zoom-style invitation: one message with everything a guest needs. */
+function buildInvitation(s: ShareSessionView): string {
+  const access = s.settings.readOnly ? "read-only (follow along)" : "read & write (edit live)";
+  return [
+    `You're invited to collaborate on "${s.projectId}" in OpenLeaf.`,
+    "",
+    "Open this link:",
+    s.inviteUrl,
+    "",
+    "Sign in with",
+    `  Username: ${s.username}`,
+    `  Password: ${s.password}`,
+    "",
+    "Then enter your name so everyone can see who is editing.",
+    `Access: ${access}. The link expires ${formatWhen(s.settings.expiresAt)}.`,
+  ].join("\n");
+}
+
+function CopyButton({
+  value,
+  label,
+  primary = false,
+  children,
+}: {
+  value: string;
+  label: string;
+  primary?: boolean;
+  children?: ReactNode;
+}) {
   const [done, setDone] = useState(false);
   return (
     <button
       type="button"
-      className="btn btn-ghost share-copy"
+      className={primary ? "btn btn-primary share-copy-primary" : "btn btn-ghost share-copy"}
       title={`Copy ${label}`}
       onClick={() => {
         void navigator.clipboard.writeText(value).then(() => {
@@ -63,7 +99,7 @@ function CopyButton({ value, label }: { value: string; label: string }) {
         });
       }}
     >
-      {done ? "Copied" : "Copy"}
+      {done ? "Copied ✓" : children ?? "Copy"}
     </button>
   );
 }
@@ -178,9 +214,7 @@ export function SharePanel({ projectId, open, onClose, onActiveChange }: Props) 
   if (!open) return null;
 
   const liveGuests = session ? session.guests.filter((g) => !g.revoked) : [];
-  const inviteText = session
-    ? `OpenLeaf live session: ${session.projectId}\nLink: ${session.inviteUrl}\nUsername: ${session.username}\nPassword: ${session.password}\nExpires: ${formatWhen(session.settings.expiresAt)}`
-    : "";
+  const inviteText = session ? buildInvitation(session) : "";
 
   return (
     <aside className="history-drawer share-drawer" aria-label="Share project">
@@ -211,30 +245,49 @@ export function SharePanel({ projectId, open, onClose, onActiveChange }: Props) 
             session kills the link and all guest sign-ins; the next session gets a new link and new credentials.
           </p>
 
-          <div className="share-cred">
-            <span className="share-cred-label">Link</span>
-            <code className="share-cred-value share-url" title={session.inviteUrl}>
-              {session.inviteUrl}
-            </code>
-            <CopyButton value={session.inviteUrl} label="invitation link" />
+          <div className="share-invite">
+            <div className="share-invite-head">
+              <span className="share-field-label">Invitation</span>
+              <button
+                type="button"
+                className="btn btn-ghost share-copy"
+                onClick={() => setShowPassword((v) => !v)}
+                title={showPassword ? "Mask the password on screen" : "Show the password"}
+              >
+                {showPassword ? "Hide password" : "Show password"}
+              </button>
+            </div>
+            <pre className="share-invite-text" onClick={(e) => selectAll(e.currentTarget)}>
+              {showPassword ? inviteText : inviteText.replace(session.password, "••••••••••••••••")}
+            </pre>
+            <CopyButton value={inviteText} label="invitation" primary>
+              Copy invitation
+            </CopyButton>
+            <span className="share-muted">
+              Paste it into chat or email — it has the link, the username and the password (even when masked above).
+            </span>
           </div>
-          <div className="share-cred">
-            <span className="share-cred-label">Username</span>
-            <code className="share-cred-value">{session.username}</code>
-            <CopyButton value={session.username} label="username" />
-          </div>
-          <div className="share-cred">
-            <span className="share-cred-label">Password</span>
-            <code className="share-cred-value">{showPassword ? session.password : "••••••••••••"}</code>
-            <button type="button" className="btn btn-ghost share-copy" onClick={() => setShowPassword((v) => !v)}>
-              {showPassword ? "Hide" : "Show"}
-            </button>
-            <CopyButton value={session.password} label="password" />
-          </div>
-          <div className="share-row-actions">
-            <CopyButton value={inviteText} label="invite text" />
-            <span className="share-muted">copies link + credentials as one message</span>
-          </div>
+
+          <details className="share-individual">
+            <summary>Copy items individually</summary>
+            <div className="share-cred">
+              <span className="share-cred-label">Link</span>
+              <code className="share-cred-value share-url" title={session.inviteUrl}>
+                {session.inviteUrl}
+              </code>
+              <CopyButton value={session.inviteUrl} label="invitation link" />
+            </div>
+            <div className="share-cred">
+              <span className="share-cred-label">Username</span>
+              <code className="share-cred-value">{session.username}</code>
+              <CopyButton value={session.username} label="username" />
+            </div>
+            <div className="share-cred">
+              <span className="share-cred-label">Password</span>
+              <code className="share-cred-value">{showPassword ? session.password : "••••••••••••••••"}</code>
+              <CopyButton value={session.password} label="password" />
+            </div>
+          </details>
 
           <dl className="share-facts">
             <dt>Expires</dt>
