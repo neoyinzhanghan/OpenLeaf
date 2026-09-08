@@ -1048,6 +1048,30 @@ a {
   min-height: 0;
 }
 
+/* Peer carets from y-monaco — colored bars, not hollow boxes that look like
+   a second local cursor sitting one character away. */
+.yRemoteSelection {
+  background-color: rgba(45, 212, 191, 0.22);
+}
+
+.yRemoteSelectionHead {
+  position: absolute;
+  border-left: 2px solid #2dd4bf;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.yRemoteSelectionHead::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  left: -3px;
+  width: 4px;
+  height: 4px;
+  background-color: #2dd4bf;
+  border-radius: 2px;
+}
+
 .compile-log {
   border-top: 1px solid var(--line);
   background: #0f151c;

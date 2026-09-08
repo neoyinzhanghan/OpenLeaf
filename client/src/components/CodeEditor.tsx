@@ -61,6 +61,13 @@ function languageFor(path: string | null): string {
   return "plaintext";
 }
 
+/** y-monaco indexes Y.Text as LF; Windows Monaco defaults to CRLF and drifts the caret. */
+function forceModelLf(model: editor.ITextModel, monacoApi: typeof import("monaco-editor")): void {
+  if (model.getEOL() !== "\n") {
+    model.pushEOL(monacoApi.editor.EndOfLineSequence.LF);
+  }
+}
+
 function pathMatches(openPath: string | null, target?: string): boolean {
   if (!target) return true;
   if (!openPath) return false;
@@ -115,6 +122,11 @@ export function CodeEditor({
       citations: citationsRef.current,
       labels: labelsRef.current,
     }));
+    // Every model (including ones @monaco-editor/react creates from `path`) must
+    // stay on LF so Yjs offsets match, especially for Windows guests.
+    monaco.editor.onDidCreateModel((model) => {
+      forceModelLf(model, monaco);
+    });
   };
 
   const centerOnLine = (ed: editor.IStandaloneCodeEditor, line: number, column: number) => {
@@ -185,10 +197,10 @@ export function CodeEditor({
   };
 
   // MonacoBinding for collaborative text.
-  // Bind the *visible* @monaco-editor/react model (keyed by `path`) — a parallel
-  // inmemory:// model left the UI on an empty cached buffer. Also force LF so
-  // Monaco offsets match Y.Text indices (CRLF hosts/guests otherwise see the
-  // caret sit one character behind; see y-monaco#6).
+  // Bind the *visible* @monaco-editor/react model (keyed by `path`). Keep the
+  // model on LF: y-monaco's constructor may call setValue() which resets EOL to
+  // the platform default (CRLF on Windows), after which the caret paints one
+  // place and keystrokes land one character over (y-monaco#6).
   useEffect(() => {
     bindingRef.current?.destroy();
     bindingRef.current = null;
@@ -204,18 +216,44 @@ export function CodeEditor({
       monacoApi.editor.setModelLanguage(model, lang);
     }
 
-    const yValue = yText.toString();
-    model.pushEOL(monacoApi.editor.EndOfLineSequence.LF);
+    const rawY = yText.toString();
+    const yValue = rawY.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    if (yValue !== rawY && yText.doc) {
+      // Strip any CR that leaked in from a Windows guest before we bind offsets.
+      yText.doc.transact(() => {
+        yText.delete(0, rawY.length);
+        if (yValue) yText.insert(0, yValue);
+      }, "eol-normalize");
+    }
+    forceModelLf(model, monacoApi);
     if (model.getValue() !== yValue) {
       model.setValue(yValue);
-      // setValue can restore the platform default EOL — pin LF again.
-      model.pushEOL(monacoApi.editor.EndOfLineSequence.LF);
     }
+    forceModelLf(model, monacoApi);
 
     const binding = new MonacoBinding(yText, model, new Set([ed]), awareness ?? undefined);
     bindingRef.current = binding;
+    // Constructor setValue undoes LF on Windows — pin it again immediately.
+    forceModelLf(model, monacoApi);
+
+    let fixingEol = false;
+    const eolWatch = model.onDidChangeContent(() => {
+      if (fixingEol || model.getEOL() === "\n") return;
+      fixingEol = true;
+      try {
+        forceModelLf(model, monacoApi);
+      } finally {
+        fixingEol = false;
+      }
+    });
+    // Also re-assert when the local selection moves (cheap, catches any reset).
+    const selWatch = ed.onDidChangeCursorSelection(() => {
+      forceModelLf(model, monacoApi);
+    });
 
     return () => {
+      eolWatch.dispose();
+      selWatch.dispose();
       binding.destroy();
       if (bindingRef.current === binding) bindingRef.current = null;
     };
@@ -293,6 +331,12 @@ export function CodeEditor({
           padding: { top: 12, bottom: 48 },
           renderLineHighlight: "all",
           tabSize: 2,
+          // Bracket-match boxes look like extra carets and confuse the "where am I
+          // typing?" question, especially next to remote collab cursors.
+          matchBrackets: "near",
+          bracketPairColorization: { enabled: true },
+          guides: { bracketPairs: false, indentation: true },
+          fontLigatures: false,
           suggestOnTriggerCharacters: true,
           quickSuggestions: {
             other: true,
@@ -309,7 +353,6 @@ export function CodeEditor({
           tabCompletion: "on",
           snippetSuggestions: "inline",
           autoClosingBrackets: "languageDefined",
-          matchBrackets: "always",
         }}
       />
     </div>
