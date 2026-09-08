@@ -8,7 +8,7 @@ import { getPublicConfig, loadConfig, REPO_ROOT } from "./config.js";
 import { attachCollabServer } from "./services/collab/server.js";
 import { ensureProjectsRoot } from "./services/projectFs.js";
 import { configRouter } from "./routes/config.js";
-import { guestRouter } from "./routes/guest.js";
+import { guestRouter, joinRouter } from "./routes/guest.js";
 import { identitiesRouter } from "./routes/identities.js";
 import { projectsRouter } from "./routes/projects.js";
 import { shareRouter } from "./routes/share.js";
@@ -41,6 +41,7 @@ async function main() {
   });
 
   app.use("/api/guest", guestRouter);
+  app.use("/join", joinRouter);
   app.use("/api/share", shareRouter);
   app.use("/api/config", hostOnly, configRouter);
   app.use("/api/identities", hostOnly, identitiesRouter);

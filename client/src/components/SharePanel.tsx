@@ -179,7 +179,7 @@ export function SharePanel({ projectId, open, onClose, onActiveChange }: Props) 
 
   const liveGuests = session ? session.guests.filter((g) => !g.revoked) : [];
   const inviteText = session
-    ? `OpenLeaf live session: ${session.projectId}\nLink: ${session.url}\nUsername: ${session.username}\nPassword: ${session.password}\nExpires: ${formatWhen(session.settings.expiresAt)}`
+    ? `OpenLeaf live session: ${session.projectId}\nLink: ${session.inviteUrl}\nUsername: ${session.username}\nPassword: ${session.password}\nExpires: ${formatWhen(session.settings.expiresAt)}`
     : "";
 
   return (
@@ -213,8 +213,10 @@ export function SharePanel({ projectId, open, onClose, onActiveChange }: Props) 
 
           <div className="share-cred">
             <span className="share-cred-label">Link</span>
-            <code className="share-cred-value share-url">{session.url}</code>
-            <CopyButton value={session.url} label="link" />
+            <code className="share-cred-value share-url" title={session.inviteUrl}>
+              {session.inviteUrl}
+            </code>
+            <CopyButton value={session.inviteUrl} label="invitation link" />
           </div>
           <div className="share-cred">
             <span className="share-cred-label">Username</span>

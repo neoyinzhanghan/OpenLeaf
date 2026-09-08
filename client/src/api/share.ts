@@ -23,7 +23,10 @@ export type ShareSessionView = {
   projectId: string;
   status: "starting" | "active" | "stopped" | "error";
   error?: string;
+  /** Bare tunnel origin (Cloudflare-assigned hostname). */
   url: string;
+  /** What to send to guests: tunnel origin + themed /join/<token> path. */
+  inviteUrl: string;
   hostname: string;
   username: string;
   password: string;
@@ -56,7 +59,7 @@ export type GuestIdentity = { id: string; name: string; color: string };
 export type GuestMe =
   | { mode: "host" }
   | { mode: "guest"; active: false; reason: "no-session" | "expired" }
-  | { mode: "guest"; active: true; authenticated: false; share: GuestShareInfo }
+  | { mode: "guest"; active: true; authenticated: false; linkOk: boolean; share: GuestShareInfo }
   | { mode: "guest"; active: true; authenticated: true; share: GuestShareInfo; guest: GuestIdentity };
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {

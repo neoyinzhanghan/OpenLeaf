@@ -1,8 +1,17 @@
 import { Router } from "express";
 import { z } from "zod";
 import { getProject } from "../services/projectFs.js";
-import { guestLogin, guestLogout, guestView } from "../services/share.js";
-import { clearCookieHeader, clientIp, cookieHeader, isTunnelRequest, resolveGuest } from "../services/shareAuth.js";
+import { getShareByHost, guestLogin, guestLogout, guestView, isExpired, verifyLinkToken } from "../services/share.js";
+import {
+  clearCookieHeader,
+  clientIp,
+  cookieHeader,
+  isTunnelRequest,
+  LINK_COOKIE,
+  linkCookieHeader,
+  parseCookies,
+  resolveGuest,
+} from "../services/shareAuth.js";
 
 function statusOf(err: unknown): number {
   if (err && typeof err === "object" && "status" in err && typeof (err as { status: unknown }).status === "number") {
@@ -42,6 +51,7 @@ guestRouter.get("/me", async (req, res) => {
       mode: "guest",
       active: true,
       authenticated: false,
+      linkOk: verifyLinkToken(r.session, parseCookies(req.headers.cookie)[LINK_COOKIE]),
       share: { ...guestView(r.session), projectName },
     });
     return;
@@ -76,6 +86,10 @@ guestRouter.post("/login", (req, res) => {
       res.status(410).json({ error: "This share link has expired" });
       return;
     }
+    if (!verifyLinkToken(r.session, parseCookies(req.headers.cookie)[LINK_COOKIE])) {
+      res.status(403).json({ error: "Open the complete invitation link the host sent you before signing in" });
+      return;
+    }
     const { guest, token } = guestLogin(r.session, body, clientIp(req));
     res.setHeader("Set-Cookie", cookieHeader(token, r.session.settings.expiresAt));
     res.json({
@@ -93,4 +107,28 @@ guestRouter.post("/logout", (req, res) => {
   if (r.reason === "ok") guestLogout(r.session, r.guest.id);
   res.setHeader("Set-Cookie", clearCookieHeader());
   res.json({ ok: true });
+});
+
+/**
+ * Mounted at /join (tunnel traffic). Validates the themed invitation token,
+ * remembers it in a cookie and lands the guest on the project page, where
+ * the SPA shows the sign-in form.
+ */
+export const joinRouter = Router();
+
+joinRouter.get("/:token", (req, res) => {
+  if (!isTunnelRequest(req)) {
+    res.redirect(302, "/");
+    return;
+  }
+  const session = getShareByHost(req.headers.host);
+  const token = String(req.params.token ?? "");
+  if (!session || session.status !== "active" || isExpired(session) || !verifyLinkToken(session, token)) {
+    // Wrong or stale token: land on the SPA, which reports the link as invalid.
+    res.setHeader("Set-Cookie", `${LINK_COOKIE}=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; Secure; SameSite=Lax`);
+    res.redirect(302, "/");
+    return;
+  }
+  res.setHeader("Set-Cookie", linkCookieHeader(token, session.settings.expiresAt));
+  res.redirect(302, `/p/${encodeURIComponent(session.projectId)}`);
 });

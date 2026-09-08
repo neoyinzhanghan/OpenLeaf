@@ -13,7 +13,7 @@ export function App() {
 
   // Arrived through a share link: only that one project exists as far as this tab is concerned.
   if (session.kind === "guest-inactive") return <GuestInactive reason={session.reason} />;
-  if (session.kind === "guest-login") return <GuestLogin share={session.share} />;
+  if (session.kind === "guest-login") return <GuestLogin share={session.share} linkOk={session.linkOk} />;
   if (session.kind === "guest") {
     const home = `/p/${encodeURIComponent(session.share.projectId)}`;
     return (

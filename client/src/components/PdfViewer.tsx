@@ -145,14 +145,15 @@ export function PdfViewer({ url, onReverseSearch, highlight }: Props) {
     containerRef.current.querySelectorAll(".pdf-sync-mark, .pdf-sync-label").forEach((el) => el.remove());
 
     const pageW = wrap.clientWidth;
-    const h = Math.max((flash.height ?? 16) * scale, 18);
-    // Synctex y is baseline-ish from top; pad upward a bit for a readable band
-    const top = Math.max(0, flash.y * scale - h * 0.35);
-    const left = flash.fullWidth !== false ? pageW * 0.06 : Math.max(0, flash.x * scale - 4);
+    // SyncTeX boxes are often hairline-thin; paint a readable highlighter band instead.
+    const synctexH = Math.max((flash.height ?? 12) * scale, 1);
+    const h = Math.max(synctexH * 1.35, 26 * Math.min(scale, 1.4));
+    const top = Math.max(0, flash.y * scale - h * 0.55);
+    const left = flash.fullWidth !== false ? pageW * 0.05 : Math.max(0, flash.x * scale - 6);
     const width =
       flash.fullWidth !== false
-        ? pageW * 0.88
-        : Math.max((flash.width ?? 80) * scale, 64);
+        ? pageW * 0.9
+        : Math.max((flash.width ?? 120) * scale, 96);
 
     const mark = document.createElement("div");
     mark.className = "pdf-sync-mark";
@@ -162,12 +163,14 @@ export function PdfViewer({ url, onReverseSearch, highlight }: Props) {
     mark.style.height = `${h}px`;
     wrap.appendChild(mark);
 
-    const label = document.createElement("div");
-    label.className = "pdf-sync-label";
-    label.textContent = flash.label ?? `Page ${flash.page}`;
-    label.style.left = `${left}px`;
-    label.style.top = `${Math.max(0, top - 22)}px`;
-    wrap.appendChild(label);
+    if (flash.label) {
+      const label = document.createElement("div");
+      label.className = "pdf-sync-label";
+      label.textContent = flash.label;
+      label.style.left = `${left}px`;
+      label.style.top = `${Math.max(0, top - 26)}px`;
+      wrap.appendChild(label);
+    }
 
     wrap.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
     // Also nudge the scroll parent in case nested scroll containers fight scrollIntoView

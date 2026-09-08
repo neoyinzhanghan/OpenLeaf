@@ -25,6 +25,8 @@ declare global {
 }
 
 export const GUEST_COOKIE = "openleaf_share";
+/** Set by GET /join/:token; proves the guest opened the full invitation link. */
+export const LINK_COOKIE = "openleaf_link";
 
 export function isTunnelRequest(req: IncomingMessage): boolean {
   const host = (req.headers.host ?? "").toLowerCase();
@@ -73,6 +75,11 @@ export function resolveGuest(req: IncomingMessage): GuestResolution {
 export function cookieHeader(token: string, expiresAt: number): string {
   const exp = new Date(expiresAt).toUTCString();
   return `${GUEST_COOKIE}=${encodeURIComponent(token)}; Path=/; Expires=${exp}; HttpOnly; Secure; SameSite=Lax`;
+}
+
+export function linkCookieHeader(token: string, expiresAt: number): string {
+  const exp = new Date(expiresAt).toUTCString();
+  return `${LINK_COOKIE}=${encodeURIComponent(token)}; Path=/; Expires=${exp}; HttpOnly; Secure; SameSite=Lax`;
 }
 
 export function clearCookieHeader(): string {

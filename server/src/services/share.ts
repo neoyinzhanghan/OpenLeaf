@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { loadConfig } from "../config.js";
 import { projectDir } from "./projectFs.js";
+import { CELESTIAL, CREATURES } from "./wordBanks.js";
 
 /**
  * Per-project public sharing over a Cloudflare Quick Tunnel.
@@ -50,6 +51,8 @@ export type ShareSession = {
   url: string;
   username: string;
   password: string;
+  /** Themed secret path segment; the invitation is `${url}/join/${linkToken}`. */
+  linkToken: string;
   secret: Buffer;
   createdAt: number;
   settings: ShareSettings;
@@ -86,27 +89,46 @@ const GUEST_COLORS = [
   "#84CC16",
 ];
 
-const WORDS = (
-  "amber apple arbor arrow aspen atlas azure badge basil beacon birch bloom bluff brass breeze brook cabin candle canyon cedar " +
-  "cello chalk cider cliff clover cobalt comet copper coral cove crane creek crest daisy dawn delta dune ember fable falcon " +
-  "fern fjord flint forest frost garnet glade glen grove harbor hazel heron hollow indigo iris ivory jade juniper kestrel " +
-  "lagoon lantern larch laurel lemon lilac linen lotus lumen maple marble meadow mesa mint mist moss nectar nickel north " +
-  "oak ocean olive onyx opal orchid otter oxbow pebble pine plum poppy prism quartz quill raven reef ridge river robin " +
-  "rowan ruby sable saffron sage sand satin sequoia shale shore sierra silver slate sorrel spruce stone summit sunset " +
-  "tansy teal thistle thyme tidal timber topaz trail tulip tundra umber valley velvet vesper violet walnut wave willow " +
-  "winter wren yarrow zephyr zinc"
-).split(/\s+/);
-
-function pick<T>(list: T[]): T {
+function pick<T>(list: readonly T[]): T {
   return list[crypto.randomInt(list.length)]!;
 }
 
+/** `<creature>-<4 digits>`, e.g. `griffin-4821`. */
 function makeUsername(): string {
-  return `${pick(WORDS)}-${pick(WORDS)}`;
+  return `${pick(CREATURES)}-${crypto.randomInt(1000, 10000)}`;
 }
 
-function makePassword(): string {
-  return `${pick(WORDS)}-${pick(WORDS)}-${pick(WORDS)}-${crypto.randomInt(10, 100)}`;
+/**
+ * Chrome-style generated password: 16 chars, upper + lower + digit + symbol
+ * guaranteed, ambiguous glyphs (0/O, 1/l/I) excluded, order shuffled with a
+ * CSPRNG.
+ */
+const PW_LOWER = "abcdefghijkmnopqrstuvwxyz";
+const PW_UPPER = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+const PW_DIGIT = "23456789";
+const PW_SYMBOL = "!@#$%^&*-_=+?";
+const PW_ALL = PW_LOWER + PW_UPPER + PW_DIGIT + PW_SYMBOL;
+
+function makePassword(length = 16): string {
+  const chars = [pick([...PW_LOWER]), pick([...PW_UPPER]), pick([...PW_DIGIT]), pick([...PW_SYMBOL])];
+  while (chars.length < length) chars.push(pick([...PW_ALL]));
+  for (let i = chars.length - 1; i > 0; i -= 1) {
+    const j = crypto.randomInt(i + 1);
+    [chars[i], chars[j]] = [chars[j]!, chars[i]!];
+  }
+  return chars.join("");
+}
+
+/**
+ * Themed invitation path segment, e.g. `vega-callisto-418`. Drawn from a
+ * different bank (celestial) than usernames (creatures) so the link carries
+ * no hint about the credentials; independent randomness.
+ */
+function makeLinkToken(): string {
+  const a = pick(CELESTIAL);
+  let b = pick(CELESTIAL);
+  while (b === a) b = pick(CELESTIAL);
+  return `${a}-${b}-${crypto.randomInt(100, 1000)}`;
 }
 
 function findCloudflared(): string {
@@ -175,6 +197,7 @@ export function hostView(s: ShareSession) {
     status: s.status,
     error: s.error,
     url: s.url,
+    inviteUrl: s.url ? `${s.url}/join/${s.linkToken}` : "",
     hostname: s.hostname,
     username: s.username,
     password: s.password,
@@ -241,6 +264,7 @@ export async function startShare(projectId: string, input: Partial<ShareSettings
     url: "",
     username: makeUsername(),
     password: makePassword(),
+    linkToken: makeLinkToken(),
     secret: crypto.randomBytes(32),
     createdAt: Date.now(),
     settings,
@@ -493,6 +517,11 @@ export function guestLogin(
   s.loginFailures.delete(ip);
   console.log(`[share] ${s.projectId}: guest "${name}" joined from ${ip}`);
   return { guest, token: makeGuestToken(s, id) };
+}
+
+/** The invitation token must have been presented (cookie) before credentials are accepted. */
+export function verifyLinkToken(s: ShareSession, token: string | undefined): boolean {
+  return typeof token === "string" && token.length > 0 && safeEqual(token, s.linkToken);
 }
 
 export function guestLogout(s: ShareSession, guestId: string): void {

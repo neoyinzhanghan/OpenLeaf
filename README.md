@@ -158,7 +158,13 @@ When creating a link the host chooses:
 - **Read-only** — guests can follow along; file writes, uploads, renames and even Yjs updates over the WebSocket are dropped server-side.
 - **Allow compile / downloads / history** — restore from history is always host-only.
 
-Guests open the link, enter the generated username and password, and **must give a display name**, which becomes their cursor label and their git author name. The host sees who is connected (name, IP, join time) and can kick anyone. A guest link only ever reaches `/api/projects/<that project>/…` and the collab socket for that project; the project list, server config, identities and sharing controls are host-only.
+Each session gets three independent secrets, all regenerated every time:
+
+- **Invitation link** — `https://<cloudflare-words>.trycloudflare.com/join/<star>-<moon>-<digits>` (e.g. `…/join/vega-callisto-418`). The hostname is assigned by Cloudflare; the `/join/…` code is drawn from a celestial word bank and is deliberately unrelated to the username. Opening it sets a cookie that is required before credentials are accepted, so leaked credentials without the link (or vice-versa) are useless.
+- **Username** — `<creature>-<4 digits>` from a bank of 1,000 animals and mythical beings (`griffin-4821`, `axolotl-2093`, `kitsune-7310`).
+- **Password** — 16 characters, Chrome-style: upper/lower/digit/symbol guaranteed, ambiguous glyphs (`0 O 1 l I`) excluded.
+
+Guests open the invitation link, enter the username and password, and **must give a display name**, which becomes their cursor label and their git author name. The host sees who is connected (name, IP, join time) and can kick anyone. A guest link only ever reaches `/api/projects/<that project>/…` and the collab socket for that project; the project list, server config, identities and sharing controls are host-only.
 
 New `trycloudflare.com` hostnames can take 10–30 s to resolve everywhere; if a guest sees "could not resolve host" right after you create the link, have them retry.
 

@@ -8,7 +8,7 @@ function formatExpiry(ms: number): string {
   return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-export function GuestLogin({ share }: { share: GuestShareInfo }) {
+export function GuestLogin({ share, linkOk }: { share: GuestShareInfo; linkOk: boolean }) {
   const { refresh } = useSession();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -53,7 +53,7 @@ export function GuestLogin({ share }: { share: GuestShareInfo }) {
             spellCheck={false}
             value={username}
             onChange={(e) => setUsername(e.target.value)}
-            placeholder="e.g. maple-river"
+            placeholder="e.g. griffin-4821"
             required
           />
         </label>
@@ -79,9 +79,15 @@ export function GuestLogin({ share }: { share: GuestShareInfo }) {
           />
         </label>
 
+        {!linkOk && (
+          <div className="error-banner guest-error">
+            This address is missing its invitation code. Open the <strong>complete link</strong> the host sent you
+            (it ends in <code>/join/…</code>); the credentials alone are not enough.
+          </div>
+        )}
         {error && <div className="error-banner guest-error">{error}</div>}
 
-        <button type="submit" className="btn btn-primary guest-submit" disabled={busy}>
+        <button type="submit" className="btn btn-primary guest-submit" disabled={busy || !linkOk}>
           {busy ? "Signing in…" : "Join session"}
         </button>
 

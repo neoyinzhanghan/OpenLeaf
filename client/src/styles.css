@@ -1196,6 +1196,9 @@ a {
 
 .share-cred-value.share-url {
   color: var(--accent-strong);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
 }
 
 .share-copy {

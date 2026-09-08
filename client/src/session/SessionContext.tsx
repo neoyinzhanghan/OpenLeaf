@@ -10,7 +10,7 @@ export type Session =
   | { kind: "loading" }
   | { kind: "host" }
   | { kind: "guest-inactive"; reason: "no-session" | "expired" }
-  | { kind: "guest-login"; share: GuestShareInfo }
+  | { kind: "guest-login"; share: GuestShareInfo; linkOk: boolean }
   | { kind: "guest"; share: GuestShareInfo; guest: GuestIdentity };
 
 type Ctx = { session: Session; refresh: () => Promise<void> };
@@ -20,7 +20,7 @@ const SessionCtx = createContext<Ctx>({ session: { kind: "loading" }, refresh: a
 function fromMe(me: GuestMe): Session {
   if (me.mode === "host") return { kind: "host" };
   if (!me.active) return { kind: "guest-inactive", reason: me.reason };
-  if (!me.authenticated) return { kind: "guest-login", share: me.share };
+  if (!me.authenticated) return { kind: "guest-login", share: me.share, linkOk: me.linkOk };
   return { kind: "guest", share: me.share, guest: me.guest };
 }
 

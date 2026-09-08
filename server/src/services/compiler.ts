@@ -81,6 +81,7 @@ async function compileWithLatexmk(
   const args = [
     engineFlag,
     "-interaction=nonstopmode",
+    "-f",
     "-synctex=1",
     `-outdir=${outDir}`,
     mainFile,
