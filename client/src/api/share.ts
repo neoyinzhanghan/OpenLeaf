@@ -1,5 +1,6 @@
 export type ShareSettings = {
-  expiresAt: number;
+  /** null = no automatic expiry. */
+  expiresAt: number | null;
   maxIps: number;
   maxGuests: number;
   readOnly: boolean;
@@ -45,8 +46,10 @@ export type ShareDevice = { ip: string; firstSeen: number; guests: string[]; blo
 export type ShareEvent = { at: number; text: string };
 
 export type UpdateShareInput = {
-  expiresAt?: number;
+  expiresAt?: number | null;
   extendMinutes?: number;
+  /** true → clear the deadline. */
+  indefinite?: boolean;
   maxIps?: number;
   maxGuests?: number;
 };
@@ -54,14 +57,15 @@ export type UpdateShareInput = {
 export type ShareStatusResponse = { active: boolean; session?: ShareSessionView };
 
 export type StartShareInput = Partial<Omit<ShareSettings, "expiresAt">> & {
-  expiresAt?: number;
+  expiresAt?: number | null;
   ttlMinutes?: number;
+  indefinite?: boolean;
 };
 
 export type GuestShareInfo = {
   projectId: string;
   projectName?: string;
-  expiresAt: number;
+  expiresAt: number | null;
   readOnly: boolean;
   allowCompile: boolean;
   allowDownload: boolean;

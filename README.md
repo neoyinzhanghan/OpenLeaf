@@ -152,7 +152,7 @@ Requirements: [`cloudflared`](https://github.com/cloudflare/cloudflared/releases
 
 When creating a link the host chooses:
 
-- **Expiry** (preset or exact date/time, max 30 days) — the session self-terminates and all guest cookies fail.
+- **Expiry** (preset, exact date/time, or **indefinite**) — finite deadlines self-terminate the session (max 30 days); indefinite runs until you click End session. The host toolbar shows a live countdown while a timed session is open.
 - **Max unique IPs** (default 2) — how many distinct client addresses may ever authenticate on this link.
 - **Max guests** (default 3) — how many people may be signed in.
 - **Read-only** — guests can follow along; file writes, uploads, renames and even Yjs updates over the WebSocket are dropped server-side.

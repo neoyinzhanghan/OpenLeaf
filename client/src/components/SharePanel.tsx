@@ -9,11 +9,17 @@ import {
   type UpdateShareInput,
 } from "../api/share";
 
+export type ShareLiveInfo = {
+  active: boolean;
+  /** null = indefinite; undefined = no live session. */
+  expiresAt: number | null | undefined;
+};
+
 type Props = {
   projectId: string;
   open: boolean;
   onClose: () => void;
-  onActiveChange?: (active: boolean) => void;
+  onActiveChange?: (info: ShareLiveInfo) => void;
 };
 
 const TTL_PRESETS: Array<{ label: string; minutes: number }> = [
@@ -152,7 +158,9 @@ function buildInvitation(s: ShareSessionView): string {
     `  Password: ${s.password}`,
     "",
     "Then enter your name so everyone can see who is editing.",
-    `Access: ${access}. The link expires ${formatWhen(s.settings.expiresAt)}.`,
+    s.settings.expiresAt === null
+      ? `Access: ${access}. No automatic expiry — the host ends the session.`
+      : `Access: ${access}. The link expires ${formatWhen(s.settings.expiresAt)}.`,
   ].join("\n");
 }
 
@@ -193,7 +201,7 @@ export function SharePanel({ projectId, open, onClose, onActiveChange }: Props) 
   const [now, setNow] = useState(() => Date.now());
 
   // Settings form
-  const [ttlMode, setTtlMode] = useState<"preset" | "custom">("preset");
+  const [ttlMode, setTtlMode] = useState<"preset" | "custom" | "indefinite">("preset");
   const [ttlMinutes, setTtlMinutes] = useState(240);
   const [customExpiry, setCustomExpiry] = useState(() => toLocalInputValue(Date.now() + 24 * 3600_000));
   const [maxIps, setMaxIps] = useState(2);
@@ -212,7 +220,7 @@ export function SharePanel({ projectId, open, onClose, onActiveChange }: Props) 
       const r = await getProjectShare(projectId);
       const s = r.active && r.session ? r.session : null;
       setSession(s);
-      onActiveChange?.(Boolean(s));
+      onActiveChange?.({ active: Boolean(s), expiresAt: s ? s.settings.expiresAt : undefined });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load share status");
     }
@@ -243,7 +251,8 @@ export function SharePanel({ projectId, open, onClose, onActiveChange }: Props) 
     return () => window.clearInterval(t);
   }, [refresh]);
 
-  const expiresAtInput = useMemo(() => {
+  const expiresAtInput = useMemo((): number | null | typeof NaN => {
+    if (ttlMode === "indefinite") return null;
     if (ttlMode === "preset") return Date.now() + ttlMinutes * 60_000;
     const t = new Date(customExpiry).getTime();
     return Number.isFinite(t) ? t : NaN;
@@ -253,9 +262,11 @@ export function SharePanel({ projectId, open, onClose, onActiveChange }: Props) 
     setBusy(true);
     setError(null);
     try {
-      if (!Number.isFinite(expiresAtInput)) throw new Error("Pick a valid expiry date");
+      if (expiresAtInput !== null && !Number.isFinite(expiresAtInput)) throw new Error("Pick a valid expiry date");
       const r = await startProjectShare(projectId, {
-        expiresAt: Math.round(expiresAtInput),
+        ...(expiresAtInput === null
+          ? { indefinite: true }
+          : { expiresAt: Math.round(expiresAtInput as number) }),
         maxIps,
         maxGuests,
         readOnly,
@@ -264,7 +275,7 @@ export function SharePanel({ projectId, open, onClose, onActiveChange }: Props) 
         allowHistory,
       });
       setSession(r.session ?? null);
-      onActiveChange?.(Boolean(r.session));
+      onActiveChange?.({ active: Boolean(r.session), expiresAt: r.session?.settings.expiresAt });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not start share");
     } finally {
@@ -279,7 +290,7 @@ export function SharePanel({ projectId, open, onClose, onActiveChange }: Props) 
     try {
       await stopProjectShare(projectId);
       setSession(null);
-      onActiveChange?.(false);
+      onActiveChange?.({ active: false, expiresAt: undefined });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not stop share");
     } finally {
@@ -293,6 +304,7 @@ export function SharePanel({ projectId, open, onClose, onActiveChange }: Props) 
     try {
       const r = await updateProjectShare(projectId, patch);
       setSession(r.session ?? null);
+      onActiveChange?.({ active: Boolean(r.session), expiresAt: r.session?.settings.expiresAt });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not update share");
     } finally {
@@ -314,10 +326,12 @@ export function SharePanel({ projectId, open, onClose, onActiveChange }: Props) 
 
   const liveGuests = session ? session.guests.filter((g) => !g.revoked) : [];
   const inviteText = session ? buildInvitation(session) : "";
-  const remaining = session ? session.settings.expiresAt - now : 0;
-  const elapsedPct = session
-    ? Math.min(100, Math.max(0, ((now - session.createdAt) / (session.settings.expiresAt - session.createdAt)) * 100))
-    : 0;
+  const indefinite = Boolean(session && session.settings.expiresAt === null);
+  const remaining = session && session.settings.expiresAt !== null ? session.settings.expiresAt - now : 0;
+  const elapsedPct =
+    session && session.settings.expiresAt !== null
+      ? Math.min(100, Math.max(0, ((now - session.createdAt) / (session.settings.expiresAt - session.createdAt)) * 100))
+      : 0;
 
   return (
     <aside className="history-drawer share-drawer" aria-label="Share project">
@@ -393,39 +407,81 @@ export function SharePanel({ projectId, open, onClose, onActiveChange }: Props) 
           </details>
 
           <div className="share-section-title">
-            Time left
-            <span className={`share-countdown${remaining < 5 * 60_000 ? " is-urgent" : ""}`}>{formatCountdown(remaining)}</span>
+            {indefinite ? "Session time" : "Time left"}
+            <span className={`share-countdown${!indefinite && remaining < 5 * 60_000 ? " is-urgent" : ""}`}>
+              {indefinite ? "∞" : formatCountdown(remaining)}
+            </span>
           </div>
           <div className="share-timer">
-            <div className="share-meter">
-              <div className="share-meter-fill share-meter-time" style={{ width: `${elapsedPct}%` }} />
-            </div>
+            {!indefinite && (
+              <div className="share-meter">
+                <div className="share-meter-fill share-meter-time" style={{ width: `${elapsedPct}%` }} />
+              </div>
+            )}
             <div className="share-timer-row">
               <span className="share-muted">
-                Opened {formatWhen(session.createdAt)} · ends {formatWhen(session.settings.expiresAt)}
+                Opened {formatWhen(session.createdAt)}
+                {indefinite
+                  ? " · no automatic expiry"
+                  : ` · ends ${formatWhen(session.settings.expiresAt as number)}`}
               </span>
             </div>
             <div className="share-extend">
-              <span className="share-muted">Extend</span>
-              {EXTEND_PRESETS.map((p) => (
-                <button
-                  key={p.minutes}
-                  type="button"
-                  className="btn btn-ghost share-chip"
-                  disabled={adjusting}
-                  onClick={() => void onUpdate({ extendMinutes: p.minutes })}
-                >
-                  +{p.label}
-                </button>
-              ))}
-              <button
-                type="button"
-                className="btn btn-ghost share-chip"
-                disabled={adjusting}
-                onClick={() => setShowExtendPicker((v) => !v)}
-              >
-                until…
-              </button>
+              {indefinite ? (
+                <>
+                  <span className="share-muted">Set a deadline</span>
+                  {EXTEND_PRESETS.map((p) => (
+                    <button
+                      key={p.minutes}
+                      type="button"
+                      className="btn btn-ghost share-chip"
+                      disabled={adjusting}
+                      onClick={() => void onUpdate({ extendMinutes: p.minutes })}
+                    >
+                      in {p.label}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    className="btn btn-ghost share-chip"
+                    disabled={adjusting}
+                    onClick={() => setShowExtendPicker((v) => !v)}
+                  >
+                    until…
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span className="share-muted">Extend</span>
+                  {EXTEND_PRESETS.map((p) => (
+                    <button
+                      key={p.minutes}
+                      type="button"
+                      className="btn btn-ghost share-chip"
+                      disabled={adjusting}
+                      onClick={() => void onUpdate({ extendMinutes: p.minutes })}
+                    >
+                      +{p.label}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    className="btn btn-ghost share-chip"
+                    disabled={adjusting}
+                    onClick={() => setShowExtendPicker((v) => !v)}
+                  >
+                    until…
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost share-chip"
+                    disabled={adjusting}
+                    onClick={() => void onUpdate({ indefinite: true })}
+                  >
+                    Make indefinite
+                  </button>
+                </>
+              )}
             </div>
             {showExtendPicker && (
               <div className="share-inline">
@@ -563,12 +619,14 @@ export function SharePanel({ projectId, open, onClose, onActiveChange }: Props) 
               <span className="share-field-label">Expires</span>
               <div className="share-inline">
                 <select
-                  value={ttlMode === "preset" ? String(ttlMinutes) : "custom"}
+                  value={ttlMode === "preset" ? String(ttlMinutes) : ttlMode}
                   onChange={(e) => {
-                    if (e.target.value === "custom") setTtlMode("custom");
+                    const v = e.target.value;
+                    if (v === "custom") setTtlMode("custom");
+                    else if (v === "indefinite") setTtlMode("indefinite");
                     else {
                       setTtlMode("preset");
-                      setTtlMinutes(Number(e.target.value));
+                      setTtlMinutes(Number(v));
                     }
                   }}
                 >
@@ -578,13 +636,18 @@ export function SharePanel({ projectId, open, onClose, onActiveChange }: Props) 
                     </option>
                   ))}
                   <option value="custom">custom date & time…</option>
+                  <option value="indefinite">indefinite (no automatic expiry)</option>
                 </select>
                 {ttlMode === "custom" && (
                   <input type="datetime-local" value={customExpiry} onChange={(e) => setCustomExpiry(e.target.value)} />
                 )}
               </div>
               <span className="share-muted">
-                {Number.isFinite(expiresAtInput) ? `Ends ${formatWhen(expiresAtInput)}` : "Pick a valid date"}
+                {ttlMode === "indefinite"
+                  ? "Runs until you click End session"
+                  : Number.isFinite(expiresAtInput)
+                    ? `Ends ${formatWhen(expiresAtInput as number)}`
+                    : "Pick a valid date"}
               </span>
             </div>
 

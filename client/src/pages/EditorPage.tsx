@@ -66,6 +66,17 @@ async function fileToBase64(file: File): Promise<string> {
   return btoa(binary);
 }
 
+function formatShareLeft(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  if (d > 0) return `${d}d ${pad(h)}:${pad(m)}:${pad(sec)}`;
+  return `${pad(h)}:${pad(m)}:${pad(sec)}`;
+}
+
 export function EditorPage() {
   const { id = "" } = useParams();
   const guest = useGuest();
@@ -82,6 +93,16 @@ export function EditorPage() {
   const collab = useProjectCollab(id || undefined, guestIdentity);
   const [shareOpen, setShareOpen] = useState(false);
   const [shareActive, setShareActive] = useState(false);
+  const [shareExpiresAt, setShareExpiresAt] = useState<number | null | undefined>(undefined);
+  const [shareNow, setShareNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!shareActive) return;
+    setShareNow(Date.now());
+    const t = window.setInterval(() => setShareNow(Date.now()), 1000);
+    return () => window.clearInterval(t);
+  }, [shareActive]);
+
   const [project, setProject] = useState<ProjectMeta | null>(null);
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [tree, setTree] = useState<TreeNode[]>([]);
@@ -792,14 +813,47 @@ export function EditorPage() {
         <div className="toolbar-actions">
           <ThemeToggle />
           {!isGuest && (
-            <button
-              type="button"
-              className={`btn${shareActive ? " share-live" : ""}`}
-              onClick={() => setShareOpen(true)}
-              title={shareActive ? "Public link is live — manage" : "Create a temporary public link"}
-            >
-              {shareActive ? "● Live link" : "Share"}
-            </button>
+            <>
+              {shareActive && (
+                <button
+                  type="button"
+                  className={`btn share-timer-chip${
+                    shareExpiresAt !== null &&
+                    shareExpiresAt !== undefined &&
+                    shareExpiresAt - shareNow < 5 * 60_000
+                      ? " is-urgent"
+                      : ""
+                  }`}
+                  onClick={() => setShareOpen(true)}
+                  title={
+                    shareExpiresAt === null
+                      ? "Session has no automatic expiry — click to manage"
+                      : shareExpiresAt
+                        ? `Session ends ${new Date(shareExpiresAt).toLocaleString()} — click to extend`
+                        : "Live share session — click to manage"
+                  }
+                >
+                  <span className="share-timer-dot" aria-hidden>
+                    ●
+                  </span>
+                  {shareExpiresAt === null
+                    ? "Live · no expiry"
+                    : shareExpiresAt
+                      ? `Live · ${formatShareLeft(shareExpiresAt - shareNow)}`
+                      : "Live link"}
+                </button>
+              )}
+              {!shareActive && (
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => setShareOpen(true)}
+                  title="Create a temporary public link"
+                >
+                  Share
+                </button>
+              )}
+            </>
           )}
           {canHistory && (
             <button type="button" className="btn" onClick={() => setHistoryOpen(true)}>
@@ -850,7 +904,10 @@ export function EditorPage() {
           projectId={id}
           open={shareOpen}
           onClose={() => setShareOpen(false)}
-          onActiveChange={setShareActive}
+          onActiveChange={(info) => {
+            setShareActive(info.active);
+            setShareExpiresAt(info.expiresAt);
+          }}
         />
       )}
 

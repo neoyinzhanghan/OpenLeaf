@@ -3,9 +3,10 @@ import { guestLogin, type GuestShareInfo } from "../api/share";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { useSession } from "../session/SessionContext";
 
-function formatExpiry(ms: number): string {
+function formatExpiry(ms: number | null): string {
+  if (ms === null) return "No automatic expiry — the host ends the session";
   const d = new Date(ms);
-  return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  return `Access ends ${d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}`;
 }
 
 export function GuestLogin({ share, linkOk }: { share: GuestShareInfo; linkOk: boolean }) {
@@ -92,7 +93,7 @@ export function GuestLogin({ share, linkOk }: { share: GuestShareInfo; linkOk: b
         </button>
 
         <ul className="guest-facts">
-          <li>Access ends {formatExpiry(share.expiresAt)}</li>
+          <li>{formatExpiry(share.expiresAt)}</li>
           <li>{share.readOnly ? "Read-only: you can follow along but not edit" : "You can edit in real time with the host"}</li>
           {!share.allowDownload && <li>Downloads are disabled for this link</li>}
         </ul>

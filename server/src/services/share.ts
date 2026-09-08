@@ -18,8 +18,8 @@ import { CELESTIAL, CREATURES } from "./wordBanks.js";
  */
 
 export type ShareSettings = {
-  /** Epoch ms after which the session self-terminates and all tokens fail. */
-  expiresAt: number;
+  /** Epoch ms after which the session self-terminates, or null for no automatic expiry. */
+  expiresAt: number | null;
   /** Maximum number of distinct client IPs that may authenticate over the session's life. */
   maxIps: number;
   /** Maximum number of guest sign-ins (people) over the session's life. */
@@ -180,11 +180,12 @@ export function normalizeSettings(input: Partial<ShareSettings> | undefined): Sh
     allowHistory: true,
   };
   const s: ShareSettings = { ...defaults, ...(input ?? {}) };
-  if (!Number.isFinite(s.expiresAt) || s.expiresAt <= now + 60_000) {
-    throw shareError(400, "Expiry must be at least one minute in the future");
-  }
-  if (s.expiresAt > now + 30 * 24 * 3600_000) {
-    throw shareError(400, "Expiry cannot be more than 30 days out");
+  if (s.expiresAt === null) {
+    // indefinite — host ends the session manually
+  } else if (!Number.isFinite(s.expiresAt) || s.expiresAt <= now + 60_000) {
+    throw shareError(400, "Expiry must be at least one minute in the future, or indefinite");
+  } else if (s.expiresAt > now + 30 * 24 * 3600_000) {
+    throw shareError(400, "Expiry cannot be more than 30 days out; pick Indefinite for longer");
   }
   s.maxIps = Math.floor(s.maxIps);
   s.maxGuests = Math.floor(s.maxGuests);
@@ -239,13 +240,20 @@ export function updateShare(projectId: string, patch: ShareUpdate): ShareSession
   const next = normalizeSettings({ ...s.settings, ...patch });
   const changes: string[] = [];
   if (next.expiresAt !== s.settings.expiresAt) {
-    const delta = next.expiresAt - s.settings.expiresAt;
-    changes.push(`${delta > 0 ? "extended" : "shortened"} the deadline by ${humanDuration(Math.abs(delta))}`);
-    if (s.expiryTimer) clearTimeout(s.expiryTimer);
-    s.expiryTimer = setTimeout(() => {
-      logEvent(s, "Session expired");
-      void stopShare(projectId, "expired");
-    }, Math.min(next.expiresAt - Date.now(), 2 ** 31 - 1));
+    if (s.expiryTimer) {
+      clearTimeout(s.expiryTimer);
+      s.expiryTimer = null;
+    }
+    if (next.expiresAt === null) {
+      changes.push("removed the deadline (indefinite)");
+    } else if (s.settings.expiresAt === null) {
+      changes.push(`set a deadline of ${humanDuration(next.expiresAt - Date.now())}`);
+      armExpiry(s, projectId, next.expiresAt);
+    } else {
+      const delta = next.expiresAt - s.settings.expiresAt;
+      changes.push(`${delta > 0 ? "extended" : "shortened"} the deadline by ${humanDuration(Math.abs(delta))}`);
+      armExpiry(s, projectId, next.expiresAt);
+    }
   }
   if (next.maxIps !== s.settings.maxIps) changes.push(`device limit ${s.settings.maxIps} → ${next.maxIps}`);
   if (next.maxGuests !== s.settings.maxGuests) changes.push(`guest limit ${s.settings.maxGuests} → ${next.maxGuests}`);
@@ -284,7 +292,18 @@ export function getShareByHost(hostHeader: string | undefined): ShareSession | u
 }
 
 export function isExpired(s: ShareSession): boolean {
-  return Date.now() >= s.settings.expiresAt;
+  return s.settings.expiresAt !== null && Date.now() >= s.settings.expiresAt;
+}
+
+function armExpiry(s: ShareSession, projectId: string, expiresAt: number): void {
+  if (s.expiryTimer) {
+    clearTimeout(s.expiryTimer);
+    s.expiryTimer = null;
+  }
+  s.expiryTimer = setTimeout(() => {
+    logEvent(s, "Session expired");
+    void stopShare(projectId, "expired");
+  }, Math.min(expiresAt - Date.now(), 2 ** 31 - 1));
 }
 
 function humanDuration(ms: number): string {
@@ -411,12 +430,14 @@ export async function startShare(projectId: string, input: Partial<ShareSettings
   }
 
   session.status = "active";
-  logEvent(session, `Link opened for ${humanDuration(settings.expiresAt - Date.now())}`);
-  session.expiryTimer = setTimeout(() => {
-    logEvent(session, "Session expired");
-    void stopShare(projectId, "expired");
-  }, Math.min(settings.expiresAt - Date.now(), 2 ** 31 - 1));
-  console.log(`[share] ${projectId} -> ${session.url} (expires ${new Date(settings.expiresAt).toISOString()})`);
+  if (settings.expiresAt === null) {
+    logEvent(session, "Link opened with no expiry");
+    console.log(`[share] ${projectId} -> ${session.url} (indefinite)`);
+  } else {
+    logEvent(session, `Link opened for ${humanDuration(settings.expiresAt - Date.now())}`);
+    armExpiry(session, projectId, settings.expiresAt);
+    console.log(`[share] ${projectId} -> ${session.url} (expires ${new Date(settings.expiresAt).toISOString()})`);
+  }
   return session;
 }
 

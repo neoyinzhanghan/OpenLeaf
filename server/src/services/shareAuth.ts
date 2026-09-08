@@ -79,12 +79,12 @@ export function resolveGuest(req: IncomingMessage): GuestResolution {
  */
 const COOKIE_HORIZON_MS = 31 * 24 * 3600_000;
 
-export function cookieHeader(token: string, _expiresAt: number): string {
+export function cookieHeader(token: string, _expiresAt?: number | null): string {
   const exp = new Date(Date.now() + COOKIE_HORIZON_MS).toUTCString();
   return `${GUEST_COOKIE}=${encodeURIComponent(token)}; Path=/; Expires=${exp}; HttpOnly; Secure; SameSite=Lax`;
 }
 
-export function linkCookieHeader(token: string, _expiresAt: number): string {
+export function linkCookieHeader(token: string, _expiresAt?: number | null): string {
   const exp = new Date(Date.now() + COOKIE_HORIZON_MS).toUTCString();
   return `${LINK_COOKIE}=${encodeURIComponent(token)}; Path=/; Expires=${exp}; HttpOnly; Secure; SameSite=Lax`;
 }

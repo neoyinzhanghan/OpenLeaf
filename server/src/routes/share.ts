@@ -26,9 +26,11 @@ function statusOf(err: unknown): number {
 
 const SettingsSchema = z
   .object({
-    expiresAt: z.number().int().optional(),
+    expiresAt: z.number().int().nullable().optional(),
     /** Convenience alternative to expiresAt. */
     ttlMinutes: z.number().int().positive().optional(),
+    /** true → no automatic expiry (same as expiresAt: null). */
+    indefinite: z.boolean().optional(),
     maxIps: z.number().int().optional(),
     maxGuests: z.number().int().optional(),
     readOnly: z.boolean().optional(),
@@ -40,9 +42,10 @@ const SettingsSchema = z
 
 const UpdateSchema = z
   .object({
-    expiresAt: z.number().int().optional(),
-    /** Add this many minutes to the current deadline. */
+    expiresAt: z.number().int().nullable().optional(),
+    /** Add this many minutes to the current deadline (or from now if currently indefinite). */
     extendMinutes: z.number().int().optional(),
+    indefinite: z.boolean().optional(),
     maxIps: z.number().int().optional(),
     maxGuests: z.number().int().optional(),
   })
@@ -71,9 +74,15 @@ projectShareRouter.get("/", (req, res) => {
 projectShareRouter.post("/", async (req, res) => {
   try {
     const body = SettingsSchema.parse(req.body ?? {});
-    const { ttlMinutes, ...rest } = body;
-    const expiresAt = rest.expiresAt ?? (ttlMinutes ? Date.now() + ttlMinutes * 60_000 : undefined);
-    const s = await startShare(pid(req), { ...rest, ...(expiresAt ? { expiresAt } : {}) });
+    const { ttlMinutes, indefinite, ...rest } = body;
+    const expiresAt =
+      indefinite || rest.expiresAt === null
+        ? null
+        : (rest.expiresAt ?? (ttlMinutes ? Date.now() + ttlMinutes * 60_000 : undefined));
+    const s = await startShare(pid(req), {
+      ...rest,
+      ...(expiresAt !== undefined ? { expiresAt } : {}),
+    });
     res.status(201).json({ active: true, session: hostView(s) });
   } catch (err) {
     res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed to start share" });
@@ -89,10 +98,18 @@ projectShareRouter.patch("/", (req, res) => {
       res.status(404).json({ error: "No active share session for this project" });
       return;
     }
-    const { extendMinutes, ...rest } = body;
-    const expiresAt =
-      rest.expiresAt ?? (extendMinutes !== undefined ? current.settings.expiresAt + extendMinutes * 60_000 : undefined);
-    const s = updateShare(pid(req), { ...rest, ...(expiresAt !== undefined ? { expiresAt } : {}) });
+    const { extendMinutes, indefinite, ...rest } = body;
+    let expiresAt: number | null | undefined = rest.expiresAt;
+    if (indefinite) expiresAt = null;
+    else if (extendMinutes !== undefined) {
+      const base = current.settings.expiresAt ?? Date.now();
+      expiresAt = base + extendMinutes * 60_000;
+    }
+    const s = updateShare(pid(req), {
+      ...(rest.maxIps !== undefined ? { maxIps: rest.maxIps } : {}),
+      ...(rest.maxGuests !== undefined ? { maxGuests: rest.maxGuests } : {}),
+      ...(expiresAt !== undefined ? { expiresAt } : {}),
+    });
     res.json({ active: true, session: hostView(s) });
   } catch (err) {
     res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed to update share" });
