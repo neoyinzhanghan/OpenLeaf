@@ -164,8 +164,8 @@ export function normalizeSettings(input: Partial<ShareSettings> | undefined): Sh
   const now = Date.now();
   const defaults: ShareSettings = {
     expiresAt: now + 4 * 3600_000,
-    maxIps: 5,
-    maxGuests: 10,
+    maxIps: 2,
+    maxGuests: 3,
     readOnly: false,
     allowCompile: true,
     allowDownload: true,

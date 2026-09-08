@@ -79,8 +79,8 @@ export function SharePanel({ projectId, open, onClose, onActiveChange }: Props) 
   const [ttlMode, setTtlMode] = useState<"preset" | "custom">("preset");
   const [ttlMinutes, setTtlMinutes] = useState(240);
   const [customExpiry, setCustomExpiry] = useState(() => toLocalInputValue(Date.now() + 24 * 3600_000));
-  const [maxIps, setMaxIps] = useState(5);
-  const [maxGuests, setMaxGuests] = useState(10);
+  const [maxIps, setMaxIps] = useState(2);
+  const [maxGuests, setMaxGuests] = useState(3);
   const [readOnly, setReadOnly] = useState(false);
   const [allowCompile, setAllowCompile] = useState(true);
   const [allowDownload, setAllowDownload] = useState(true);
