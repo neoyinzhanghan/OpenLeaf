@@ -176,18 +176,25 @@ export function CommentsPanel({
       <div className="history-drawer-head">
         <strong>Comments{openCount ? ` (${openCount})` : ""}</strong>
         <div className="history-drawer-actions">
-          <button type="button" className="btn btn-ghost" onClick={() => void refresh()} disabled={loading}>
-            Refresh
+          <button
+            type="button"
+            className="btn btn-ghost btn-icon"
+            onClick={() => void refresh()}
+            disabled={loading}
+            title="Refresh"
+            aria-label="Refresh"
+          >
+            ↻
           </button>
-          <button type="button" className="btn btn-ghost" onClick={onClose}>
-            Close
+          <button type="button" className="btn btn-ghost btn-icon" onClick={onClose} title="Close" aria-label="Close">
+            ✕
           </button>
         </div>
       </div>
 
       <p className="history-hint">
-        Stored in <code>comments.json</code> with your identity; saved to git on each change. Shift+click PDF or
-        select source text → Comment.
+        <strong>How to add one:</strong> select text in Source → <kbd>⌘⌥M</kbd> / <kbd>Ctrl+Alt+M</kbd> (or the
+        Comment button), or <strong>Shift+click</strong> the PDF. Threads are saved in <code>comments.json</code>.
       </p>
 
       <div className="comments-filter">
@@ -253,8 +260,13 @@ export function CommentsPanel({
       {loading && threads.length === 0 ? (
         <div className="empty-hint">Loading…</div>
       ) : visible.length === 0 ? (
-        <div className="empty-hint">
-          {filter === "open" ? "No open comments." : "No comments yet."}
+        <div className="empty-hint empty-hint-card comments-empty">
+          <strong>{filter === "open" ? "No open comments" : "No comments yet"}</strong>
+          <p>
+            {filter === "open"
+              ? "Resolved threads are under All. Start one by selecting source text or Shift+clicking the PDF."
+              : "Select text in Source → ⌘⌥M / Ctrl+Alt+M, or Shift+click the PDF to leave a note."}
+          </p>
         </div>
       ) : (
         <ul className="comments-list">

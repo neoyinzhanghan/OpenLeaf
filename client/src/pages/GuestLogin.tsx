@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { guestLogin, type GuestShareInfo } from "../api/share";
-import { ThemeToggle } from "../components/ThemeToggle";
+import { ThemePicker } from "../components/ThemeToggle";
 import { useSession } from "../session/SessionContext";
 
 function formatExpiry(ms: number | null): string {
@@ -13,6 +13,7 @@ export function GuestLogin({ share, linkOk }: { share: GuestShareInfo; linkOk: b
   const { refresh } = useSession();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [displayName, setDisplayName] = useState(() => localStorage.getItem("openleaf.guestName") ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -35,8 +36,11 @@ export function GuestLogin({ share, linkOk }: { share: GuestShareInfo; linkOk: b
   return (
     <div className="guest-shell">
       <div className="guest-topbar">
-        <img className="toolbar-logo" src="/logo.png" alt="OpenLeaf logo" />
-        <ThemeToggle />
+        <div className="guest-wordmark">
+          <img className="toolbar-logo" src="/logo.png" alt="" />
+          <span className="brand-mark">OpenLeaf</span>
+        </div>
+        <ThemePicker compact />
       </div>
       <form className="guest-card" onSubmit={(e) => void onSubmit(e)}>
         <p className="guest-kicker">Shared project</p>
@@ -60,13 +64,24 @@ export function GuestLogin({ share, linkOk }: { share: GuestShareInfo; linkOk: b
         </label>
         <label className="guest-field">
           <span>Password</span>
-          <input
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
+          <div className="guest-password-row">
+            <input
+              type={showPassword ? "text" : "password"}
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+            <button
+              type="button"
+              className="btn btn-ghost guest-password-toggle"
+              onClick={() => setShowPassword((v) => !v)}
+              aria-pressed={showPassword}
+              title={showPassword ? "Hide password" : "Show password"}
+            >
+              {showPassword ? "Hide" : "Show"}
+            </button>
+          </div>
         </label>
         <label className="guest-field">
           <span>Your name (shown to collaborators)</span>
@@ -80,6 +95,15 @@ export function GuestLogin({ share, linkOk }: { share: GuestShareInfo; linkOk: b
           />
         </label>
 
+        <ul className="guest-facts guest-facts-above">
+          <li>
+            Branch: <strong>{share.branchName || share.branchId || "main"}</strong> (commits stay on this branch)
+          </li>
+          <li>{formatExpiry(share.expiresAt)}</li>
+          <li>{share.readOnly ? "Read-only: you can follow along but not edit" : "You can edit in real time with the host"}</li>
+          {!share.allowDownload && <li>Downloads are disabled for this link</li>}
+        </ul>
+
         {!linkOk && (
           <div className="error-banner guest-error">
             This address is missing its invitation code. Open the <strong>complete link</strong> the host sent you
@@ -91,12 +115,6 @@ export function GuestLogin({ share, linkOk }: { share: GuestShareInfo; linkOk: b
         <button type="submit" className="btn btn-primary guest-submit" disabled={busy || !linkOk}>
           {busy ? "Signing in…" : "Join session"}
         </button>
-
-        <ul className="guest-facts">
-          <li>{formatExpiry(share.expiresAt)}</li>
-          <li>{share.readOnly ? "Read-only: you can follow along but not edit" : "You can edit in real time with the host"}</li>
-          {!share.allowDownload && <li>Downloads are disabled for this link</li>}
-        </ul>
       </form>
     </div>
   );
@@ -106,8 +124,11 @@ export function GuestInactive({ reason }: { reason: "no-session" | "expired" }) 
   return (
     <div className="guest-shell">
       <div className="guest-topbar">
-        <img className="toolbar-logo" src="/logo.png" alt="OpenLeaf logo" />
-        <ThemeToggle />
+        <div className="guest-wordmark">
+          <img className="toolbar-logo" src="/logo.png" alt="" />
+          <span className="brand-mark">OpenLeaf</span>
+        </div>
+        <ThemePicker compact />
       </div>
       <div className="guest-card">
         <p className="guest-kicker">Share link</p>

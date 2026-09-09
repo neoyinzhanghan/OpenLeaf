@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import type { TreeNode } from "../api/types";
+import type { FileChangeDiff, TreeNode } from "../api/types";
+
+export type FileChangeHint = Pick<FileChangeDiff, "status" | "additions" | "deletions">;
 
 type Props = {
   nodes: TreeNode[];
@@ -14,6 +16,8 @@ type Props = {
   canMutateActive: boolean;
   /** Hide every mutating control (read-only guest). */
   readOnly?: boolean;
+  /** When Differences is on — Cursor-style +/− badges per path. */
+  fileChanges?: Record<string, FileChangeHint> | null;
 };
 
 type MenuState = {
@@ -40,10 +44,23 @@ function readDragPath(e: React.DragEvent): string | null {
   return e.dataTransfer.getData(DRAG_MIME) || null;
 }
 
+function ChangeBadge({ hint }: { hint: FileChangeHint }) {
+  const letter =
+    hint.status === "added" ? "A" : hint.status === "deleted" ? "D" : hint.status === "renamed" ? "R" : "M";
+  return (
+    <span className={`tree-change-badge tree-change-badge--${hint.status}`} title={`${hint.status}: +${hint.additions} −${hint.deletions}`}>
+      <span className="tree-change-letter">{letter}</span>
+      {hint.additions > 0 && <span className="tree-change-add">+{hint.additions}</span>}
+      {hint.deletions > 0 && <span className="tree-change-del">−{hint.deletions}</span>}
+    </span>
+  );
+}
+
 function NodeView({
   node,
   activePath,
   dragOverDir,
+  fileChanges,
   onOpen,
   onContextMenu,
   onDragStartNode,
@@ -54,6 +71,7 @@ function NodeView({
   node: TreeNode;
   activePath: string | null;
   dragOverDir: string | null;
+  fileChanges?: Record<string, FileChangeHint> | null;
   onOpen: (path: string) => void;
   onContextMenu: (e: React.MouseEvent, node: TreeNode) => void;
   onDragStartNode: (e: React.DragEvent, node: TreeNode) => void;
@@ -82,6 +100,7 @@ function NodeView({
               node={child}
               activePath={activePath}
               dragOverDir={dragOverDir}
+              fileChanges={fileChanges}
               onOpen={onOpen}
               onContextMenu={onContextMenu}
               onDragStartNode={onDragStartNode}
@@ -95,10 +114,11 @@ function NodeView({
     );
   }
 
+  const hint = fileChanges?.[node.path];
   return (
     <button
       type="button"
-      className={`tree-file${activePath === node.path ? " active" : ""}`}
+      className={`tree-file${activePath === node.path ? " active" : ""}${hint ? ` tree-file--${hint.status}` : ""}`}
       onClick={() => onOpen(node.path)}
       onContextMenu={(e) => onContextMenu(e, node)}
       draggable
@@ -108,7 +128,8 @@ function NodeView({
       onDrop={(e) => onDropInDir(e, parentOf(node.path))}
       title={node.path}
     >
-      {node.name}
+      <span className="tree-file-name">{node.name}</span>
+      {hint && <ChangeBadge hint={hint} />}
     </button>
   );
 }
@@ -123,8 +144,9 @@ export function FileTree({
   onDelete,
   onRename,
   onMove,
-  canMutateActive,
+  canMutateActive: _canMutateActive,
   readOnly = false,
+  fileChanges = null,
 }: Props) {
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [dragOverDir, setDragOverDir] = useState<string | null>(null);
@@ -230,10 +252,10 @@ export function FileTree({
       ) : (
       <div className="file-tree-actions">
         <button type="button" className="btn btn-ghost tree-action" onClick={() => onNewFile()} title="New file">
-          + File
+          New
         </button>
         <button type="button" className="btn btn-ghost tree-action" onClick={() => onNewFolder()} title="New folder">
-          + Dir
+          Folder
         </button>
         <label className="btn btn-ghost tree-action" title="Upload into project">
           Upload
@@ -247,24 +269,6 @@ export function FileTree({
             }}
           />
         </label>
-        <button
-          type="button"
-          className="btn btn-ghost tree-action"
-          onClick={() => onRename()}
-          disabled={!canMutateActive}
-          title="Rename selected"
-        >
-          Rename
-        </button>
-        <button
-          type="button"
-          className="btn btn-ghost tree-action"
-          onClick={() => onDelete()}
-          disabled={!canMutateActive}
-          title="Delete selected"
-        >
-          Del
-        </button>
       </div>
       )}
       <div
@@ -274,12 +278,19 @@ export function FileTree({
         onDragLeave={(e) => onDirDragLeave(e, "")}
         onDrop={(e) => onDropInDir(e, "")}
       >
+        {nodes.length === 0 && !(fileChanges && Object.keys(fileChanges).length > 0) ? (
+          <div className="empty-hint tree-empty">
+            <strong>No files yet</strong>
+            <p>{readOnly ? "This share has an empty tree." : "Use New / Folder / Upload, or right-click here."}</p>
+          </div>
+        ) : null}
         {nodes.map((node) => (
           <NodeView
             key={node.path}
             node={node}
             activePath={activePath}
             dragOverDir={dragOverDir}
+            fileChanges={fileChanges}
             onOpen={onOpen}
             onContextMenu={openMenu}
             onDragStartNode={onDragStartNode}
@@ -288,6 +299,24 @@ export function FileTree({
             onDropInDir={onDropInDir}
           />
         ))}
+        {fileChanges &&
+          Object.entries(fileChanges)
+            .filter(([, h]) => h.status === "deleted")
+            .map(([path, hint]) => {
+              const name = path.includes("/") ? path.slice(path.lastIndexOf("/") + 1) : path;
+              return (
+                <button
+                  key={`deleted:${path}`}
+                  type="button"
+                  className={`tree-file tree-file--deleted tree-file--ghost${activePath === path ? " active" : ""}`}
+                  onClick={() => onOpen(path)}
+                  title={`${path} (deleted since snapshot)`}
+                >
+                  <span className="tree-file-name">{name}</span>
+                  <ChangeBadge hint={hint} />
+                </button>
+              );
+            })}
       </div>
 
       {/* Hidden input backing the "Upload here" context-menu action */}
