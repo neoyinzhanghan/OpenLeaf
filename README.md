@@ -85,6 +85,7 @@ Then open [http://127.0.0.1:8787](http://127.0.0.1:8787) (API serves the built U
 | **You** dropdown | Pick your collab identity for this project (from `openleaf.json`) |
 | Theme toggle | Light / dark (default is dark; preference stored in the browser) |
 | **History** | Per-project git snapshots; restore a previous save |
+| **Comments** | Source-anchored review threads (`comments.json`); Shift+click PDF or Ctrl/Cmd+Alt+M in source |
 | **Save & sync** | Flush live collab edits to disk and commit a backup |
 | **Recompile** | Run the TeX engine |
 | **PDF** / **ZIP** | Download outputs |
@@ -108,6 +109,7 @@ projects/my-paper/
   metrics.tex       # optional shared number macros (\input{metrics})
   references.bib
   openleaf.json     # mainFile, engine, identities[]
+  comments.json     # review threads (author, file:line, replies); git-tracked
   sections/         # \input{sections/...} from main.tex
   figures/
   assets/
@@ -125,13 +127,22 @@ Priority: `config/default.json` → `config/local.json` (gitignored) → env var
 | Variable | Meaning |
 |----------|---------|
 | `OPENLEAF_HOST` | Bind address (default `0.0.0.0`) |
-| `OPENLEAF_PORT` | API port (default `8787`) |
-| `OPENLEAF_PROJECTS_ROOT` | Projects directory |
+| `OPENLEAF_PORT` | API port (default `8787`); Vite proxies `/api` and `/collab` here in dev |
+| `OPENLEAF_CLIENT_PORT` | Vite UI port in `npm run dev` (default `5173`) |
+| `OPENLEAF_PROJECTS_ROOT` | Projects directory (relative to repo root, or absolute) |
 | `OPENLEAF_ENGINE` | `pdflatex` or `xelatex` |
 
 You can also `GET` / `PATCH /api/config` (PATCH writes `config/local.json`).
 
-If you change the API port, update the Vite proxy target in [`client/vite.config.ts`](client/vite.config.ts) to match.
+**Separate papers from the app clone:** point `OPENLEAF_PROJECTS_ROOT` (or `"projectsRoot"` in `config/local.json`) at any writable directory, e.g. `/home/you/papers`. New projects are created there instead of `./projects/`.
+
+**Second instance on a shared machine** (ports already taken):
+
+```bash
+OPENLEAF_PORT=8788 OPENLEAF_CLIENT_PORT=5176 OPENLEAF_PROJECTS_ROOT=/path/to/papers npm run dev
+```
+
+Then open `http://127.0.0.1:5176`.
 
 ## Features
 

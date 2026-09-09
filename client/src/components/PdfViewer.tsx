@@ -21,14 +21,18 @@ export type PdfHighlight = {
 type Props = {
   url: string | null;
   onReverseSearch?: (page: number, x: number, y: number) => void;
+  /** Shift+click PDF → create a comment at the SyncTeX source hit */
+  onCommentAt?: (page: number, x: number, y: number) => void;
   highlight?: PdfHighlight | null;
 };
 
-export function PdfViewer({ url, onReverseSearch, highlight }: Props) {
+export function PdfViewer({ url, onReverseSearch, onCommentAt, highlight }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const reverseRef = useRef(onReverseSearch);
   reverseRef.current = onReverseSearch;
+  const commentRef = useRef(onCommentAt);
+  commentRef.current = onCommentAt;
   const [pageCount, setPageCount] = useState(0);
   const [scale, setScale] = useState(1.2);
   const [error, setError] = useState<string | null>(null);
@@ -88,8 +92,6 @@ export function PdfViewer({ url, onReverseSearch, highlight }: Props) {
           if (!ctx) continue;
           await page.render({ canvasContext: ctx, viewport }).promise;
           canvas.addEventListener("click", (ev) => {
-            const handler = reverseRef.current;
-            if (!handler) return;
             const rect = canvas.getBoundingClientRect();
             if (rect.width <= 0 || rect.height <= 0) return;
             // Map CSS click → canvas pixels → PDF points (pdf.js viewport scale)
@@ -107,9 +109,14 @@ export function PdfViewer({ url, onReverseSearch, highlight }: Props) {
             wrap.appendChild(pulse);
             window.setTimeout(() => pulse.remove(), 700);
 
-            handler(pageNum, x, y);
+            if (ev.shiftKey && commentRef.current) {
+              commentRef.current(pageNum, x, y);
+              return;
+            }
+            const handler = reverseRef.current;
+            if (handler) handler(pageNum, x, y);
           });
-          canvas.title = "Click to jump to LaTeX source";
+          canvas.title = "Click → source · Shift+click → comment";
           wrap.appendChild(canvas);
           container.appendChild(wrap);
         }
@@ -188,7 +195,7 @@ export function PdfViewer({ url, onReverseSearch, highlight }: Props) {
         <span className="pane-title" style={{ padding: 0 }}>
           PDF
         </span>
-        <span className="status-pill" title="Click PDF → source · Ctrl/Cmd+Click source → PDF">
+        <span className="status-pill" title="Click PDF → source · Shift+click → comment · Ctrl/Cmd+Click source → PDF">
           SyncTeX
         </span>
         <div className="spacer" />

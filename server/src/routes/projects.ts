@@ -7,9 +7,18 @@ import {
   clearCollabSnapshot,
   flushProjectRoom,
   getOrCreateRoom,
+  notifyProjectCommentsChanged,
   notifyProjectTreeChange,
   reseedProjectRoom,
 } from "../services/collab/room.js";
+import {
+  addCommentReply,
+  CommentAnchorSchema,
+  createComment,
+  deleteComment,
+  listComments,
+  patchComment,
+} from "../services/comments.js";
 import {
   autoCommitProject,
   listProjectCommits,
@@ -76,6 +85,25 @@ async function commitAfterChange(
   req: { body?: unknown; query?: unknown; headers: Record<string, unknown> },
 ) {
   return autoCommitProject(id, { message, author: await authorFromRequest(id, req) });
+}
+
+async function identityFromRequest(
+  projectId: string,
+  req: { body?: unknown; query?: unknown; headers: Record<string, unknown> },
+) {
+  const header = req.headers["x-openleaf-identity"];
+  const fromHeader = typeof header === "string" ? header : undefined;
+  const body = req.body && typeof req.body === "object" ? (req.body as { identityId?: string }) : {};
+  const query = req.query && typeof req.query === "object" ? (req.query as { identity?: string }) : {};
+  const id = body.identityId || query.identity || fromHeader;
+  if (!id) {
+    throw Object.assign(new Error("identityId is required"), { status: 400 });
+  }
+  const ident = await getProjectIdentity(projectId, id);
+  if (!ident) {
+    throw Object.assign(new Error("Unknown identity"), { status: 403 });
+  }
+  return ident;
 }
 
 projectsRouter.get("/", async (_req, res) => {
@@ -196,6 +224,114 @@ projectsRouter.put("/:id/identities", async (req, res) => {
     }
     const cfg = await writeProjectConfig(req.params.id, { identities });
     res.json(cfg.identities ?? identities);
+  } catch (err) {
+    res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
+projectsRouter.get("/:id/comments", async (req, res) => {
+  try {
+    res.json(await listComments(req.params.id));
+  } catch (err) {
+    res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
+projectsRouter.post("/:id/comments", async (req, res) => {
+  const schema = z.object({
+    identityId: z.string().min(1),
+    body: z.string().min(1).max(8000),
+    anchor: CommentAnchorSchema,
+  });
+  try {
+    const body = schema.parse(req.body);
+    const ident = await identityFromRequest(req.params.id, req);
+    const thread = await createComment(req.params.id, {
+      author: ident,
+      body: body.body,
+      anchor: body.anchor,
+    });
+    notifyProjectCommentsChanged(req.params.id);
+    notifyProjectTreeChange(req.params.id, { op: "write", path: "comments.json" });
+    const git = await commitAfterChange(
+      req.params.id,
+      `Comment on ${thread.anchor.file}:${thread.anchor.line}`,
+      req,
+    );
+    res.status(201).json({ thread, git });
+  } catch (err) {
+    res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
+projectsRouter.post("/:id/comments/:commentId/replies", async (req, res) => {
+  const schema = z.object({
+    identityId: z.string().min(1),
+    body: z.string().min(1).max(8000),
+  });
+  try {
+    const body = schema.parse(req.body);
+    const ident = await identityFromRequest(req.params.id, req);
+    const thread = await addCommentReply(req.params.id, req.params.commentId, {
+      author: ident,
+      body: body.body,
+    });
+    notifyProjectCommentsChanged(req.params.id);
+    const git = await commitAfterChange(
+      req.params.id,
+      `Reply on ${thread.anchor.file}:${thread.anchor.line}`,
+      req,
+    );
+    res.status(201).json({ thread, git });
+  } catch (err) {
+    res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
+projectsRouter.patch("/:id/comments/:commentId", async (req, res) => {
+  const schema = z.object({
+    identityId: z.string().optional(),
+    resolved: z.boolean().optional(),
+    body: z.string().min(1).max(8000).optional(),
+  });
+  try {
+    const body = schema.parse(req.body);
+    const thread = await patchComment(req.params.id, req.params.commentId, {
+      resolved: body.resolved,
+      body: body.body,
+    });
+    notifyProjectCommentsChanged(req.params.id);
+    const label =
+      typeof body.resolved === "boolean"
+        ? body.resolved
+          ? "Resolve"
+          : "Reopen"
+        : "Edit";
+    const git = await commitAfterChange(
+      req.params.id,
+      `${label} comment on ${thread.anchor.file}:${thread.anchor.line}`,
+      req,
+    );
+    res.json({ thread, git });
+  } catch (err) {
+    res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
+projectsRouter.delete("/:id/comments/:commentId", async (req, res) => {
+  try {
+    const threads = await listComments(req.params.id);
+    const existing = threads.find((t) => t.id === req.params.commentId);
+    await deleteComment(req.params.id, req.params.commentId);
+    notifyProjectCommentsChanged(req.params.id);
+    const git = await commitAfterChange(
+      req.params.id,
+      existing
+        ? `Delete comment on ${existing.anchor.file}:${existing.anchor.line}`
+        : "Delete comment",
+      req,
+    );
+    res.json({ ok: true, git });
   } catch (err) {
     res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed" });
   }
