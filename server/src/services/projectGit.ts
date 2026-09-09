@@ -4,7 +4,7 @@ import fsSync from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 import { loadConfig } from "../config.js";
-import { projectDir } from "./projectFs.js";
+import { projectDir, resolveProjectPath } from "./projectFs.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -114,12 +114,32 @@ function defaultMessage(hint?: string): string {
 }
 
 /**
- * Stage all tracked/untracked source files and commit if there are changes.
- * Safe to call after every save/flush.
+ * Normalize commit pathspecs and reject `..` / escapes. Returns undefined when
+ * the caller wants a full-tree snapshot (`git add -A`).
+ */
+function commitPathspecs(id: string, paths?: string[]): string[] | undefined {
+  if (!paths?.length) return undefined;
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of paths) {
+    const normalized = raw.replace(/\\/g, "/").replace(/^\/+/, "");
+    if (!normalized) continue;
+    resolveProjectPath(id, normalized);
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out.length ? out : undefined;
+}
+
+/**
+ * Stage source files and commit if there are changes.
+ * Pass `paths` to snapshot only those files (e.g. comments.json); otherwise
+ * stages the whole tree (`git add -A`). Safe to call after every save/flush.
  */
 export async function autoCommitProject(
   id: string,
-  opts?: { message?: string; author?: GitAuthor },
+  opts?: { message?: string; author?: GitAuthor; paths?: string[] },
 ): Promise<GitCommitResult> {
   if (!isGitEnabled()) {
     return { committed: false, hash: null, message: "", skipped: "disabled" };
@@ -127,9 +147,16 @@ export async function autoCommitProject(
 
   try {
     await ensureProjectGit(id);
-    await runGit(id, ["add", "-A"]);
+    const paths = commitPathspecs(id, opts?.paths);
+    if (paths) {
+      await runGit(id, ["add", "--", ...paths]);
+    } else {
+      await runGit(id, ["add", "-A"]);
+    }
 
-    const status = await runGit(id, ["status", "--porcelain"], { allowFailure: true });
+    const status = paths
+      ? await runGit(id, ["diff", "--cached", "--name-only", "--", ...paths], { allowFailure: true })
+      : await runGit(id, ["status", "--porcelain"], { allowFailure: true });
     if (!status.stdout.trim()) {
       return { committed: false, hash: null, message: "", skipped: "clean" };
     }
@@ -137,7 +164,9 @@ export async function autoCommitProject(
     const message = defaultMessage(opts?.message);
     const commit = await runGit(
       id,
-      ["commit", "-m", message, "--no-gpg-sign"],
+      paths
+        ? ["commit", "-m", message, "--no-gpg-sign", "--", ...paths]
+        : ["commit", "-m", message, "--no-gpg-sign"],
       { author: opts?.author, allowFailure: true },
     );
 
@@ -247,4 +276,186 @@ export async function restoreProjectCommit(id: string, hash: string): Promise<vo
   }
 
   await runGit(id, ["reset", "HEAD"], { allowFailure: true });
+}
+
+const HASH_RE = /^[0-9a-f]{7,40}$/i;
+
+export function isManuscriptTexPath(rel: string): boolean {
+  const n = rel.replace(/\\/g, "/").replace(/^\.\//, "");
+  if (!n || n.startsWith(".openleaf/") || n.startsWith(".git/")) return false;
+  if (n === "misc" || n.startsWith("misc/")) return false;
+  return n.endsWith(".tex") || n.endsWith(".ltx");
+}
+
+export function isHighlightableTexLine(line: string): boolean {
+  const t = line.trim();
+  if (!t) return false;
+  if (t.startsWith("%")) return false;
+  return true;
+}
+
+function parseCommitLine(line: string): GitCommitInfo | null {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+  const [hash, shortHash, author, email, date, ...rest] = trimmed.split("\t");
+  if (!hash || !shortHash || !date) return null;
+  return {
+    hash,
+    shortHash,
+    author: author || "OpenLeaf",
+    email: email || "",
+    date,
+    message: rest.join("\t"),
+  };
+}
+
+export async function getProjectCommit(id: string, hash: string): Promise<GitCommitInfo | null> {
+  if (!isGitEnabled()) return null;
+  if (!HASH_RE.test(hash)) return null;
+  await ensureProjectGit(id);
+  const log = await runGit(
+    id,
+    ["log", "-1", "--pretty=format:%H%x09%h%x09%an%x09%ae%x09%aI%x09%s", hash],
+    { allowFailure: true },
+  );
+  if (log.code !== 0 || !log.stdout.trim()) return null;
+  return parseCommitLine(log.stdout.split("\n")[0] ?? "");
+}
+
+/** Oldest commit on HEAD (template / first snapshot). */
+export async function getRootProjectCommit(id: string): Promise<GitCommitInfo | null> {
+  if (!isGitEnabled()) return null;
+  await ensureProjectGit(id);
+  const rev = await runGit(id, ["rev-list", "--max-parents=0", "HEAD"], { allowFailure: true });
+  const hash = rev.stdout.trim().split("\n").filter(Boolean)[0];
+  if (!hash) return null;
+  return getProjectCommit(id, hash);
+}
+
+export type AddedTexLines = {
+  file: string;
+  lines: number[];
+  /** Whole file is new — match every SyncTeX hbox, not just non-blank lines. */
+  entireFile?: boolean;
+};
+
+export type ParsedAddedDiff = {
+  byFile: Map<string, number[]>;
+  newFiles: Set<string>;
+};
+
+/**
+ * Source lines added in manuscript .tex files since `since` (working tree vs that commit).
+ * Skips `misc/`, comments, and blank lines.
+ */
+export async function listAddedManuscriptLines(
+  id: string,
+  since: string,
+): Promise<AddedTexLines[]> {
+  if (!isGitEnabled()) return [];
+  if (!HASH_RE.test(since)) {
+    throw Object.assign(new Error("Invalid commit hash"), { status: 400 });
+  }
+  await ensureProjectGit(id);
+
+  const verify = await runGit(id, ["cat-file", "-t", since], { allowFailure: true });
+  if (verify.code !== 0 || !verify.stdout.includes("commit")) {
+    throw Object.assign(new Error("Commit not found"), { status: 404 });
+  }
+
+  const diff = await runGit(
+    id,
+    ["diff", "-U0", "--find-renames", "--diff-filter=ACMR", since],
+    { allowFailure: true },
+  );
+
+  const { byFile, newFiles } = parseAddedLinesFromUnifiedDiff(diff.stdout);
+
+  const untracked = await runGit(id, ["ls-files", "--others", "--exclude-standard"], {
+    allowFailure: true,
+  });
+  for (const rel of untracked.stdout.split("\n").map((l) => l.trim()).filter(Boolean)) {
+    if (!isManuscriptTexPath(rel) || byFile.has(rel)) continue;
+    try {
+      const full = resolveProjectPath(id, rel);
+      const text = await fs.readFile(full, "utf8");
+      const lines: number[] = [];
+      const raw = text.split(/\n/);
+      for (let i = 0; i < raw.length; i += 1) {
+        if (isHighlightableTexLine(raw[i] ?? "")) lines.push(i + 1);
+      }
+      if (lines.length) {
+        byFile.set(rel, lines);
+        newFiles.add(rel);
+      }
+    } catch {
+      /* ignore unreadable */
+    }
+  }
+
+  const out: AddedTexLines[] = [];
+  for (const [file, lines] of byFile) {
+    if (!isManuscriptTexPath(file)) continue;
+    const unique = [...new Set(lines)].filter((n) => n > 0).sort((a, b) => a - b);
+    const entireFile = newFiles.has(file);
+    if (unique.length || entireFile) out.push({ file, lines: unique, entireFile });
+  }
+  out.sort((a, b) => a.file.localeCompare(b.file));
+  return out;
+}
+
+/** Exported for tests / reuse. */
+export function parseAddedLinesFromUnifiedDiff(diff: string): ParsedAddedDiff {
+  const byFile = new Map<string, number[]>();
+  const newFiles = new Set<string>();
+  let file: string | null = null;
+  let newLine = 0;
+  let inHunk = false;
+  let pendingNew = false;
+
+  for (const raw of diff.split("\n")) {
+    if (raw.startsWith("diff --git ")) {
+      file = null;
+      inHunk = false;
+      pendingNew = false;
+      continue;
+    }
+    if (raw.startsWith("new file mode") || raw === "--- /dev/null") {
+      pendingNew = true;
+      continue;
+    }
+    if (raw.startsWith("+++ ")) {
+      const spec = (raw.slice(4).split("\t")[0] ?? "").trim().replace(/^"|"$/g, "");
+      if (spec === "/dev/null") {
+        file = null;
+        inHunk = false;
+        pendingNew = false;
+        continue;
+      }
+      file = spec.replace(/^[ab]\//, "");
+      if (pendingNew && file) newFiles.add(file);
+      pendingNew = false;
+      continue;
+    }
+    const hunk = /^@@\s+-\d+(?:,\d+)?\s+\+(\d+)(?:,(\d+))?\s+@@/.exec(raw);
+    if (hunk) {
+      newLine = Number(hunk[1]);
+      inHunk = true;
+      continue;
+    }
+    if (!inHunk || !file) continue;
+    if (raw.startsWith("+") && !raw.startsWith("+++")) {
+      if (isHighlightableTexLine(raw.slice(1))) {
+        const list = byFile.get(file) ?? [];
+        list.push(newLine);
+        byFile.set(file, list);
+      }
+      newLine += 1;
+      continue;
+    }
+    if (raw.startsWith("-") && !raw.startsWith("---")) continue;
+    if (raw.startsWith("\\")) continue;
+    newLine += 1;
+  }
+  return { byFile, newFiles };
 }

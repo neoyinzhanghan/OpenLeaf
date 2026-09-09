@@ -42,6 +42,7 @@ import {
   writeFile,
   writeProjectConfig,
 } from "../services/projectFs.js";
+import { computeDiffHighlights } from "../services/diffHighlights.js";
 import { forwardSynctex, reverseSynctex } from "../services/synctex.js";
 import { streamProjectZip } from "../services/zip.js";
 import { IdentitySchema } from "../config.js";
@@ -83,8 +84,9 @@ async function commitAfterChange(
   id: string,
   message: string,
   req: { body?: unknown; query?: unknown; headers: Record<string, unknown> },
+  paths?: string[],
 ) {
-  return autoCommitProject(id, { message, author: await authorFromRequest(id, req) });
+  return autoCommitProject(id, { message, author: await authorFromRequest(id, req), paths });
 }
 
 async function identityFromRequest(
@@ -257,6 +259,7 @@ projectsRouter.post("/:id/comments", async (req, res) => {
       req.params.id,
       `Comment on ${thread.anchor.file}:${thread.anchor.line}`,
       req,
+      ["comments.json"],
     );
     res.status(201).json({ thread, git });
   } catch (err) {
@@ -281,6 +284,7 @@ projectsRouter.post("/:id/comments/:commentId/replies", async (req, res) => {
       req.params.id,
       `Reply on ${thread.anchor.file}:${thread.anchor.line}`,
       req,
+      ["comments.json"],
     );
     res.status(201).json({ thread, git });
   } catch (err) {
@@ -311,6 +315,7 @@ projectsRouter.patch("/:id/comments/:commentId", async (req, res) => {
       req.params.id,
       `${label} comment on ${thread.anchor.file}:${thread.anchor.line}`,
       req,
+      ["comments.json"],
     );
     res.json({ thread, git });
   } catch (err) {
@@ -330,6 +335,7 @@ projectsRouter.delete("/:id/comments/:commentId", async (req, res) => {
         ? `Delete comment on ${existing.anchor.file}:${existing.anchor.line}`
         : "Delete comment",
       req,
+      ["comments.json"],
     );
     res.json({ ok: true, git });
   } catch (err) {
@@ -364,6 +370,16 @@ projectsRouter.post("/:id/collab/ensure", async (req, res) => {
     const room = await getOrCreateRoom(req.params.id);
     await room.ensureFile(body.path);
     res.json({ ok: true, path: body.path });
+  } catch (err) {
+    res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
+projectsRouter.get("/:id/diff-highlights", async (req, res) => {
+  try {
+    const since = typeof req.query.since === "string" ? req.query.since : undefined;
+    const result = await computeDiffHighlights(req.params.id, since);
+    res.json(result);
   } catch (err) {
     res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed" });
   }

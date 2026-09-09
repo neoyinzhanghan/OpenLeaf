@@ -3,6 +3,7 @@ import type {
   CommentAnchor,
   CommentThread,
   CompileResult,
+  DiffHighlightsResult,
   FilePayload,
   GitCommitInfo,
   GitCommitResult,
@@ -76,6 +77,11 @@ export function restoreProjectHistory(
     body: JSON.stringify({ hash, identityId }),
     headers: identityId ? { "X-OpenLeaf-Identity": identityId } : undefined,
   });
+}
+
+export function getDiffHighlights(id: string, since?: string): Promise<DiffHighlightsResult> {
+  const q = since ? `?since=${encodeURIComponent(since)}` : "";
+  return request(`/api/projects/${encodeURIComponent(id)}/diff-highlights${q}`);
 }
 
 export function patchConfig(body: Partial<AppConfig>): Promise<AppConfig> {

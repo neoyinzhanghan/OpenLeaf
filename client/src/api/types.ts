@@ -49,6 +49,8 @@ export type FilePayload = {
   contentType: string;
   size: number;
   text: boolean;
+  /** True when the body was skipped because the file exceeds the inline limit. */
+  contentOmitted?: boolean;
 };
 
 export type CompileResult = {
@@ -91,6 +93,23 @@ export type GitCommitInfo = {
   author: string;
   email: string;
   date: string;
+};
+
+export type DiffHighlightBox = {
+  page: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+export type DiffHighlightsResult = {
+  gitEnabled: boolean;
+  since: GitCommitInfo | null;
+  files: number;
+  lines: number;
+  boxes: DiffHighlightBox[];
+  warning?: string;
 };
 
 export type CommentAnchor = {

@@ -10,6 +10,7 @@ type Props = {
   onRestored: () => void;
   /** Guests may browse but never restore. */
   canRestore?: boolean;
+  onHighlightSince?: (commit: GitCommitInfo) => void;
 };
 
 function formatWhen(iso: string): string {
@@ -26,7 +27,15 @@ function formatWhen(iso: string): string {
   }
 }
 
-export function HistoryPanel({ projectId, identityId, open, onClose, onRestored, canRestore = true }: Props) {
+export function HistoryPanel({
+  projectId,
+  identityId,
+  open,
+  onClose,
+  onRestored,
+  canRestore = true,
+  onHighlightSince,
+}: Props) {
   const [commits, setCommits] = useState<GitCommitInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -82,7 +91,10 @@ export function HistoryPanel({ projectId, identityId, open, onClose, onRestored,
       </div>
       <p className="history-hint">
         Automatic git snapshots on each save.{" "}
-        {canRestore ? "Restore copies that revision into the working tree." : "Only the host can restore a snapshot."}
+        {canRestore
+          ? "Restore copies that revision into the working tree."
+          : "Only the host can restore a snapshot."}{" "}
+        Highlight additions maps new .tex lines since a snapshot onto the PDF (preview overlay).
       </p>
       {error && <div className="error-banner">{error}</div>}
       {loading && commits.length === 0 ? (
@@ -100,16 +112,31 @@ export function HistoryPanel({ projectId, identityId, open, onClose, onRestored,
                   {c.author} · {formatWhen(c.date)}
                 </span>
               </div>
-              {canRestore && (
-                <button
-                  type="button"
-                  className="btn"
-                  disabled={busyHash === c.hash}
-                  onClick={() => void onRestore(c.hash)}
-                >
-                  {busyHash === c.hash ? "Restoring…" : "Restore"}
-                </button>
-              )}
+              <div className="history-item-actions">
+                {onHighlightSince && (
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => {
+                      onHighlightSince(c);
+                      onClose();
+                    }}
+                    title="Highlight manuscript lines added after this snapshot"
+                  >
+                    Highlight since
+                  </button>
+                )}
+                {canRestore && (
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={busyHash === c.hash}
+                    onClick={() => void onRestore(c.hash)}
+                  >
+                    {busyHash === c.hash ? "Restoring…" : "Restore"}
+                  </button>
+                )}
+              </div>
             </li>
           ))}
         </ul>

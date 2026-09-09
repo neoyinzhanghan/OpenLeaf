@@ -7,9 +7,11 @@ import {
   deleteProjectPath,
   downloadUrl,
   getConfig,
+  getDiffHighlights,
   getProject,
   getTree,
   listProjectComments,
+  listProjectHistory,
   mkdirProjectPath,
   pdfUrl,
   readProjectFile,
@@ -18,7 +20,7 @@ import {
   synctexLookup,
   writeProjectFile,
 } from "../api/client";
-import type { AppConfig, ProjectMeta, TreeNode } from "../api/types";
+import type { AppConfig, GitCommitInfo, ProjectMeta, TreeNode } from "../api/types";
 import { guestLogout } from "../api/share";
 import { flushCollab, useProjectCollab } from "../collab/useProjectCollab";
 import { BinaryPane } from "../components/BinaryPane";
@@ -27,7 +29,7 @@ import { CompileLog } from "../components/CompileLog";
 import { FileTree } from "../components/FileTree";
 import { CommentsPanel, type CommentDraft } from "../components/CommentsPanel";
 import { HistoryPanel } from "../components/HistoryPanel";
-import { PdfViewer, type PdfHighlight } from "../components/PdfViewer";
+import { PdfViewer, type PdfDiffOverlay, type PdfHighlight } from "../components/PdfViewer";
 import { SharePanel } from "../components/SharePanel";
 import { SplitPane } from "../components/SplitPane";
 import { ThemeToggle } from "../components/ThemeToggle";
@@ -56,6 +58,40 @@ function parentDir(filePath: string | null): string {
 function joinPath(dir: string, name: string): string {
   const clean = name.replace(/^\/+/, "").replace(/\\/g, "/");
   return dir ? `${dir}/${clean}` : clean;
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function isHintIndexPath(filePath: string): boolean {
+  return !filePath.split("/").some(
+    (p) => p === ".openleaf" || p === "data" || p === "private" || p === "tmp" || p === "vendor",
+  );
+}
+
+function diffHighlightKey(projectId: string): string {
+  return `openleaf.diffHighlight.${projectId}`;
+}
+
+function persistDiffHighlight(projectId: string, enabled: boolean, since: string): void {
+  localStorage.setItem(diffHighlightKey(projectId), JSON.stringify({ enabled, since: since || null }));
+}
+
+function readDiffHighlightPref(projectId: string): { enabled: boolean; since: string } {
+  try {
+    const raw = localStorage.getItem(diffHighlightKey(projectId));
+    if (!raw) return { enabled: false, since: "" };
+    const pref = JSON.parse(raw) as { enabled?: boolean; since?: string | null };
+    return {
+      enabled: Boolean(pref.enabled),
+      since: typeof pref.since === "string" ? pref.since : "",
+    };
+  } catch {
+    return { enabled: false, since: "" };
+  }
 }
 
 async function fileToBase64(file: File): Promise<string> {
@@ -195,11 +231,20 @@ export function EditorPage() {
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const [flushedContent, setFlushedContent] = useState("");
   const saveLock = useRef(false);
+  const [diffOn, setDiffOn] = useState(false);
+  const [diffSince, setDiffSince] = useState("");
+  const [diffCommits, setDiffCommits] = useState<GitCommitInfo[]>([]);
+  const [diffBoxes, setDiffBoxes] = useState<PdfDiffOverlay[]>([]);
+  const [diffLines, setDiffLines] = useState<number | null>(null);
+  const [diffFiles, setDiffFiles] = useState<number | null>(null);
+  const [diffLoading, setDiffLoading] = useState(false);
+  const [diffWarning, setDiffWarning] = useState<string | null>(null);
   const compileLock = useRef(false);
   const workspaceRef = useRef<HTMLDivElement>(null);
   const activePathRef = useRef(activePath);
   activePathRef.current = activePath;
   const [fileReady, setFileReady] = useState(false);
+  const [tooLargeBytes, setTooLargeBytes] = useState<number | null>(null);
 
   const collabText = editMode === "text" && yText != null;
   const dirty =
@@ -214,14 +259,14 @@ export function EditorPage() {
   }, [id]);
 
   const loadIndexHints = useCallback(async (projectId: string, nodes: TreeNode[]) => {
-    const files = flattenFiles(nodes);
+    const files = flattenFiles(nodes).filter(isHintIndexPath);
     const bibPaths = files.filter((f) => f.endsWith(".bib"));
-    const texPaths = files.filter((f) => f.endsWith(".tex") && !f.includes(".openleaf/"));
+    const texPaths = files.filter((f) => f.endsWith(".tex"));
     const bibTexts = await Promise.all(
       bibPaths.map(async (f) => {
         try {
           const file = await readProjectFile(projectId, f, { forceText: true });
-          return file.content;
+          return file.contentOmitted ? "" : file.content;
         } catch {
           return "";
         }
@@ -237,6 +282,7 @@ export function EditorPage() {
     for (const f of texPaths) {
       try {
         const file = await readProjectFile(projectId, f, { forceText: true });
+        if (file.contentOmitted) continue;
         for (const key of extractLabels(file.content)) labelKeys.add(key);
       } catch {
         /* ignore */
@@ -270,6 +316,38 @@ export function EditorPage() {
     void refreshTree();
   }, [collab.treeVersion, refreshTree]);
 
+  // Binary / oversized files are not in the CRDT — reload the open file from disk
+  // when the watcher reports that path changed. Collaborative text updates live.
+  useEffect(() => {
+    if (!id || !activePath || collabText || dirty) return;
+    if (!collab.treeEventPaths.includes(activePath)) return;
+    let cancelled = false;
+    const pathBeingLoaded = activePath;
+    (async () => {
+      try {
+        const forceText = forceTextPath === pathBeingLoaded;
+        const file = await readProjectFile(id, pathBeingLoaded, { forceText });
+        if (cancelled || activePathRef.current !== pathBeingLoaded) return;
+        if (!file.text && !forceText) {
+          setEditMode("binary");
+          setBinaryMeta({
+            contentType: file.contentType,
+            size: file.size,
+            base64: file.content,
+          });
+          return;
+        }
+        setContent(file.content);
+        setSavedContent(file.content);
+      } catch {
+        /* ignore — the next explicit open will surface the error */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id, activePath, collab.treeEventPaths, collabText, dirty, forceTextPath]);
+
   // Keep gutter marks / toolbar count fresh (panel may be closed)
   useEffect(() => {
     if (!id) return;
@@ -286,6 +364,95 @@ export function EditorPage() {
       cancelled = true;
     };
   }, [id, collab.commentsVersion]);
+
+  useEffect(() => {
+    if (!id) {
+      setDiffOn(false);
+      setDiffSince("");
+      return;
+    }
+    const pref = readDiffHighlightPref(id);
+    setDiffOn(pref.enabled);
+    setDiffSince(pref.since);
+  }, [id]);
+
+  useEffect(() => {
+    if (!id || !diffOn) {
+      setDiffCommits([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const commits = await listProjectHistory(id, 80);
+        if (cancelled) return;
+        setDiffCommits(commits);
+        if (commits.length === 0) return;
+        setDiffSince((cur) => {
+          if (cur && commits.some((c) => c.hash === cur || c.shortHash === cur)) return cur;
+          const oldest = commits[commits.length - 1]!;
+          persistDiffHighlight(id, true, oldest.hash);
+          return oldest.hash;
+        });
+      } catch {
+        if (!cancelled) setDiffCommits([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id, diffOn]);
+
+  useEffect(() => {
+    if (!id || !diffOn || !diffSince) {
+      setDiffBoxes([]);
+      setDiffLines(null);
+      setDiffFiles(null);
+      setDiffWarning(null);
+      setDiffLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setDiffLoading(true);
+    (async () => {
+      try {
+        const result = await getDiffHighlights(id, diffSince);
+        if (cancelled) return;
+        setDiffBoxes(result.boxes);
+        setDiffLines(result.lines);
+        setDiffFiles(result.files);
+        setDiffWarning(result.warning ?? null);
+      } catch (err) {
+        if (!cancelled) {
+          setDiffBoxes([]);
+          setDiffLines(null);
+          setDiffFiles(null);
+          setDiffWarning(err instanceof Error ? err.message : "Could not load additions");
+        }
+      } finally {
+        if (!cancelled) setDiffLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id, diffOn, diffSince, pdfBust]);
+
+  const onDiffEnabledChange = useCallback(
+    (on: boolean) => {
+      setDiffOn(on);
+      if (id) persistDiffHighlight(id, on, diffSince);
+    },
+    [id, diffSince],
+  );
+
+  const onDiffSinceChange = useCallback(
+    (hash: string) => {
+      setDiffSince(hash);
+      if (id) persistDiffHighlight(id, diffOn, hash);
+    },
+    [id, diffOn],
+  );
 
   const labels = useMemo(() => {
     const textForLabels = collabText ? liveContent : content;
@@ -317,6 +484,7 @@ export function EditorPage() {
     if (pathChanged) {
       setFileReady(false);
       setYText(null);
+      setTooLargeBytes(null);
     }
     (async () => {
       try {
@@ -325,6 +493,26 @@ export function EditorPage() {
         const file = await readProjectFile(id, pathBeingLoaded, { forceText });
         if (cancelled || activePathRef.current !== pathBeingLoaded) return;
         setError(null);
+        if (file.contentOmitted) {
+          setYText(null);
+          setTooLargeBytes(file.size);
+          setBinaryMeta(
+            file.text
+              ? null
+              : {
+                  contentType: file.contentType,
+                  size: file.size,
+                  base64: "",
+                },
+          );
+          setEditMode(file.text ? "text" : "binary");
+          setContent("");
+          setSavedContent("");
+          setFileReady(true);
+          setStatus("idle");
+          return;
+        }
+        setTooLargeBytes(null);
         if (forceBase64 || (!file.text && !forceText)) {
           lastTextPathRef.current = pathBeingLoaded;
           if (forceBase64) {
@@ -468,6 +656,7 @@ export function EditorPage() {
     async (opts?: { compile?: boolean; silent?: boolean }) => {
       if (!id || !activePath || editMode === "binary") return;
       if (!fileReady) return;
+      if (tooLargeBytes != null) return;
       if (readOnly) {
         if (!opts?.silent) setError("This share link is read-only.");
         return;
@@ -567,6 +756,7 @@ export function EditorPage() {
       readOnly,
       isGuest,
       refreshSession,
+      tooLargeBytes,
     ],
   );
 
@@ -610,6 +800,16 @@ export function EditorPage() {
     setSyncToast(msg);
     window.setTimeout(() => setSyncToast((cur) => (cur === msg ? null : cur)), 2800);
   }, []);
+
+  const onHighlightSinceCommit = useCallback(
+    (commit: GitCommitInfo) => {
+      setDiffOn(true);
+      setDiffSince(commit.hash);
+      if (id) persistDiffHighlight(id, true, commit.hash);
+      showSyncToast(`Highlighting additions since ${commit.shortHash}`);
+    },
+    [id, showSyncToast],
+  );
 
   const normalizeSynctexPath = useCallback(
     (raw: string): string | null => {
@@ -1113,7 +1313,9 @@ export function EditorPage() {
               type="button"
               className="btn"
               onClick={() => void save({ compile: true })}
-              disabled={!activePath || !fileReady || editMode === "binary" || status === "saving"}
+              disabled={
+                !activePath || !fileReady || editMode === "binary" || tooLargeBytes != null || status === "saving"
+              }
               title="Save now (autosave is already on). Also recompiles when auto-compile is enabled."
             >
               {status === "saving" ? "Saving…" : fileReady ? (collabText ? "Save & sync" : "Save") : "Loading…"}
@@ -1163,6 +1365,7 @@ export function EditorPage() {
         canRestore={!isGuest}
         open={historyOpen}
         onClose={() => setHistoryOpen(false)}
+        onHighlightSince={config?.git?.enabled === false ? undefined : onHighlightSinceCommit}
         onRestored={() => {
           setHistoryOpen(false);
           showSyncToast("Restored snapshot — reloading file");
@@ -1218,7 +1421,16 @@ export function EditorPage() {
               initialLeftRatio={0.52}
               left={
                 <div className="pane editor-pane" style={{ height: "100%" }}>
-                  {editMode === "binary" && activePath && binaryMeta ? (
+                  {tooLargeBytes != null ? (
+                    <div className="empty-hint" style={{ padding: "1.25rem" }}>
+                      <strong>{activePath}</strong>
+                      <p style={{ marginTop: "0.75rem" }}>
+                        This file is {formatBytes(tooLargeBytes)} — too large to open in the
+                        browser editor (limit 1.5 MB). Edit it on disk, or replace a binary
+                        via upload.
+                      </p>
+                    </div>
+                  ) : editMode === "binary" && activePath && binaryMeta ? (
                     <BinaryPane
                       path={activePath}
                       contentType={binaryMeta.contentType}
@@ -1277,6 +1489,22 @@ export function EditorPage() {
                   onReverseSearch={onReverseSearch}
                   onCommentAt={(page, x, y) => void onPdfComment(page, x, y)}
                   highlight={pdfHighlight}
+                  overlays={diffOn ? diffBoxes : undefined}
+                  diffHighlight={
+                    config?.git?.enabled === false
+                      ? null
+                      : {
+                          enabled: diffOn,
+                          since: diffSince,
+                          commits: diffCommits,
+                          lineCount: diffLines,
+                          fileCount: diffFiles,
+                          loading: diffLoading,
+                          warning: diffWarning,
+                          onEnabledChange: onDiffEnabledChange,
+                          onSinceChange: onDiffSinceChange,
+                        }
+                  }
                 />
               }
             />

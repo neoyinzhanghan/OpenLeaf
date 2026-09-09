@@ -304,6 +304,11 @@ export function CodeEditor({
       window.removeEventListener("focus", remountFonts);
       binding.destroy();
       if (bindingRef.current === binding) bindingRef.current = null;
+      queueMicrotask(() => {
+        if (editorRef.current?.getModel() !== model) {
+          model.dispose();
+        }
+      });
     };
   }, [yText, awareness, path, editorReady]);
 

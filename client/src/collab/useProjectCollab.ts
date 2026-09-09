@@ -20,6 +20,8 @@ export type ProjectCollab = {
   getFileText: (path: string) => Y.Text | null;
   ensureFile: (path: string) => Promise<Y.Text | null>;
   treeVersion: number;
+  /** Paths from the last tree-changed event (create/delete/binary); collab text is live. */
+  treeEventPaths: string[];
   /** Bumped when comments.json changes on the server (live panel refresh). */
   commentsVersion: number;
 };
@@ -40,6 +42,7 @@ export function useProjectCollab(projectId: string | undefined, fixedIdentity?: 
   const [synced, setSynced] = useState(false);
   const [peers, setPeers] = useState<CollabPresence[]>([]);
   const [treeVersion, setTreeVersion] = useState(0);
+  const [treeEventPaths, setTreeEventPaths] = useState<string[]>([]);
   const [commentsVersion, setCommentsVersion] = useState(0);
   const [session, setSession] = useState<{
     doc: Y.Doc;
@@ -106,6 +109,7 @@ export function useProjectCollab(projectId: string | undefined, fixedIdentity?: 
       setStatus("disconnected");
       setSynced(false);
       setPeers([]);
+      setTreeEventPaths([]);
       return;
     }
 
@@ -151,9 +155,19 @@ export function useProjectCollab(projectId: string | undefined, fixedIdentity?: 
 
     const meta = doc.getMap("meta");
     const files = doc.getMap("files");
+    let lastTreeVersion = 0;
     const onMeta = () => {
       const v = meta.get("treeVersion");
-      if (typeof v === "number") setTreeVersion(v);
+      if (typeof v === "number" && v !== lastTreeVersion) {
+        lastTreeVersion = v;
+        setTreeVersion(v);
+        const ev = meta.get("treeEvent") as { path?: string; paths?: string[] } | undefined;
+        const paths = [
+          ...(Array.isArray(ev?.paths) ? ev.paths : []),
+          ...(typeof ev?.path === "string" ? [ev.path] : []),
+        ];
+        setTreeEventPaths(paths);
+      }
       const cv = meta.get("commentsVersion");
       if (typeof cv === "number") setCommentsVersion(cv);
     };
@@ -225,6 +239,7 @@ export function useProjectCollab(projectId: string | undefined, fixedIdentity?: 
     getFileText,
     ensureFile,
     treeVersion,
+    treeEventPaths,
     commentsVersion,
   };
 }

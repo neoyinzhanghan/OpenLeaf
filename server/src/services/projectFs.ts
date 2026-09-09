@@ -225,8 +225,17 @@ const BINARY_EXT = new Set([
   ".mp3",
   ".mp4",
   ".wav",
-  ".bin",
-  ".o",
+    ".bin",
+    ".db",
+    ".sqlite",
+    ".sqlite3",
+    ".parquet",
+    ".h5",
+    ".npy",
+    ".npz",
+    ".pkl",
+    ".pickle",
+    ".o",
   ".a",
   ".so",
   ".dylib",
@@ -342,23 +351,48 @@ function contentTypeFor(filePath: string, asText: boolean): string {
   return map[ext] ?? "application/octet-stream";
 }
 
+/** Do not inline file bodies larger than this into the JSON API / browser editor. */
+export const MAX_INLINE_FILE_BYTES = 1.5 * 1024 * 1024;
+
 export async function readFile(
   id: string,
   relativePath: string,
-  opts?: { forceText?: boolean },
+  opts?: { forceText?: boolean; meta?: boolean },
 ): Promise<{
   encoding: "utf8" | "base64";
   content: string;
   contentType: string;
   size: number;
   text: boolean;
+  contentOmitted?: boolean;
 }> {
   const full = resolveProjectPath(id, relativePath);
   if (!fsSync.existsSync(full) || fsSync.statSync(full).isDirectory()) {
     throw Object.assign(new Error("File not found"), { status: 404 });
   }
+  const st = fsSync.statSync(full);
+  const sample = Buffer.alloc(Math.min(8192, st.size));
+  if (st.size > 0) {
+    const fd = fsSync.openSync(full, "r");
+    try {
+      fsSync.readSync(fd, sample, 0, sample.length, 0);
+    } finally {
+      fsSync.closeSync(fd);
+    }
+  }
+  const asText = opts?.forceText === true || isTextPath(full, sample);
+  const omitBody = opts?.meta === true || st.size > MAX_INLINE_FILE_BYTES;
+  if (omitBody) {
+    return {
+      encoding: asText ? "utf8" : "base64",
+      content: "",
+      contentType: contentTypeFor(full, asText),
+      size: st.size,
+      text: asText,
+      contentOmitted: st.size > MAX_INLINE_FILE_BYTES,
+    };
+  }
   const buf = await fs.readFile(full);
-  const asText = opts?.forceText === true || isTextPath(full, buf);
   if (asText) {
     return {
       encoding: "utf8",
