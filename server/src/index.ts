@@ -12,6 +12,7 @@ import { guestRouter, joinRouter } from "./routes/guest.js";
 import { identitiesRouter } from "./routes/identities.js";
 import { projectsRouter } from "./routes/projects.js";
 import { shareRouter } from "./routes/share.js";
+import { aiApiRouter, aiBriefRouter } from "./routes/ai.js";
 import { hostOnly, shareGate } from "./services/shareAuth.js";
 
 function lanIp(): string | undefined {
@@ -42,6 +43,8 @@ async function main() {
 
   app.use("/api/guest", guestRouter);
   app.use("/join", joinRouter);
+  app.use("/ai", aiBriefRouter);
+  app.use("/api/ai", aiApiRouter);
   app.use("/api/share", shareRouter);
   app.use("/api/config", hostOnly, configRouter);
   app.use("/api/identities", hostOnly, identitiesRouter);
@@ -55,13 +58,13 @@ async function main() {
   if (serveBuiltClient) {
     app.use(express.static(clientDist));
     app.get("*", (req, res, next) => {
-      if (req.path.startsWith("/api") || req.path.startsWith("/collab")) return next();
+      if (req.path.startsWith("/api") || req.path.startsWith("/collab") || req.path.startsWith("/ai")) return next();
       res.sendFile(path.join(clientDist, "index.html"));
     });
   } else {
     // Browser hits on the API port during `npm run dev` → send them to Vite.
     app.get("*", (req, res, next) => {
-      if (req.path.startsWith("/api") || req.path.startsWith("/collab")) return next();
+      if (req.path.startsWith("/api") || req.path.startsWith("/collab") || req.path.startsWith("/ai")) return next();
       const host = req.hostname || lanIp() || "127.0.0.1";
       const target = `http://${host}:${cfg.client.devPort}${req.originalUrl}`;
       res.redirect(302, target);

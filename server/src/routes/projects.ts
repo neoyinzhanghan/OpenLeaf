@@ -42,15 +42,19 @@ import {
   writeFile,
   writeProjectConfig,
 } from "../services/projectFs.js";
+import { resolveBranchIdWithActive, branchRoot } from "../services/branchContext.js";
+import { listBranchLeafStats } from "../services/branchLeaves.js";
 import { computeDiffHighlights } from "../services/diffHighlights.js";
 import { forwardSynctex, reverseSynctex } from "../services/synctex.js";
 import { streamProjectZip } from "../services/zip.js";
 import { IdentitySchema } from "../config.js";
 import type { Access } from "../services/shareAuth.js";
 import { projectShareRouter } from "./share.js";
+import { projectAiShareRouter } from "./ai.js";
 
 export const projectsRouter = Router();
 const filesRouter = Router({ mergeParams: true });
+projectsRouter.use("/:id/share/ai", projectAiShareRouter);
 projectsRouter.use("/:id/share", projectShareRouter);
 
 function statusOf(err: unknown): number {
@@ -81,18 +85,25 @@ async function authorFromRequest(
 }
 
 async function commitAfterChange(
-  id: string,
-  message: string,
-  req: { body?: unknown; query?: unknown; headers: Record<string, unknown> },
-  paths?: string[],
+  _id: string,
+  _message: string,
+  _req: { body?: unknown; query?: unknown; headers: Record<string, unknown> },
+  _paths?: string[],
 ) {
-  return autoCommitProject(id, { message, author: await authorFromRequest(id, req), paths });
+  // Autosave / FS mutations update the working copy only.
+  // Intentional history nodes are created via POST /timeline/commit.
+  return { committed: false, hash: null, message: "", skipped: "disabled" as const };
 }
 
 async function identityFromRequest(
   projectId: string,
-  req: { body?: unknown; query?: unknown; headers: Record<string, unknown> },
+  req: { body?: unknown; query?: unknown; headers: Record<string, unknown>; access?: Access },
 ) {
+  // Guests are attributed by the name/color they signed in with.
+  if (req.access?.mode === "guest") {
+    const g = req.access.guest;
+    return { id: g.id, name: g.name, color: g.color };
+  }
   const header = req.headers["x-openleaf-identity"];
   const fromHeader = typeof header === "string" ? header : undefined;
   const body = req.body && typeof req.body === "object" ? (req.body as { identityId?: string }) : {};
@@ -140,7 +151,15 @@ projectsRouter.get("/:id", async (req, res) => {
 
 projectsRouter.get("/:id/tree", async (req, res) => {
   try {
-    res.json(await getTree(req.params.id));
+    const at = typeof req.query.at === "string" ? req.query.at : undefined;
+    if (at) {
+      const { listTreeAtCommit } = await import("../services/timeline.js");
+      res.json(await listTreeAtCommit(req.params.id, at));
+      return;
+    }
+    const branchId = await resolveBranchIdWithActive(req, req.params.id);
+    const root = await branchRoot(req.params.id, branchId);
+    res.json(await getTree(req.params.id, root));
   } catch (err) {
     res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed" });
   }
@@ -155,7 +174,16 @@ filesRouter.get(/.*/, async (req, res) => {
       return;
     }
     const forceText = req.query.forceText === "1" || req.query.forceText === "true";
-    const file = await readFile(id, rel, { forceText });
+    const at = typeof req.query.at === "string" ? req.query.at : undefined;
+    if (at) {
+      const { readFileAtCommit } = await import("../services/timeline.js");
+      const file = await readFileAtCommit(id, at, rel, { forceText });
+      res.json({ path: rel, ...file });
+      return;
+    }
+    const branchId = await resolveBranchIdWithActive(req, id);
+    const root = await branchRoot(id, branchId);
+    const file = await readFile(id, rel, { forceText, rootDir: root });
     res.json({ path: rel, ...file });
   } catch (err) {
     res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed" });
@@ -175,9 +203,11 @@ filesRouter.put(/.*/, async (req, res) => {
       res.status(400).json({ error: "Missing file path" });
       return;
     }
-    await writeFile(id, rel, body.content, body.encoding ?? "utf8");
+    const branchId = await resolveBranchIdWithActive(req, id, { mutate: true });
+    const root = await branchRoot(id, branchId);
+    await writeFile(id, rel, body.content, body.encoding ?? "utf8", root);
     if ((body.encoding ?? "utf8") === "utf8") {
-      notifyProjectTreeChange(id, { op: "write", path: rel });
+      notifyProjectTreeChange(id, { op: "write", path: rel }, branchId);
     }
     const git = await commitAfterChange(id, `Save ${rel}`, req);
     res.json({ ok: true, path: rel, git });
@@ -194,8 +224,10 @@ filesRouter.delete(/.*/, async (req, res) => {
       res.status(400).json({ error: "Missing file path" });
       return;
     }
-    await deletePath(id, rel);
-    notifyProjectTreeChange(id, { op: "delete", path: rel });
+    const branchId = await resolveBranchIdWithActive(req, id, { mutate: true });
+    const root = await branchRoot(id, branchId);
+    await deletePath(id, rel, root);
+    notifyProjectTreeChange(id, { op: "delete", path: rel }, branchId);
     const git = await commitAfterChange(id, `Delete ${rel}`, req);
     res.json({ ok: true, path: rel, git });
   } catch (err) {
@@ -348,14 +380,20 @@ projectsRouter.post("/:id/collab/flush", async (req, res) => {
     .object({
       identityId: z.string().optional(),
       message: z.string().optional(),
+      branchId: z.string().optional(),
     })
     .optional();
   try {
     const body = schema.parse(req.body ?? {});
+    const branchId = await resolveBranchIdWithActive(req, req.params.id, {
+      bodyBranchId: body?.branchId,
+      mutate: true,
+    });
     const git = await flushProjectRoom(req.params.id, {
       author: await authorFromRequest(req.params.id, req),
       message: body?.message ?? "Save & sync",
-      commit: true,
+      commit: false,
+      branchId,
     });
     res.json({ ok: true, git });
   } catch (err) {
@@ -364,10 +402,14 @@ projectsRouter.post("/:id/collab/flush", async (req, res) => {
 });
 
 projectsRouter.post("/:id/collab/ensure", async (req, res) => {
-  const schema = z.object({ path: z.string().min(1) });
+  const schema = z.object({ path: z.string().min(1), branchId: z.string().optional() });
   try {
     const body = schema.parse(req.body);
-    const room = await getOrCreateRoom(req.params.id);
+    // Guests may ensure files on an observed branch (read-only room); hosts use active/requested.
+    const branchId = await resolveBranchIdWithActive(req, req.params.id, {
+      bodyBranchId: body.branchId,
+    });
+    const room = await getOrCreateRoom(req.params.id, branchId);
     await room.ensureFile(body.path);
     res.json({ ok: true, path: body.path });
   } catch (err) {
@@ -378,13 +420,22 @@ projectsRouter.post("/:id/collab/ensure", async (req, res) => {
 projectsRouter.get("/:id/diff-highlights", async (req, res) => {
   try {
     const since = typeof req.query.since === "string" ? req.query.since : undefined;
-    const result = await computeDiffHighlights(req.params.id, since);
+    const at = typeof req.query.at === "string" ? req.query.at : undefined;
+    const branchId = await resolveBranchIdWithActive(req, req.params.id);
+    const result = await computeDiffHighlights(req.params.id, since, branchId, at);
     res.json(result);
   } catch (err) {
     res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed" });
   }
 });
 
+projectsRouter.get("/:id/branch-leaves", async (req, res) => {
+  try {
+    res.json(await listBranchLeafStats(req.params.id));
+  } catch (err) {
+    res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed" });
+  }
+});
 projectsRouter.get("/:id/history", async (req, res) => {
   try {
     const limit = Number(req.query.limit ?? 50);
@@ -406,18 +457,357 @@ projectsRouter.post("/:id/history/restore", async (req, res) => {
     await flushProjectRoom(req.params.id, {
       author,
       message: "Pre-restore save",
-      commit: true,
+      commit: false,
     });
     await restoreProjectCommit(req.params.id, body.hash);
     // Stale CRDT snapshot must not undo the restore on next room open
     await clearCollabSnapshot(req.params.id);
     await reseedProjectRoom(req.params.id);
     notifyProjectTreeChange(req.params.id, { op: "bump" });
-    const git = await autoCommitProject(req.params.id, {
-      author,
-      message: `Restore snapshot ${body.hash.slice(0, 7)}`,
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
+projectsRouter.get("/:id/timeline", async (req, res) => {
+  try {
+    const { getTimelineView } = await import("../services/timeline.js");
+    const branchId =
+      typeof req.query.branchId === "string"
+        ? req.query.branchId
+        : req.access?.mode === "guest"
+          ? req.access.session.branchId
+          : undefined;
+    const view = await getTimelineView(req.params.id, branchId ? { branchId } : undefined);
+    res.json(view);
+  } catch (err) {
+    res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
+projectsRouter.post("/:id/timeline/commit", async (req, res) => {
+  const schema = z.object({
+    message: z.string().min(1),
+    branchId: z.string().optional(),
+    identityId: z.string().optional(),
+  });
+  try {
+    const body = schema.parse(req.body);
+    const { intentionalCommit } = await import("../services/timeline.js");
+    const { assertNoActiveMerge } = await import("../services/branchMerge.js");
+    await assertNoActiveMerge(req.params.id);
+    const branchId =
+      body.branchId ||
+      (req.access?.mode === "guest" ? req.access.session.branchId : undefined) ||
+      "main";
+    if (req.access?.mode === "guest" && req.access.session.branchId !== branchId) {
+      res.status(403).json({ error: "This share link can only commit on its bound branch" });
+      return;
+    }
+    // Flush working copy first (no auto-commit)
+    await flushProjectRoom(req.params.id, {
+      author: await authorFromRequest(req.params.id, req),
+      commit: false,
+      branchId,
     });
-    res.json({ ok: true, git });
+    const result = await intentionalCommit(req.params.id, {
+      branchId,
+      message: body.message,
+      author: await authorFromRequest(req.params.id, req),
+    });
+    notifyProjectTreeChange(req.params.id, { op: "bump" }, branchId);
+    res.json(result);
+  } catch (err) {
+    res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
+projectsRouter.post("/:id/timeline/fork", async (req, res) => {
+  const schema = z.object({
+    fromNodeId: z.string().min(1),
+    name: z.string().min(1),
+  });
+  try {
+    if (req.access?.mode === "guest") {
+      res.status(403).json({ error: "Only the host can fork a new branch" });
+      return;
+    }
+    const { assertNoActiveMerge } = await import("../services/branchMerge.js");
+    await assertNoActiveMerge(req.params.id);
+    const body = schema.parse(req.body);
+    const { forkBranch } = await import("../services/timeline.js");
+    const result = await forkBranch(req.params.id, body);
+    res.status(201).json(result);
+  } catch (err) {
+    res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
+projectsRouter.post("/:id/timeline/prune", async (req, res) => {
+  const schema = z.object({
+    branchId: z.string().min(1),
+    /** Kick connected editors instead of refusing (host nuclear option). */
+    forceKickEditors: z.boolean().optional(),
+  });
+  try {
+    if (req.access?.mode === "guest") {
+      res.status(403).json({ error: "Only the host can prune a tip" });
+      return;
+    }
+    const { assertNoActiveMerge } = await import("../services/branchMerge.js");
+    await assertNoActiveMerge(req.params.id);
+    const body = schema.parse(req.body ?? {});
+    const { pruneBranchTip } = await import("../services/timeline.js");
+    const timeline = await pruneBranchTip(req.params.id, body.branchId, {
+      forceKickEditors: body.forceKickEditors === true,
+    });
+    const { bumpProjectLeavesVersion } = await import("../services/collab/room.js");
+    bumpProjectLeavesVersion(req.params.id);
+    // Fan-out to every live room so other hosts refresh (no branchId → all rooms).
+    notifyProjectTreeChange(req.params.id, { op: "bump" });
+    res.json({ ok: true, timeline });
+  } catch (err) {
+    res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
+projectsRouter.get("/:id/timeline/trash", async (req, res) => {
+  try {
+    if (req.access?.mode === "guest") {
+      res.status(403).json({ error: "Only the host can view the trash" });
+      return;
+    }
+    const { listPrunedTips } = await import("../services/timeline.js");
+    res.json({ items: await listPrunedTips(req.params.id) });
+  } catch (err) {
+    res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
+projectsRouter.post("/:id/timeline/unprune", async (req, res) => {
+  const schema = z.object({
+    branchId: z.string().min(1),
+  });
+  try {
+    if (req.access?.mode === "guest") {
+      res.status(403).json({ error: "Only the host can restore a tip" });
+      return;
+    }
+    const body = schema.parse(req.body ?? {});
+    const { unpruneBranchTip } = await import("../services/timeline.js");
+    const timeline = await unpruneBranchTip(req.params.id, body.branchId);
+    notifyProjectTreeChange(req.params.id, { op: "bump" }, timeline.activeBranchId);
+    res.json({ ok: true, timeline });
+  } catch (err) {
+    res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
+projectsRouter.post("/:id/timeline/trash/delete", async (req, res) => {
+  const schema = z.object({
+    branchId: z.string().min(1),
+    /** Must equal the branch name to confirm permanent deletion. */
+    confirmName: z.string().min(1),
+    forceKickEditors: z.boolean().optional(),
+    /** Wipe uncommitted worktree edits along with the tip. */
+    discardDirty: z.boolean().optional(),
+  });
+  try {
+    if (req.access?.mode === "guest") {
+      res.status(403).json({ error: "Only the host can delete tips forever" });
+      return;
+    }
+    const { assertNoActiveMerge } = await import("../services/branchMerge.js");
+    await assertNoActiveMerge(req.params.id);
+    const body = schema.parse(req.body ?? {});
+    const { loadTimeline, getBranch, deletePrunedBranchForever } = await import("../services/timeline.js");
+    const state = await loadTimeline(req.params.id);
+    const branch = getBranch(state, body.branchId);
+    if (body.confirmName.trim() !== branch.name) {
+      res.status(400).json({
+        error: `Type the exact tip name “${branch.name}” to confirm permanent deletion`,
+      });
+      return;
+    }
+    const result = await deletePrunedBranchForever(req.params.id, body.branchId, {
+      forceKickEditors: body.forceKickEditors === true,
+      discardDirty: body.discardDirty === true,
+    });
+    const { bumpProjectLeavesVersion } = await import("../services/collab/room.js");
+    bumpProjectLeavesVersion(req.params.id);
+    notifyProjectTreeChange(req.params.id, { op: "bump" });
+    res.json(result);
+  } catch (err) {
+    res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
+projectsRouter.post("/:id/timeline/checkout", async (req, res) => {
+  const schema = z.object({
+    branchId: z.string().optional(),
+    nodeId: z.string().nullable().optional(),
+  });
+  try {
+    if (req.access?.mode === "guest") {
+      res.status(403).json({ error: "Guests stay on their share link’s branch tip" });
+      return;
+    }
+    const { assertNoActiveMerge } = await import("../services/branchMerge.js");
+    await assertNoActiveMerge(req.params.id);
+    const body = schema.parse(req.body);
+    const { checkoutTimeline } = await import("../services/timeline.js");
+    // Flush current branch WC before switching
+    const { loadTimeline } = await import("../services/timeline.js");
+    const cur = await loadTimeline(req.params.id);
+    await flushProjectRoom(req.params.id, {
+      commit: false,
+      branchId: cur.activeBranchId,
+    });
+    const view = await checkoutTimeline(req.params.id, body);
+    // Only reseed the live tip room when returning to an editable tip.
+    if (view.canEdit) {
+      await reseedProjectRoom(req.params.id, view.activeBranchId);
+      notifyProjectTreeChange(req.params.id, { op: "bump" }, view.activeBranchId);
+    }
+    res.json(view);
+  } catch (err) {
+    res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
+projectsRouter.post("/:id/timeline/merge/start", async (req, res) => {
+  const schema = z.object({
+    sourceBranchId: z.string().min(1),
+    targetBranchId: z.string().optional(),
+  });
+  try {
+    if (req.access?.mode === "guest") {
+      res.status(403).json({ error: "Only the host can merge branches" });
+      return;
+    }
+    const body = schema.parse(req.body);
+    const { loadTimeline } = await import("../services/timeline.js");
+    const {
+      startBranchMerge,
+    } = await import("../services/branchMerge.js");
+    const cur = await loadTimeline(req.params.id);
+    const targetBranchId = body.targetBranchId ?? cur.activeBranchId;
+    await flushProjectRoom(req.params.id, {
+      author: await authorFromRequest(req.params.id, req),
+      commit: false,
+      branchId: targetBranchId,
+    });
+    const session = await startBranchMerge(req.params.id, {
+      sourceBranchId: body.sourceBranchId,
+      targetBranchId,
+      author: await authorFromRequest(req.params.id, req),
+    });
+    // Disk now has merge state / conflict markers — refresh live collab from disk.
+    await clearCollabSnapshot(req.params.id, targetBranchId);
+    await reseedProjectRoom(req.params.id, targetBranchId);
+    notifyProjectTreeChange(req.params.id, { op: "bump" }, targetBranchId);
+    res.status(201).json(session);
+  } catch (err) {
+    res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
+projectsRouter.get("/:id/timeline/merge", async (req, res) => {
+  try {
+    if (req.access?.mode === "guest") {
+      res.status(403).json({ error: "Merging branches is host-only" });
+      return;
+    }
+    const { getBranchMerge } = await import("../services/branchMerge.js");
+    const session = await getBranchMerge(req.params.id);
+    if (!session) {
+      res.status(204).end();
+      return;
+    }
+    res.json(session);
+  } catch (err) {
+    res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
+projectsRouter.get("/:id/timeline/merge/file", async (req, res) => {
+  try {
+    if (req.access?.mode === "guest") {
+      res.status(403).json({ error: "Merging branches is host-only" });
+      return;
+    }
+    const filePath = typeof req.query.path === "string" ? req.query.path : "";
+    if (!filePath) {
+      res.status(400).json({ error: "path is required" });
+      return;
+    }
+    const { getMergeConflictFile } = await import("../services/branchMerge.js");
+    res.json(await getMergeConflictFile(req.params.id, filePath));
+  } catch (err) {
+    res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
+projectsRouter.post("/:id/timeline/merge/resolve", async (req, res) => {
+  const schema = z.object({
+    path: z.string().min(1),
+    strategy: z.enum(["ours", "theirs", "manual"]),
+    content: z.string().optional(),
+  });
+  try {
+    if (req.access?.mode === "guest") {
+      res.status(403).json({ error: "Only the host can merge branches" });
+      return;
+    }
+    const body = schema.parse(req.body);
+    const { resolveMergeConflict } = await import("../services/branchMerge.js");
+    const session = await resolveMergeConflict(req.params.id, body);
+    await clearCollabSnapshot(req.params.id, session.targetBranchId);
+    await reseedProjectRoom(req.params.id, session.targetBranchId);
+    notifyProjectTreeChange(req.params.id, { op: "bump" }, session.targetBranchId);
+    res.json(session);
+  } catch (err) {
+    res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
+projectsRouter.post("/:id/timeline/merge/complete", async (req, res) => {
+  const schema = z.object({
+    message: z.string().optional(),
+  });
+  try {
+    if (req.access?.mode === "guest") {
+      res.status(403).json({ error: "Only the host can merge branches" });
+      return;
+    }
+    const body = schema.parse(req.body ?? {});
+    const { completeBranchMerge } = await import("../services/branchMerge.js");
+    const result = await completeBranchMerge(req.params.id, {
+      message: body.message,
+      author: await authorFromRequest(req.params.id, req),
+    });
+    await clearCollabSnapshot(req.params.id, result.session.targetBranchId);
+    await reseedProjectRoom(req.params.id, result.session.targetBranchId);
+    notifyProjectTreeChange(req.params.id, { op: "bump" }, result.session.targetBranchId);
+    res.json(result);
+  } catch (err) {
+    res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
+projectsRouter.post("/:id/timeline/merge/abort", async (req, res) => {
+  try {
+    if (req.access?.mode === "guest") {
+      res.status(403).json({ error: "Only the host can merge branches" });
+      return;
+    }
+    const { abortBranchMerge } = await import("../services/branchMerge.js");
+    const result = await abortBranchMerge(req.params.id);
+    await clearCollabSnapshot(req.params.id, result.targetBranchId);
+    await reseedProjectRoom(req.params.id, result.targetBranchId);
+    notifyProjectTreeChange(req.params.id, { op: "bump" }, result.targetBranchId);
+    res.json(result);
   } catch (err) {
     res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed" });
   }
@@ -427,8 +817,10 @@ projectsRouter.post("/:id/fs/mkdir", async (req, res) => {
   const schema = z.object({ path: z.string().min(1) });
   try {
     const body = schema.parse(req.body);
-    await mkdirPath(req.params.id, body.path);
-    notifyProjectTreeChange(req.params.id, { op: "mkdir", path: body.path });
+    const branchId = await resolveBranchIdWithActive(req, req.params.id, { mutate: true });
+    const root = await branchRoot(req.params.id, branchId);
+    await mkdirPath(req.params.id, body.path, root);
+    notifyProjectTreeChange(req.params.id, { op: "mkdir", path: body.path }, branchId);
     const git = await commitAfterChange(req.params.id, `mkdir ${body.path}`, req);
     res.status(201).json({ ok: true, path: body.path, git });
   } catch (err) {
@@ -443,8 +835,10 @@ projectsRouter.post("/:id/fs/create", async (req, res) => {
   });
   try {
     const body = schema.parse(req.body);
-    await createEmptyFile(req.params.id, body.path, body.content ?? "");
-    notifyProjectTreeChange(req.params.id, { op: "create", path: body.path });
+    const branchId = await resolveBranchIdWithActive(req, req.params.id, { mutate: true });
+    const root = await branchRoot(req.params.id, branchId);
+    await createEmptyFile(req.params.id, body.path, body.content ?? "", root);
+    notifyProjectTreeChange(req.params.id, { op: "create", path: body.path }, branchId);
     const git = await commitAfterChange(req.params.id, `Create ${body.path}`, req);
     res.status(201).json({ ok: true, path: body.path, git });
   } catch (err) {
@@ -459,8 +853,10 @@ projectsRouter.post("/:id/fs/rename", async (req, res) => {
   });
   try {
     const body = schema.parse(req.body);
-    await renamePath(req.params.id, body.from, body.to);
-    notifyProjectTreeChange(req.params.id, { op: "rename", from: body.from, to: body.to });
+    const branchId = await resolveBranchIdWithActive(req, req.params.id, { mutate: true });
+    const root = await branchRoot(req.params.id, branchId);
+    await renamePath(req.params.id, body.from, body.to, root);
+    notifyProjectTreeChange(req.params.id, { op: "rename", from: body.from, to: body.to }, branchId);
     const git = await commitAfterChange(req.params.id, `Rename ${body.from} → ${body.to}`, req);
     res.json({ ok: true, from: body.from, to: body.to, git });
   } catch (err) {
@@ -471,6 +867,7 @@ projectsRouter.post("/:id/fs/rename", async (req, res) => {
 projectsRouter.post("/:id/compile", async (req, res) => {
   const id = req.params.id;
   const stream = req.query.stream === "1" || req.headers.accept?.includes("text/event-stream");
+  const branchId = await resolveBranchIdWithActive(req, id, { mutate: true }).catch(() => "main");
 
   if (stream) {
     res.setHeader("Content-Type", "text/event-stream");
@@ -479,14 +876,21 @@ projectsRouter.post("/:id/compile", async (req, res) => {
     res.flushHeaders?.();
 
     const send = (event: string, data: unknown) => {
-      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      res.write(`event: ${event}
+data: ${JSON.stringify(data)}
+
+`);
     };
 
     try {
       send("status", { state: "running" });
-      const result = await compileProject(id, (chunk) => {
-        send("log", { chunk });
-      });
+      const result = await compileProject(
+        id,
+        (chunk) => {
+          send("log", { chunk });
+        },
+        { branchId },
+      );
       send("done", result);
     } catch (err) {
       send("error", { error: err instanceof Error ? err.message : "Compile failed" });
@@ -496,7 +900,7 @@ projectsRouter.post("/:id/compile", async (req, res) => {
   }
 
   try {
-    const result = await compileProject(id);
+    const result = await compileProject(id, undefined, { branchId });
     res.status(result.ok ? 200 : 422).json(result);
   } catch (err) {
     res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed" });
@@ -506,7 +910,9 @@ projectsRouter.post("/:id/compile", async (req, res) => {
 projectsRouter.get("/:id/pdf", async (req, res) => {
   try {
     const cfg = await readProjectConfig(req.params.id);
-    const pdf = pdfPathAbs(req.params.id, cfg.mainFile);
+    const branchId = await resolveBranchIdWithActive(req, req.params.id);
+    const root = await branchRoot(req.params.id, branchId);
+    const pdf = pdfPathAbs(req.params.id, cfg.mainFile, root);
     if (!fs.existsSync(pdf)) {
       res.status(404).json({ error: "PDF not found. Compile the project first." });
       return;
@@ -521,6 +927,8 @@ projectsRouter.get("/:id/pdf", async (req, res) => {
 
 projectsRouter.get("/:id/synctex", async (req, res) => {
   try {
+    const branchId = await resolveBranchIdWithActive(req, req.params.id);
+    const root = await branchRoot(req.params.id, branchId);
     const direction = String(req.query.direction ?? "reverse");
     if (direction === "forward") {
       const schema = z.object({
@@ -529,7 +937,7 @@ projectsRouter.get("/:id/synctex", async (req, res) => {
         column: z.coerce.number().int().positive().optional(),
       });
       const q = schema.parse(req.query);
-      const hit = await forwardSynctex(req.params.id, q.file, q.line, q.column ?? 1);
+      const hit = await forwardSynctex(req.params.id, q.file, q.line, q.column ?? 1, root);
       if (!hit) {
         res.status(404).json({ error: "No SyncTeX hit" });
         return;
@@ -544,7 +952,7 @@ projectsRouter.get("/:id/synctex", async (req, res) => {
       y: z.coerce.number(),
     });
     const q = schema.parse(req.query);
-    const hit = await reverseSynctex(req.params.id, q.page, q.x, q.y);
+    const hit = await reverseSynctex(req.params.id, q.page, q.x, q.y, root);
     if (!hit) {
       res.status(404).json({ error: "No SyncTeX hit" });
       return;
@@ -560,7 +968,9 @@ projectsRouter.get("/:id/download", async (req, res) => {
   try {
     if (format === "pdf") {
       const cfg = await readProjectConfig(req.params.id);
-      const pdf = pdfPathAbs(req.params.id, cfg.mainFile);
+      const branchId = await resolveBranchIdWithActive(req, req.params.id);
+      const root = await branchRoot(req.params.id, branchId);
+      const pdf = pdfPathAbs(req.params.id, cfg.mainFile, root);
       if (!fs.existsSync(pdf)) {
         res.status(404).json({ error: "PDF not found" });
         return;

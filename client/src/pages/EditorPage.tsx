@@ -262,6 +262,7 @@ export function EditorPage() {
   const [commitBusy, setCommitBusy] = useState(false);
   const [commentDraft, setCommentDraft] = useState<CommentDraft | null>(null);
   const [commentThreads, setCommentThreads] = useState<CommentThread[]>([]);
+  const [focusCommentId, setFocusCommentId] = useState<string | null>(null);
   const [lastCommit, setLastCommit] = useState<string | null>(null);
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const [flushedContent, setFlushedContent] = useState("");
@@ -861,7 +862,8 @@ export function EditorPage() {
               activePath.endsWith(".cls") ||
               activePath.endsWith(".sty") ||
               activePath.includes("figures/"));
-          if (shouldCompile) await runCompile();
+          // Save-triggered compiles stay quiet — don't force the log drawer open.
+          if (shouldCompile) await runCompile({ auto: true });
           else setStatus("ok");
           return;
         }
@@ -894,7 +896,8 @@ export function EditorPage() {
             activePath.endsWith(".sty") ||
             activePath.endsWith(".png") ||
             activePath.includes("figures/"));
-        if (shouldCompile) await runCompile();
+        // Save-triggered compiles stay quiet — don't force the log drawer open.
+        if (shouldCompile) await runCompile({ auto: true });
         else setStatus("ok");
       } catch (err) {
         setStatus("err");
@@ -1252,6 +1255,7 @@ export function EditorPage() {
         line: t.anchor.line,
         color: t.authorColor,
         resolved: t.resolved,
+        threadId: t.id,
       }));
   }, [commentThreads, activePath]);
 
@@ -1604,14 +1608,13 @@ export function EditorPage() {
           {!isGuest && mergeSession && (
             <button
               type="button"
-              className="btn btn-primary"
+              className="btn btn-primary toolbar-merge-btn"
               onClick={() => setMergeOpen(true)}
-              title="Review in-progress merge conflicts"
+              title="Merge in progress — Hide only closes the panel; Abort cancels the merge"
             >
-              Merge
               {mergeSession.conflicts.some((c) => !c.resolved)
-                ? ` · ${mergeSession.conflicts.filter((c) => !c.resolved).length}`
-                : ""}
+                ? `Merge · ${mergeSession.conflicts.filter((c) => !c.resolved).length} left`
+                : "Merge · ready"}
             </button>
           )}
           {!readOnly && timelineCanEdit && !mergeSession && (
@@ -1769,7 +1772,7 @@ export function EditorPage() {
           );
         }}
         onTimelineChange={(view) => {
-          setHistoryOpen(false);
+          // Keep timeline open so hosts can click through leaves without reopening it.
           onTimelineChange(view);
         }}
       />
@@ -1799,6 +1802,7 @@ export function EditorPage() {
         onDraftConsumed={() => setCommentDraft(null)}
         onJump={jumpToAnchor}
         onThreadsChange={setCommentThreads}
+        focusThreadId={focusCommentId}
       />
 
       <div className="workspace" ref={workspaceRef}>
@@ -1894,7 +1898,7 @@ export function EditorPage() {
                         path={activePath}
                         value={content}
                         onChange={setContent}
-                        onSave={() => void save({ compile: true })}
+                        onSave={() => void save({ compile: false })}
                         jumpTo={jumpTo}
                         citations={citations}
                         labels={labels}
@@ -1904,6 +1908,10 @@ export function EditorPage() {
                         readOnly={readOnly || !timelineCanEdit || viewingDeletedFile}
                         commentMarks={commentMarks}
                         onRequestComment={onRequestComment}
+                        onOpenCommentThread={(threadId) => {
+                          setFocusCommentId(threadId);
+                          setCommentsOpen(true);
+                        }}
                         changeMarks={changeMarks}
                       />
                     </>

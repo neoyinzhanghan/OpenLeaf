@@ -53,7 +53,9 @@ function getHub(room: ProjectRoom): RoomHub {
   return hub;
 }
 
-function parseCollabUrl(req: IncomingMessage): { projectId: string; identityId: string } | null {
+function parseCollabUrl(
+  req: IncomingMessage,
+): { projectId: string; identityId: string; branchId: string } | null {
   try {
     const host = req.headers.host ?? "localhost";
     const url = new URL(req.url ?? "/", `http://${host}`);
@@ -62,8 +64,9 @@ function parseCollabUrl(req: IncomingMessage): { projectId: string; identityId: 
     const parts = url.pathname.replace(/^\/collab\/?/, "").split("/").filter(Boolean);
     const projectId = parts[0] || url.searchParams.get("project") || "";
     const identityId = url.searchParams.get("identity") || "";
+    const branchId = (url.searchParams.get("branch") || "main").trim() || "main";
     if (!projectId || !identityId) return null;
-    return { projectId, identityId };
+    return { projectId, identityId, branchId };
   } catch {
     return null;
   }
@@ -109,8 +112,11 @@ export function attachCollabServer(httpServer: HttpServer): WebSocketServer {
 
       let identity: Identity | undefined;
       let readOnly = false;
+      let branchId = parsed.branchId;
       if (isTunnelRequest(req)) {
         // Guest via share link: identity comes from the signed-in guest, never from the URL.
+        // Bound branch stays editable (unless share is RO). Other branches are observe-only
+        // so guests can watch live uncommitted leaves across the multiverse.
         const r = resolveGuest(req);
         if (r.reason !== "ok") {
           rejectUpgrade(socket, 401, "Unauthorized");
@@ -121,7 +127,10 @@ export function attachCollabServer(httpServer: HttpServer): WebSocketServer {
           return;
         }
         identity = { id: r.guest.id, name: r.guest.name, color: r.guest.color };
-        readOnly = r.session.settings.readOnly;
+        const bound = r.session.branchId || "main";
+        const requested = parsed.branchId || bound;
+        branchId = requested;
+        readOnly = r.session.settings.readOnly || requested !== bound;
       } else {
         identity = await getProjectIdentity(parsed.projectId, parsed.identityId);
       }
@@ -131,7 +140,7 @@ export function attachCollabServer(httpServer: HttpServer): WebSocketServer {
       }
 
       wss.handleUpgrade(req, socket, head, (ws) => {
-        wss.emit("connection", ws, req, { ...parsed, identity, readOnly });
+        wss.emit("connection", ws, req, { ...parsed, branchId, identity, readOnly });
       });
     })();
   });
@@ -141,11 +150,17 @@ export function attachCollabServer(httpServer: HttpServer): WebSocketServer {
     async (
       conn: WebSocket,
       _req: IncomingMessage,
-      parsed: { projectId: string; identityId: string; identity: Identity; readOnly: boolean },
+      parsed: {
+        projectId: string;
+        identityId: string;
+        branchId: string;
+        identity: Identity;
+        readOnly: boolean;
+      },
     ) => {
       let room: ProjectRoom;
       try {
-        room = await getOrCreateRoom(parsed.projectId);
+        room = await getOrCreateRoom(parsed.projectId, parsed.branchId || "main");
       } catch (err) {
         console.error("[collab] room open failed", err);
         conn.close();
@@ -253,7 +268,7 @@ export function attachCollabServer(httpServer: HttpServer): WebSocketServer {
         if (controlled && controlled.size > 0) {
           awarenessProtocol.removeAwarenessStates(awareness, [...controlled], "disconnect");
         }
-        await releaseRoomIfEmpty(parsed.projectId);
+        await releaseRoomIfEmpty(parsed.projectId, parsed.branchId || "main");
       };
 
       conn.on("close", () => {

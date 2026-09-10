@@ -26,6 +26,7 @@ export type CommentMark = {
   line: number;
   color: string;
   resolved?: boolean;
+  threadId?: string;
 };
 
 export type CommentSelection = {
@@ -35,6 +36,15 @@ export type CommentSelection = {
   endColumn: number;
   quote: string;
 };
+
+import type { DiffDeletedHunk } from "../api/types";
+
+export type EditorChangeMarks = {
+  addedLines: number[];
+  deletedHunks: DiffDeletedHunk[];
+  /** Entire open buffer is a deleted file (snapshot content, read-only view). */
+  deletedFile?: boolean;
+} | null;
 
 type Props = {
   path: string | null;
@@ -55,6 +65,10 @@ type Props = {
   commentMarks?: CommentMark[];
   /** Cmd/Ctrl+Alt+M or selection helper — open compose for current selection */
   onRequestComment?: (sel: CommentSelection) => void;
+  /** Click a gutter mark → focus that thread in the comments panel */
+  onOpenCommentThread?: (threadId: string) => void;
+  /** Cursor-style show-changes decorations for the open file */
+  changeMarks?: EditorChangeMarks;
 };
 
 function languageFor(path: string | null): string {
@@ -112,18 +126,28 @@ export function CodeEditor({
   readOnly = false,
   commentMarks = [],
   onRequestComment,
+  onOpenCommentThread,
+  changeMarks = null,
 }: Props) {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof import("monaco-editor") | null>(null);
   const decoRef = useRef<string[]>([]);
   const commentDecoRef = useRef<string[]>([]);
+  const changeDecoRef = useRef<string[]>([]);
+  const changeZoneIdsRef = useRef<string[]>([]);
   const decoTimerRef = useRef<number | null>(null);
   const forwardRef = useRef(onForwardSearch);
   forwardRef.current = onForwardSearch;
   const commentReqRef = useRef(onRequestComment);
   commentReqRef.current = onRequestComment;
+  const openThreadRef = useRef(onOpenCommentThread);
+  openThreadRef.current = onOpenCommentThread;
+  const commentMarksRef = useRef(commentMarks);
+  commentMarksRef.current = commentMarks;
   const saveRef = useRef(onSave);
   saveRef.current = onSave;
+  const readOnlyRef = useRef(readOnly);
+  readOnlyRef.current = readOnly;
   const citationsRef = useRef(citations);
   const labelsRef = useRef(labels);
   citationsRef.current = citations;
@@ -135,8 +159,8 @@ export function CodeEditor({
   const appliedJumpKeyRef = useRef<string | null>(null);
   const collab = Boolean(yText);
   const [editorReady, setEditorReady] = useState(false);
-  const { theme } = useTheme();
-  const monacoTheme = theme === "dark" ? LATEX_THEME_DARK : LATEX_THEME;
+  const { scheme } = useTheme();
+  const monacoTheme = scheme === "dark" ? LATEX_THEME_DARK : LATEX_THEME;
 
   const beforeMount: BeforeMount = (monaco) => {
     monacoRef.current = monaco;
@@ -203,6 +227,7 @@ export function CodeEditor({
     monacoRef.current = monacoApi;
     setEditorReady(true);
     ed.addCommand(monacoApi.KeyMod.CtrlCmd | monacoApi.KeyCode.KeyS, () => {
+      if (readOnlyRef.current) return;
       saveRef.current();
     });
     ed.addCommand(monacoApi.KeyMod.CtrlCmd | monacoApi.KeyMod.Alt | monacoApi.KeyCode.KeyJ, () => {
@@ -212,18 +237,47 @@ export function CodeEditor({
     ed.addCommand(monacoApi.KeyMod.CtrlCmd | monacoApi.KeyMod.Alt | monacoApi.KeyCode.KeyM, () => {
       const model = ed.getModel();
       const sel = ed.getSelection();
-      if (!model || !sel || !commentReqRef.current) return;
-      const quote = model.getValueInRange(sel).trim().slice(0, 200);
+      const pos = ed.getPosition();
+      if (!model || !commentReqRef.current) return;
+      if (sel && !sel.isEmpty()) {
+        const quote = model.getValueInRange(sel).trim().slice(0, 200);
+        commentReqRef.current({
+          line: sel.startLineNumber,
+          column: sel.startColumn,
+          endLine: sel.endLineNumber,
+          endColumn: sel.endColumn,
+          quote,
+        });
+        return;
+      }
+      if (!pos) return;
+      const lineText = model.getLineContent(pos.lineNumber).trim().slice(0, 200);
       commentReqRef.current({
-        line: sel.startLineNumber,
-        column: sel.startColumn,
-        endLine: sel.endLineNumber,
-        endColumn: sel.endColumn,
-        quote,
+        line: pos.lineNumber,
+        column: pos.column,
+        endLine: pos.lineNumber,
+        endColumn: pos.column,
+        quote: lineText,
       });
     });
 
     ed.onMouseDown((e) => {
+      // Gutter comment glyph → open that thread
+      const t = e.target;
+      const detail = t as { element?: Element | null; position?: { lineNumber: number } | null };
+      const el = detail.element;
+      if (el?.classList?.contains("comment-line-glyph") || el?.closest?.(".comment-line-glyph")) {
+        const line = detail.position?.lineNumber;
+        if (line && openThreadRef.current) {
+          const hit = commentMarksRef.current.find((m) => m.line === line && m.threadId);
+          if (hit?.threadId) {
+            e.event.preventDefault();
+            e.event.stopPropagation();
+            openThreadRef.current(hit.threadId);
+            return;
+          }
+        }
+      }
       if (!e.event.ctrlKey && !e.event.metaKey) return;
       if (!e.target.position || !forwardRef.current) return;
       e.event.preventDefault();
@@ -231,6 +285,41 @@ export function CodeEditor({
       forwardRef.current(e.target.position.lineNumber, e.target.position.column);
     });
   };
+
+  // Pane-title “Comment” button → same path as ⌘⌥M
+  useEffect(() => {
+    if (!editorReady) return;
+    const onExternalComment = () => {
+      const ed = editorRef.current;
+      if (!ed || !commentReqRef.current) return;
+      const model = ed.getModel();
+      const sel = ed.getSelection();
+      const pos = ed.getPosition();
+      if (!model) return;
+      if (sel && !sel.isEmpty()) {
+        const quote = model.getValueInRange(sel).trim().slice(0, 200);
+        commentReqRef.current({
+          line: sel.startLineNumber,
+          column: sel.startColumn,
+          endLine: sel.endLineNumber,
+          endColumn: sel.endColumn,
+          quote,
+        });
+        return;
+      }
+      if (!pos) return;
+      const lineText = model.getLineContent(pos.lineNumber).trim().slice(0, 200);
+      commentReqRef.current({
+        line: pos.lineNumber,
+        column: pos.column,
+        endLine: pos.lineNumber,
+        endColumn: pos.column,
+        quote: lineText,
+      });
+    };
+    window.addEventListener("openleaf:request-comment", onExternalComment);
+    return () => window.removeEventListener("openleaf:request-comment", onExternalComment);
+  }, [editorReady]);
 
   // Comment gutter marks
   useEffect(() => {
@@ -263,6 +352,140 @@ export function CodeEditor({
       })),
     );
   }, [commentMarks, editorReady, path]);
+
+  // Cursor-style show-changes: green additions + red deleted view zones.
+  // Re-apply on model swap (file/path remount) — decorations die with the old model.
+  useEffect(() => {
+    const ed = editorRef.current;
+    if (!ed || !editorReady) return;
+
+    const clearMarks = () => {
+      if (changeZoneIdsRef.current.length) {
+        try {
+          ed.changeViewZones((accessor) => {
+            for (const zid of changeZoneIdsRef.current) accessor.removeZone(zid);
+          });
+        } catch {
+          /* model already gone */
+        }
+        changeZoneIdsRef.current = [];
+      }
+      try {
+        changeDecoRef.current = ed.deltaDecorations(changeDecoRef.current, []);
+      } catch {
+        changeDecoRef.current = [];
+      }
+    };
+
+    const applyMarks = () => {
+      const model = ed.getModel();
+      clearMarks();
+      if (!changeMarks || !model) return;
+
+      const lineCount = model.getLineCount();
+
+      if (changeMarks.deletedFile) {
+        const all = Array.from({ length: lineCount }, (_, i) => i + 1);
+        changeDecoRef.current = ed.deltaDecorations(
+          changeDecoRef.current,
+          all.map((line) => ({
+            range: {
+              startLineNumber: line,
+              startColumn: 1,
+              endLineNumber: line,
+              endColumn: model.getLineMaxColumn(line),
+            },
+            options: {
+              isWholeLine: true,
+              className: "ol-diff-del-line",
+              linesDecorationsClassName: "ol-diff-del-glyph",
+              overviewRuler: {
+                color: "#f85149",
+                position: monacoEditor.OverviewRulerLane.Left,
+              },
+              minimap: {
+                color: "#f85149",
+                position: monacoEditor.MinimapPosition.Inline,
+              },
+            },
+          })),
+        );
+        return;
+      }
+
+      const added = [...new Set(changeMarks.addedLines)].filter((n) => n >= 1 && n <= lineCount);
+      changeDecoRef.current = ed.deltaDecorations(
+        changeDecoRef.current,
+        added.map((line) => ({
+          range: {
+            startLineNumber: line,
+            startColumn: 1,
+            endLineNumber: line,
+            endColumn: model.getLineMaxColumn(line),
+          },
+          options: {
+            isWholeLine: true,
+            className: "ol-diff-add-line",
+            linesDecorationsClassName: "ol-diff-add-glyph",
+            overviewRuler: {
+              color: "#3fb950",
+              position: monacoEditor.OverviewRulerLane.Left,
+            },
+            minimap: {
+              color: "#3fb950",
+              position: monacoEditor.MinimapPosition.Inline,
+            },
+          },
+        })),
+      );
+
+      const zoneIds: string[] = [];
+      ed.changeViewZones((accessor) => {
+        for (const hunk of changeMarks.deletedHunks) {
+          if (!hunk.lines.length) continue;
+          const after = Math.max(0, Math.min(lineCount, hunk.afterLine));
+          const node = document.createElement("div");
+          node.className = "ol-diff-del-zone";
+          for (const text of hunk.lines) {
+            const row = document.createElement("div");
+            row.className = "ol-diff-del-row";
+            const mark = document.createElement("span");
+            mark.className = "ol-diff-del-sign";
+            mark.textContent = "−";
+            const body = document.createElement("span");
+            body.className = "ol-diff-del-text";
+            body.textContent = text.length ? text : " ";
+            row.appendChild(mark);
+            row.appendChild(body);
+            node.appendChild(row);
+          }
+          const id = accessor.addZone({
+            afterLineNumber: after,
+            heightInPx: Math.max(18, hunk.lines.length * 20),
+            domNode: node,
+            suppressMouseDown: true,
+          });
+          zoneIds.push(id);
+        }
+      });
+      changeZoneIdsRef.current = zoneIds;
+    };
+
+    applyMarks();
+    // Model can remount after path/collab bind — re-paint once it lands.
+    const subModel = ed.onDidChangeModel(() => {
+      window.requestAnimationFrame(applyMarks);
+    });
+    const retry1 = window.setTimeout(applyMarks, 120);
+    const retry2 = window.setTimeout(applyMarks, 400);
+
+    return () => {
+      subModel.dispose();
+      window.clearTimeout(retry1);
+      window.clearTimeout(retry2);
+      clearMarks();
+    };
+  }, [changeMarks, editorReady, path]);
 
   // Collaborative text: LF-safe binder (see bindYTextToMonaco). Stock y-monaco
   // leaves the local caret one character off for Windows guests.

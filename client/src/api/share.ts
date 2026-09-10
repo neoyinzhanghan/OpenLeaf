@@ -19,9 +19,29 @@ export type ShareGuest = {
   revoked: boolean;
 };
 
+export type ShareAiCollaboratorView = {
+  id: string;
+  slug: string;
+  branchId: string;
+  branchName: string;
+  parentBranchId: string;
+  parentBranchName: string;
+  parentTipHash: string;
+  token: string | null;
+  aiUrl: string | null;
+  starterPrompt?: string | null;
+  createdAt: number;
+  expiresAt: number | null;
+  revoked: boolean;
+  compileCount: number;
+  writeCount: number;
+};
+
 export type ShareSessionView = {
   id: string;
   projectId: string;
+  branchId: string;
+  branchName: string;
   status: "starting" | "active" | "stopped" | "error";
   error?: string;
   /** Bare tunnel origin (Cloudflare-assigned hostname). */
@@ -42,12 +62,14 @@ export type ShareSessionView = {
   guests: ShareGuest[];
   logTail: string[];
   events: ShareEvent[];
+  aiCollaborators?: ShareAiCollaboratorView[];
 };
 
 export type ShareDevice = { ip: string; firstSeen: number; guests: string[]; blockedLogins: number };
 export type ShareEvent = { at: number; text: string };
 
 export type UpdateShareInput = {
+  branchId?: string;
   expiresAt?: number | null;
   extendMinutes?: number;
   /** true → clear the deadline. */
@@ -56,9 +78,15 @@ export type UpdateShareInput = {
   maxGuests?: number;
 };
 
-export type ShareStatusResponse = { active: boolean; session?: ShareSessionView };
+export type ShareStatusResponse = {
+  active: boolean;
+  session?: ShareSessionView;
+  sessions?: ShareSessionView[];
+};
 
 export type StartShareInput = Partial<Omit<ShareSettings, "expiresAt">> & {
+  branchId: string;
+  allowMainShare?: boolean;
   expiresAt?: number | null;
   ttlMinutes?: number;
   indefinite?: boolean;
@@ -67,6 +95,8 @@ export type StartShareInput = Partial<Omit<ShareSettings, "expiresAt">> & {
 export type GuestShareInfo = {
   projectId: string;
   projectName?: string;
+  branchId: string;
+  branchName: string;
   expiresAt: number | null;
   readOnly: boolean;
   allowCompile: boolean;
@@ -120,13 +150,52 @@ export function updateProjectShare(projectId: string, input: UpdateShareInput): 
   });
 }
 
-export function stopProjectShare(projectId: string): Promise<{ ok: boolean; stopped: boolean }> {
-  return request(`/api/projects/${encodeURIComponent(projectId)}/share`, { method: "DELETE" });
+export function stopProjectShare(
+  projectId: string,
+  branchId?: string,
+): Promise<{ ok: boolean; stopped: boolean }> {
+  const q = branchId ? `?branchId=${encodeURIComponent(branchId)}` : "";
+  return request(`/api/projects/${encodeURIComponent(projectId)}/share${q}`, { method: "DELETE" });
 }
 
-export function revokeShareGuest(projectId: string, guestId: string): Promise<{ ok: boolean }> {
+export function revokeShareGuest(
+  projectId: string,
+  guestId: string,
+  branchId?: string,
+): Promise<{ ok: boolean }> {
+  const q = branchId ? `?branchId=${encodeURIComponent(branchId)}` : "";
   return request(
-    `/api/projects/${encodeURIComponent(projectId)}/share/guests/${encodeURIComponent(guestId)}`,
+    `/api/projects/${encodeURIComponent(projectId)}/share/guests/${encodeURIComponent(guestId)}${q}`,
+    { method: "DELETE" },
+  );
+}
+
+export type MintAiCollaboratorResponse = {
+  ok: boolean;
+  ai: ShareAiCollaboratorView & { token: string };
+  aiUrl: string;
+  starterPrompt: string;
+  session: ShareSessionView;
+  sessions: ShareSessionView[];
+};
+
+export function mintAiCollaborator(
+  projectId: string,
+  input: { branchId: string; slug: string; ttlMinutes?: number | null },
+): Promise<MintAiCollaboratorResponse> {
+  return request(`/api/projects/${encodeURIComponent(projectId)}/share/ai`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function revokeAiCollaborator(
+  projectId: string,
+  aiId: string,
+  branchId: string,
+): Promise<{ ok: boolean; session?: ShareSessionView; sessions: ShareSessionView[] }> {
+  return request(
+    `/api/projects/${encodeURIComponent(projectId)}/share/ai/${encodeURIComponent(aiId)}?branchId=${encodeURIComponent(branchId)}`,
     { method: "DELETE" },
   );
 }

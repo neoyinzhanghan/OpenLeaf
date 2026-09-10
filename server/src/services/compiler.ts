@@ -156,14 +156,15 @@ async function withProjectCompileLock<T>(id: string, fn: () => Promise<T>): Prom
 async function compileProjectUnlocked(
   id: string,
   onChunk?: (chunk: string) => void,
+  rootDir?: string,
 ): Promise<CompileResult> {
   const started = Date.now();
   const cfg = loadConfig();
   const projectCfg = await readProjectConfig(id);
   const engine = projectCfg.engine ?? cfg.latex.engine;
-  const cwd = projectDir(id);
+  const cwd = rootDir ?? projectDir(id);
   const outRel = cfg.latex.outputDir;
-  const outAbs = outputDirAbs(id);
+  const outAbs = outputDirAbs(id, cwd);
   fs.mkdirSync(outAbs, { recursive: true });
 
   const useMk = await hasLatexmk();
@@ -177,7 +178,7 @@ async function compileProjectUnlocked(
     ? await compileWithLatexmk(cwd, projectCfg.mainFile, engine, outRel, cfg.latex.timeoutMs, onChunk)
     : await compileFallback(cwd, projectCfg.mainFile, engine, outRel, cfg.latex.timeoutMs, onChunk);
 
-  const pdfAbs = pdfPathAbs(id, projectCfg.mainFile);
+  const pdfAbs = pdfPathAbs(id, projectCfg.mainFile, cwd);
   // TeX often exits non-zero on warnings/errors even when a PDF was written.
   const ok = fs.existsSync(pdfAbs);
   const pdfRelative = ok ? path.relative(cwd, pdfAbs).replace(/\\/g, "/") : null;
@@ -202,11 +203,15 @@ async function compileProjectUnlocked(
 export async function compileProject(
   id: string,
   onChunk?: (chunk: string) => void,
+  opts?: { branchId?: string },
 ): Promise<CompileResult> {
   return withProjectCompileLock(id, async () => {
     const { flushProjectRoom } = await import("./collab/room.js");
-    onChunk?.("[openleaf] flushing collaborative edits to disk\n");
-    await flushProjectRoom(id, { commit: false });
-    return compileProjectUnlocked(id, onChunk);
+    const { ensureBranchRoot } = await import("./timeline.js");
+    const branchId = opts?.branchId ?? "main";
+    onChunk?.(`[openleaf] flushing collaborative edits to disk (${branchId})\n`);
+    await flushProjectRoom(id, { commit: false, branchId });
+    const root = await ensureBranchRoot(id, branchId);
+    return compileProjectUnlocked(id, onChunk, root);
   });
 }

@@ -14,13 +14,22 @@ import type {
 } from "./types";
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        ...(init?.headers ?? {}),
+      },
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/failed to fetch|networkerror|load failed/i.test(msg)) {
+      throw new Error("Could not reach the OpenLeaf server — check that it is running, then try again");
+    }
+    throw err instanceof Error ? err : new Error(msg);
+  }
   if (!res.ok) {
     let message = res.statusText;
     try {
@@ -47,7 +56,7 @@ export function getProjectIdentities(
 
 export function flushProjectCollab(
   id: string,
-  opts?: { identityId?: string; message?: string },
+  opts?: { identityId?: string; message?: string; branchId?: string },
 ): Promise<{ ok: boolean; git?: GitCommitResult }> {
   return request(`/api/projects/${encodeURIComponent(id)}/collab/flush`, {
     method: "POST",
@@ -67,6 +76,192 @@ export function listProjectHistory(id: string, limit = 50): Promise<GitCommitInf
   return request(`/api/projects/${encodeURIComponent(id)}/history?limit=${limit}`);
 }
 
+export function getProjectTimeline(id: string, branchId?: string): Promise<import("./types").TimelineView> {
+  const q = branchId ? `?branchId=${encodeURIComponent(branchId)}` : "";
+  return request(`/api/projects/${encodeURIComponent(id)}/timeline${q}`);
+}
+
+export function commitProjectTimeline(
+  id: string,
+  body: { message: string; branchId?: string; identityId?: string },
+): Promise<{
+  timeline: import("./types").TimelineView;
+  node: import("./types").TimelineNode;
+  hash: string;
+}> {
+  return request(`/api/projects/${encodeURIComponent(id)}/timeline/commit`, {
+    method: "POST",
+    body: JSON.stringify(body),
+    headers: body.identityId ? { "X-OpenLeaf-Identity": body.identityId } : undefined,
+  });
+}
+
+export function forkProjectTimeline(
+  id: string,
+  body: { fromNodeId: string; name: string },
+): Promise<{ timeline: import("./types").TimelineView; branch: import("./types").TimelineBranch }> {
+  return request(`/api/projects/${encodeURIComponent(id)}/timeline/fork`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function pruneProjectTimelineTip(
+  id: string,
+  body: { branchId: string; forceKickEditors?: boolean },
+): Promise<{ ok: boolean; timeline: import("./types").TimelineView }> {
+  return request(`/api/projects/${encodeURIComponent(id)}/timeline/prune`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export type PrunedTipInfo = {
+  branchId: string;
+  name: string;
+  prunedAt: string;
+  headNodeId: string | null;
+  tipHash: string | null;
+  tipMessage: string | null;
+  nodeCount: number;
+};
+
+export function listProjectTimelineTrash(id: string): Promise<{ items: PrunedTipInfo[] }> {
+  return request(`/api/projects/${encodeURIComponent(id)}/timeline/trash`);
+}
+
+export function unpruneProjectTimelineTip(
+  id: string,
+  body: { branchId: string },
+): Promise<{ ok: boolean; timeline: import("./types").TimelineView }> {
+  return request(`/api/projects/${encodeURIComponent(id)}/timeline/unprune`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function deleteProjectTimelineTrashForever(
+  id: string,
+  body: {
+    branchId: string;
+    confirmName: string;
+    forceKickEditors?: boolean;
+    discardDirty?: boolean;
+  },
+): Promise<{
+  ok: true;
+  timeline: import("./types").TimelineView;
+  deleted: { branchId: string; name: string };
+}> {
+  return request(`/api/projects/${encodeURIComponent(id)}/timeline/trash/delete`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function checkoutProjectTimeline(
+  id: string,
+  body: { branchId?: string; nodeId?: string | null },
+): Promise<import("./types").TimelineView> {
+  return request(`/api/projects/${encodeURIComponent(id)}/timeline/checkout`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export type MergeConflictFile = {
+  path: string;
+  code: string;
+  kind: "both-modified" | "both-added" | "deleted-by-us" | "deleted-by-them" | "other";
+  resolved: boolean;
+  strategy?: "ours" | "theirs" | "manual";
+  binary?: boolean;
+};
+
+export type MergeSession = {
+  id: string;
+  projectId: string;
+  targetBranchId: string;
+  targetBranchName: string;
+  sourceBranchId: string;
+  sourceBranchName: string;
+  targetHash: string;
+  sourceHash: string;
+  status: "in_progress" | "ready" | "completed" | "aborted";
+  conflicts: MergeConflictFile[];
+  autoMerged: string[];
+  message: string;
+  startedAt: string;
+};
+
+export type MergeFileSides = {
+  path: string;
+  binary: boolean;
+  ours: string | null;
+  theirs: string | null;
+  base: string | null;
+  working: string | null;
+  resolved: boolean;
+  strategy?: MergeConflictFile["strategy"];
+};
+
+export function startProjectMerge(
+  id: string,
+  body: { sourceBranchId: string; targetBranchId?: string },
+): Promise<MergeSession> {
+  return request(`/api/projects/${encodeURIComponent(id)}/timeline/merge/start`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function getProjectMerge(id: string): Promise<MergeSession | null> {
+  const session = await request<MergeSession | undefined>(
+    `/api/projects/${encodeURIComponent(id)}/timeline/merge`,
+  );
+  return session ?? null;
+}
+
+export function getProjectMergeFile(id: string, filePath: string): Promise<MergeFileSides> {
+  return request(
+    `/api/projects/${encodeURIComponent(id)}/timeline/merge/file?path=${encodeURIComponent(filePath)}`,
+  );
+}
+
+export function resolveProjectMerge(
+  id: string,
+  body: { path: string; strategy: "ours" | "theirs" | "manual"; content?: string },
+): Promise<MergeSession> {
+  return request(`/api/projects/${encodeURIComponent(id)}/timeline/merge/resolve`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function completeProjectMerge(
+  id: string,
+  body?: { message?: string },
+): Promise<{
+  session: MergeSession;
+  timeline: import("./types").TimelineView;
+  hash: string;
+  nodeId: string;
+}> {
+  return request(`/api/projects/${encodeURIComponent(id)}/timeline/merge/complete`, {
+    method: "POST",
+    body: JSON.stringify(body ?? {}),
+  });
+}
+
+export function abortProjectMerge(
+  id: string,
+): Promise<{ ok: true; timeline: import("./types").TimelineView; targetBranchId: string }> {
+  return request(`/api/projects/${encodeURIComponent(id)}/timeline/merge/abort`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
 export function restoreProjectHistory(
   id: string,
   hash: string,
@@ -79,9 +274,34 @@ export function restoreProjectHistory(
   });
 }
 
-export function getDiffHighlights(id: string, since?: string): Promise<DiffHighlightsResult> {
-  const q = since ? `?since=${encodeURIComponent(since)}` : "";
+export function getDiffHighlights(
+  id: string,
+  since?: string,
+  branchId?: string,
+  at?: string | null,
+): Promise<DiffHighlightsResult> {
+  const params = new URLSearchParams();
+  if (since) params.set("since", since);
+  if (branchId) params.set("branchId", branchId);
+  if (at) params.set("at", at);
+  const q = params.toString() ? `?${params}` : "";
   return request(`/api/projects/${encodeURIComponent(id)}/diff-highlights${q}`);
+}
+
+export type BranchLeafStat = {
+  branchId: string;
+  name: string;
+  sacred: boolean;
+  headNodeId: string | null;
+  tipHash: string | null;
+  dirty: boolean;
+  additions: number;
+  deletions: number;
+  files: number;
+};
+
+export function getBranchLeaves(id: string): Promise<BranchLeafStat[]> {
+  return request(`/api/projects/${encodeURIComponent(id)}/branch-leaves`);
 }
 
 export function patchConfig(body: Partial<AppConfig>): Promise<AppConfig> {
@@ -103,8 +323,12 @@ export function createProject(id: string, fromTemplate?: string): Promise<Projec
   });
 }
 
-export function getTree(id: string): Promise<TreeNode[]> {
-  return request(`/api/projects/${encodeURIComponent(id)}/tree`);
+export function getTree(id: string, at?: string | null, branchId?: string | null): Promise<TreeNode[]> {
+  const params = new URLSearchParams();
+  if (at) params.set("at", at);
+  if (branchId) params.set("branchId", branchId);
+  const q = params.toString() ? `?${params}` : "";
+  return request(`/api/projects/${encodeURIComponent(id)}/tree${q}`);
 }
 
 function fileUrl(id: string, filePath: string, query?: string): string {
@@ -120,9 +344,13 @@ function fileUrl(id: string, filePath: string, query?: string): string {
 export function readProjectFile(
   id: string,
   filePath: string,
-  opts?: { forceText?: boolean },
+  opts?: { forceText?: boolean; at?: string | null; branchId?: string | null },
 ): Promise<FilePayload> {
-  const query = opts?.forceText ? "forceText=1" : undefined;
+  const params = new URLSearchParams();
+  if (opts?.forceText) params.set("forceText", "1");
+  if (opts?.at) params.set("at", opts.at);
+  if (opts?.branchId) params.set("branchId", opts.branchId);
+  const query = params.toString() || undefined;
   return request(fileUrl(id, filePath, query));
 }
 
@@ -177,13 +405,18 @@ export function renameProjectPath(
   });
 }
 
-export function pdfUrl(id: string, bust?: number): string {
-  const q = bust != null ? `?t=${bust}` : "";
+export function pdfUrl(id: string, bust?: number, branchId?: string): string {
+  const params = new URLSearchParams();
+  if (bust != null) params.set("t", String(bust));
+  if (branchId) params.set("branchId", branchId);
+  const q = params.toString() ? `?${params}` : "";
   return `/api/projects/${encodeURIComponent(id)}/pdf${q}`;
 }
 
-export function downloadUrl(id: string, format: "pdf" | "zip"): string {
-  return `/api/projects/${encodeURIComponent(id)}/download?format=${format}`;
+export function downloadUrl(id: string, format: "pdf" | "zip", branchId?: string): string {
+  const params = new URLSearchParams({ format });
+  if (branchId) params.set("branchId", branchId);
+  return `/api/projects/${encodeURIComponent(id)}/download?${params}`;
 }
 
 export function synctexLookup(
@@ -191,6 +424,7 @@ export function synctexLookup(
   page: number,
   x: number,
   y: number,
+  branchId?: string,
 ): Promise<SynctexHit> {
   const params = new URLSearchParams({
     direction: "reverse",
@@ -198,6 +432,7 @@ export function synctexLookup(
     x: String(x),
     y: String(y),
   });
+  if (branchId) params.set("branchId", branchId);
   return request(`/api/projects/${encodeURIComponent(id)}/synctex?${params}`);
 }
 
@@ -206,6 +441,7 @@ export function synctexForward(
   file: string,
   line: number,
   column = 1,
+  branchId?: string,
 ): Promise<SynctexForwardHit> {
   const params = new URLSearchParams({
     direction: "forward",
@@ -213,6 +449,7 @@ export function synctexForward(
     line: String(line),
     column: String(column),
   });
+  if (branchId) params.set("branchId", branchId);
   return request(`/api/projects/${encodeURIComponent(id)}/synctex?${params}`);
 }
 
@@ -283,9 +520,12 @@ export type CompileHandlers = {
 export function compileProject(
   id: string,
   handlers: CompileHandlers = {},
+  opts?: { branchId?: string },
 ): Promise<CompileResult> {
   return new Promise((resolve, reject) => {
-    fetch(`/api/projects/${encodeURIComponent(id)}/compile?stream=1`, {
+    const params = new URLSearchParams({ stream: "1" });
+    if (opts?.branchId) params.set("branchId", opts.branchId);
+    fetch(`/api/projects/${encodeURIComponent(id)}/compile?${params}`, {
       method: "POST",
       headers: { Accept: "text/event-stream" },
     })

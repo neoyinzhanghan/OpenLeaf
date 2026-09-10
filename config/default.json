@@ -12,9 +12,11 @@
     "devPort": 5173
   },
   "defaultIdentities": [
-    { "id": "alice", "name": "Alice", "color": "#3B82F6" },
-    { "id": "bob", "name": "Bob", "color": "#10B981" },
-    { "id": "carol", "name": "Carol", "color": "#F59E0B" }
+    {
+      "id": "admin-neo",
+      "name": "Admin Neo",
+      "color": "#0F766E"
+    }
   ],
   "collab": {
     "flushMs": 750,

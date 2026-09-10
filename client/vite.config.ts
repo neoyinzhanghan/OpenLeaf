@@ -27,6 +27,14 @@ export default defineConfig({
         target: `http://127.0.0.1:${apiPort}`,
         changeOrigin: true,
       },
+      "/ai": {
+        target: `http://127.0.0.1:${apiPort}`,
+        changeOrigin: true,
+      },
+      "/join": {
+        target: `http://127.0.0.1:${apiPort}`,
+        changeOrigin: true,
+      },
       "/collab": {
         target: `ws://127.0.0.1:${apiPort}`,
         ws: true,
