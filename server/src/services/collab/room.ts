@@ -12,6 +12,7 @@ import {
   writeFile,
   type TreeNode,
 } from "../projectFs.js";
+import { ensureBranchRoot } from "../timeline.js";
 import { ProjectDiskWatch } from "./diskWatch.js";
 import { patchYText, threeWayMerge } from "./textMerge.js";
 
@@ -48,10 +49,15 @@ function hasSkippedCollabDir(relativePath: string): boolean {
   return parts.slice(0, -1).some((p) => COLLAB_SKIP_DIRS.has(p.toLowerCase()));
 }
 
-function isCollabTextFile(projectId: string, relativePath: string): boolean {
+function isCollabTextFile(rootDir: string, relativePath: string): boolean {
   if (!relativePath || relativePath.includes(".openleaf/")) return false;
   if (COLLAB_NEVER_EXT.has(pathExt(relativePath))) return false;
-  const full = resolveProjectPath(projectId, relativePath);
+  let full: string;
+  try {
+    full = resolveInRoot(rootDir, relativePath);
+  } catch {
+    return false;
+  }
   if (!isTextPath(relativePath) && !isTextPath(full)) return false;
   try {
     const st = fsSync.statSync(full);
@@ -63,8 +69,8 @@ function isCollabTextFile(projectId: string, relativePath: string): boolean {
 }
 
 /** Hydrate on room open. Other small text files join the CRDT only when opened (ensureFile). */
-function isEagerCollabFile(projectId: string, relativePath: string): boolean {
-  if (!isCollabTextFile(projectId, relativePath)) return false;
+function isEagerCollabFile(rootDir: string, relativePath: string): boolean {
+  if (!isCollabTextFile(rootDir, relativePath)) return false;
   if (hasSkippedCollabDir(relativePath)) return false;
   const ext = pathExt(relativePath);
   if (EAGER_COLLAB_EXT.has(ext)) return true;
@@ -72,31 +78,73 @@ function isEagerCollabFile(projectId: string, relativePath: string): boolean {
 }
 
 function flattenCollabTextFiles(
-  projectId: string,
+  rootDir: string,
   nodes: TreeNode[],
   out: string[] = [],
 ): string[] {
   for (const n of nodes) {
     if (n.type === "file") {
-      if (isEagerCollabFile(projectId, n.path)) out.push(n.path);
+      if (isEagerCollabFile(rootDir, n.path)) out.push(n.path);
     } else if (n.children) {
-      flattenCollabTextFiles(projectId, n.children, out);
+      flattenCollabTextFiles(rootDir, n.children, out);
     }
   }
   return out;
 }
 
-export function snapshotPath(projectId: string): string {
-  return path.join(projectDir(projectId), ".openleaf", "collab", "ydoc.bin");
+export function roomKey(projectId: string, branchId = "main"): string {
+  return `${projectId}::${branchId}`;
 }
 
-export async function clearCollabSnapshot(projectId: string): Promise<void> {
-  const dest = snapshotPath(projectId);
+export function snapshotPath(projectId: string, branchId = "main"): string {
+  return path.join(projectDir(projectId), ".openleaf", "collab", branchId, "ydoc.bin");
+}
+
+export async function clearCollabSnapshot(projectId: string, branchId = "main"): Promise<void> {
+  const dest = snapshotPath(projectId, branchId);
   try {
     await fs.unlink(dest);
   } catch {
     /* missing is fine */
   }
+}
+
+function resolveInRoot(rootDir: string, relativePath: string): string {
+  const normalized = relativePath.replace(/\\/g, "/").replace(/^\/+/, "");
+  if (normalized.split("/").some((p) => p === "..")) {
+    throw Object.assign(new Error("Path escape"), { status: 400 });
+  }
+  const full = path.resolve(rootDir, normalized);
+  if (!full.startsWith(rootDir + path.sep) && full !== rootDir) {
+    throw Object.assign(new Error("Path escape"), { status: 400 });
+  }
+  return full;
+}
+
+async function writeInRoot(rootDir: string, relativePath: string, content: string): Promise<void> {
+  const full = resolveInRoot(rootDir, relativePath);
+  await fs.mkdir(path.dirname(full), { recursive: true });
+  await fs.writeFile(full, content, "utf8");
+}
+
+async function getTreeFromRoot(rootDir: string): Promise<TreeNode[]> {
+  // Reuse project tree builder via a fake walk — call build through getTree only for main.
+  // Minimal recursive listing:
+  async function walk(dir: string, prefix: string): Promise<TreeNode[]> {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    const nodes: TreeNode[] = [];
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (entry.name === ".git" || entry.name === ".openleaf" || entry.name === "node_modules") continue;
+      const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        nodes.push({ name: entry.name, path: rel, type: "directory", children: await walk(path.join(dir, entry.name), rel) });
+      } else {
+        nodes.push({ name: entry.name, path: rel, type: "file" });
+      }
+    }
+    return nodes;
+  }
+  return walk(rootDir, "");
 }
 
 export type TreeChangeEvent = {
@@ -127,6 +175,9 @@ function createMutex(): Mutex {
 
 export class ProjectRoom {
   readonly projectId: string;
+  readonly branchId: string;
+  readonly rootDir: string;
+  readonly key: string;
   readonly doc: Y.Doc;
   readonly files: Y.Map<Y.Text>;
   readonly meta: Y.Map<unknown>;
@@ -145,8 +196,11 @@ export class ProjectRoom {
   private updateHandler: (update: Uint8Array, origin: unknown) => void;
   private diskWatch: ProjectDiskWatch | null = null;
 
-  constructor(projectId: string, generation: number) {
+  constructor(projectId: string, branchId: string, rootDir: string, generation: number) {
     this.projectId = projectId;
+    this.branchId = branchId;
+    this.rootDir = rootDir;
+    this.key = roomKey(projectId, branchId);
     this.generation = generation;
     this.doc = new Y.Doc();
     this.files = this.doc.getMap(FILES_MAP);
@@ -209,6 +263,10 @@ export class ProjectRoom {
     this.clients.delete(client);
   }
 
+  get isDead(): boolean {
+    return this.destroyed || this.closing;
+  }
+
   get clientCount(): number {
     return this.clients.size;
   }
@@ -239,7 +297,8 @@ export class ProjectRoom {
   }): Promise<GitCommitResult | null> {
     return this.flushMutex.run(async () => {
       await this.whenReady();
-      if (this.destroyed) return null;
+      if (this.destroyed || this.closing) return null;
+      if (isBranchRoomSealed(this.projectId, this.branchId)) return null;
       if (this.flushTimer) {
         clearTimeout(this.flushTimer);
         this.flushTimer = null;
@@ -275,7 +334,7 @@ export class ProjectRoom {
           continue;
         }
         try {
-          await writeFile(this.projectId, filePath, content, "utf8");
+          await writeInRoot(this.rootDir, filePath, content);
           this.diskBaseline.set(filePath, content);
         } catch (err) {
           this.dirtyPaths.add(filePath);
@@ -286,7 +345,14 @@ export class ProjectRoom {
         this.meta.set("flushAt", Date.now());
       }, "disk-flush");
 
-      if (paths.length === 0 || opts?.commit === false) return null;
+      try {
+        bumpProjectLeavesVersion(this.projectId);
+      } catch {
+        /* ignore */
+      }
+
+      // Autosave flushes to the working copy only. Intentional commits use the timeline API.
+      if (paths.length === 0 || opts?.commit !== true) return null;
       const result = await autoCommitProject(this.projectId, {
         author: opts?.author,
         message: opts?.message ?? `Save (${paths.length} file${paths.length === 1 ? "" : "s"})`,
@@ -304,11 +370,11 @@ export class ProjectRoom {
   /** Replace all Y.Text contents from disk (e.g. after git restore). */
   async reseedFromDisk(): Promise<void> {
     await this.whenReady();
-    const tree = await getTree(this.projectId);
-    const eager = flattenCollabTextFiles(this.projectId, tree);
+    const tree = await getTreeFromRoot(this.rootDir);
+    const eager = flattenCollabTextFiles(this.rootDir, tree);
     const keep = new Set(eager);
     this.files.forEach((_t, p) => {
-      if (isCollabTextFile(this.projectId, p)) keep.add(p);
+      if (isCollabTextFile(this.rootDir, p)) keep.add(p);
     });
 
     this.doc.transact(() => {
@@ -338,7 +404,8 @@ export class ProjectRoom {
   async ingestDiskPaths(relativePaths: string[]): Promise<void> {
     return this.flushMutex.run(async () => {
       await this.whenReady();
-      if (this.destroyed || relativePaths.length === 0) return;
+      if (this.destroyed || this.closing || relativePaths.length === 0) return;
+      if (isBranchRoomSealed(this.projectId, this.branchId)) return;
 
       const unique = [...new Set(relativePaths.filter((p) => p && !p.includes("\0")))];
       const treeChanged: string[] = [];
@@ -352,7 +419,7 @@ export class ProjectRoom {
           }
           let full: string;
           try {
-            full = resolveProjectPath(this.projectId, filePath);
+            full = resolveInRoot(this.rootDir, filePath);
           } catch {
             continue;
           }
@@ -382,7 +449,7 @@ export class ProjectRoom {
           }
           if (filePath === "comments.json") commentsChanged = true;
 
-          if (!isCollabTextFile(this.projectId, filePath)) {
+          if (!isCollabTextFile(this.rootDir, filePath)) {
             if (this.files.has(filePath)) {
               this.files.delete(filePath);
               this.dirtyPaths.delete(filePath);
@@ -393,7 +460,7 @@ export class ProjectRoom {
           }
 
           const existing = this.files.get(filePath);
-          if (!existing && !isEagerCollabFile(this.projectId, filePath)) {
+          if (!existing && !isEagerCollabFile(this.rootDir, filePath)) {
             treeChanged.push(filePath);
             continue;
           }
@@ -442,7 +509,7 @@ export class ProjectRoom {
   /** Sync one path from disk into the CRDT (used after REST writes). */
   async syncPathFromDisk(relativePath: string): Promise<void> {
     await this.whenReady();
-    if (!isCollabTextFile(this.projectId, relativePath)) {
+    if (!isCollabTextFile(this.rootDir, relativePath)) {
       // Drop oversized / binary paths if a prior snapshot had them
       if (this.files.has(relativePath)) {
         this.doc.transact(() => {
@@ -464,7 +531,7 @@ export class ProjectRoom {
     try {
       // Normalize to LF so Y.Text indices match Monaco when guests are on Windows.
       return fsSync
-        .readFileSync(resolveProjectPath(this.projectId, filePath), "utf8")
+        .readFileSync(resolveInRoot(this.rootDir, filePath), "utf8")
         .replace(/\r\n/g, "\n")
         .replace(/\r/g, "\n");
     } catch {
@@ -507,8 +574,9 @@ export class ProjectRoom {
   async persistSnapshot(): Promise<void> {
     if (!loadConfig().collab.persistYjs) return;
     await this.whenReady();
-    if (this.destroyed) return;
-    const dest = snapshotPath(this.projectId);
+    if (this.destroyed || this.closing) return;
+    if (isBranchRoomSealed(this.projectId, this.branchId)) return;
+    const dest = snapshotPath(this.projectId, this.branchId);
     await fs.mkdir(path.dirname(dest), { recursive: true });
     const update = Y.encodeStateAsUpdate(this.doc);
     await fs.writeFile(dest, Buffer.from(update));
@@ -517,7 +585,7 @@ export class ProjectRoom {
   private async hydrate(): Promise<void> {
     // Optional CRDT snapshot for reconnect speed, then always reconcile from disk
     // so git restores / external writes win over a stale ydoc.bin.
-    const snap = snapshotPath(this.projectId);
+    const snap = snapshotPath(this.projectId, this.branchId);
     if (loadConfig().collab.persistYjs && fsSync.existsSync(snap)) {
       try {
         const st = fsSync.statSync(snap);
@@ -535,8 +603,8 @@ export class ProjectRoom {
       }
     }
 
-    const tree = await getTree(this.projectId);
-    const textPaths = flattenCollabTextFiles(this.projectId, tree);
+    const tree = await getTreeFromRoot(this.rootDir);
+    const textPaths = flattenCollabTextFiles(this.rootDir, tree);
     this.doc.transact(() => {
       for (const filePath of textPaths) {
         this.applyDiskContent(filePath);
@@ -571,7 +639,7 @@ export class ProjectRoom {
       const again = this.files.get(relativePath);
       if (again) return again;
 
-      if (!isCollabTextFile(this.projectId, relativePath)) {
+      if (!isCollabTextFile(this.rootDir, relativePath)) {
         throw Object.assign(new Error("File too large (or not text) for collab editing"), {
           status: 400,
         });
@@ -597,7 +665,7 @@ export class ProjectRoom {
       } else if (event.op === "rename" && event.from && event.to) {
         this.renamePathPrefix(event.from, event.to);
       } else if ((event.op === "create" || event.op === "write") && event.path) {
-        if (isEagerCollabFile(this.projectId, event.path) || this.files.has(event.path)) {
+        if (isEagerCollabFile(this.rootDir, event.path) || this.files.has(event.path)) {
           this.applyDiskContent(event.path);
         }
       }
@@ -614,9 +682,16 @@ export class ProjectRoom {
     }, "comments");
   }
 
+  /** Cross-branch leaf +/- refresh signal (all share links in this project). */
+  bumpLeavesVersion(version = Date.now()): void {
+    this.doc.transact(() => {
+      this.meta.set("leavesVersion", version);
+    }, "leaves");
+  }
+
   private startDiskWatch(): void {
     if (this.destroyed || this.closing || this.diskWatch) return;
-    this.diskWatch = new ProjectDiskWatch(this.projectId, projectDir(this.projectId), (paths) => {
+    this.diskWatch = new ProjectDiskWatch(this.projectId, this.rootDir, (paths) => {
       void this.ingestDiskPaths(paths).catch((err) =>
         console.error("[collab] disk ingest failed", err),
       );
@@ -665,21 +740,39 @@ export class ProjectRoom {
     this.scheduleFlush();
   }
 
-  async destroy(): Promise<void> {
+  /** Close all tracked clients (WebSockets). Safe if clients are plain stubs in tests. */
+  kickClients(): void {
+    for (const client of [...this.clients]) {
+      try {
+        const ws = client as { close?: () => void; readyState?: number };
+        if (typeof ws.close === "function") ws.close();
+      } catch {
+        /* ignore */
+      }
+      this.clients.delete(client);
+    }
+  }
+
+  async destroy(opts?: { skipFlush?: boolean }): Promise<void> {
     if (this.destroyed || this.closing) return;
     this.closing = true;
+    this.kickClients();
     this.diskWatch?.stop();
     this.diskWatch = null;
     if (this.flushTimer) clearTimeout(this.flushTimer);
     if (this.persistTimer) clearTimeout(this.persistTimer);
-    try {
-      // Flush while still the active room and not yet marked destroyed
-      if (rooms.get(this.projectId) === this) {
-        await this.flushNow({ commit: false });
-        await this.persistSnapshot();
+    this.flushTimer = null;
+    this.persistTimer = null;
+    if (!opts?.skipFlush) {
+      try {
+        // Flush while still the active room and not yet marked destroyed
+        if (rooms.get(this.key) === this) {
+          await this.flushNow({ commit: false });
+          await this.persistSnapshot();
+        }
+      } catch (err) {
+        console.error("[collab] destroy flush failed", err);
       }
-    } catch (err) {
-      console.error("[collab] destroy flush failed", err);
     }
     this.destroyed = true;
     this.doc.off("update", this.updateHandler);
@@ -691,88 +784,197 @@ const rooms = new Map<string, ProjectRoom>();
 const roomCreating = new Map<string, Promise<ProjectRoom>>();
 let generationCounter = 0;
 
-export function getRoom(projectId: string): ProjectRoom | undefined {
-  return rooms.get(projectId);
+/** Tips sealed during prune/delete — blocks new collab rooms and disk flushes. */
+const sealedBranchKeys = new Set<string>();
+
+export function sealBranchRoom(projectId: string, branchId: string): void {
+  sealedBranchKeys.add(roomKey(projectId, branchId));
 }
 
-export async function getOrCreateRoom(projectId: string): Promise<ProjectRoom> {
-  const existing = rooms.get(projectId);
-  if (existing) {
-    await existing.whenReady();
-    return existing;
+export function unsealBranchRoom(projectId: string, branchId: string): void {
+  sealedBranchKeys.delete(roomKey(projectId, branchId));
+}
+
+export function isBranchRoomSealed(projectId: string, branchId: string): boolean {
+  return sealedBranchKeys.has(roomKey(projectId, branchId));
+}
+
+export function isRoomCreating(projectId: string, branchId: string): boolean {
+  return roomCreating.has(roomKey(projectId, branchId));
+}
+
+/** Wait for an in-flight getOrCreateRoom to settle (success or failure). */
+export async function awaitRoomCreating(projectId: string, branchId: string): Promise<void> {
+  const pending = roomCreating.get(roomKey(projectId, branchId));
+  if (!pending) return;
+  try {
+    await pending;
+  } catch {
+    /* create failed — fine */
+  }
+}
+
+export function getRoom(projectId: string, branchId = "main"): ProjectRoom | undefined {
+  return rooms.get(roomKey(projectId, branchId));
+}
+
+/** All live rooms for a project (any branch). */
+export function getProjectRooms(projectId: string): ProjectRoom[] {
+  const prefix = `${projectId}::`;
+  return [...rooms.values()].filter((r) => r.key.startsWith(prefix));
+}
+
+export async function getOrCreateRoom(
+  projectId: string,
+  branchId = "main",
+): Promise<ProjectRoom> {
+  const key = roomKey(projectId, branchId);
+  if (isBranchRoomSealed(projectId, branchId)) {
+    throw Object.assign(new Error("This tip was pruned and cannot be opened"), { status: 410 });
   }
 
-  let creating = roomCreating.get(projectId);
+  const existing = rooms.get(key);
+  if (existing) {
+    if (existing.isDead) {
+      rooms.delete(key);
+    } else {
+      // Refuse stale rooms on pruned tips (existing path skips ensureBranchRoot).
+      try {
+        const { loadTimeline, getBranch, isBranchPruned } = await import("../timeline.js");
+        const state = await loadTimeline(projectId);
+        const branch = getBranch(state, branchId);
+        if (isBranchPruned(branch)) {
+          await forceDestroyBranchRoom(projectId, branchId, { skipFlush: true });
+          throw Object.assign(new Error(`Branch “${branch.name}” was pruned and cannot be opened`), {
+            status: 410,
+          });
+        }
+      } catch (e) {
+        if (e && typeof e === "object" && "status" in e) throw e;
+        throw e;
+      }
+      await existing.whenReady();
+      return existing;
+    }
+  }
+
+  let creating = roomCreating.get(key);
   if (!creating) {
     creating = (async () => {
+      if (isBranchRoomSealed(projectId, branchId)) {
+        throw Object.assign(new Error("This tip was pruned and cannot be opened"), { status: 410 });
+      }
       const dir = projectDir(projectId);
       if (!fsSync.existsSync(dir)) {
         throw Object.assign(new Error("Project not found"), { status: 404 });
       }
+      const rootDir = await ensureBranchRoot(projectId, branchId);
+      if (isBranchRoomSealed(projectId, branchId)) {
+        throw Object.assign(new Error("This tip was pruned and cannot be opened"), { status: 410 });
+      }
       const gen = ++generationCounter;
-      const room = new ProjectRoom(projectId, gen);
+      const room = new ProjectRoom(projectId, branchId, rootDir, gen);
       try {
         await room.whenReady();
       } catch (err) {
-        roomCreating.delete(projectId);
+        roomCreating.delete(key);
         throw err;
       }
-      // Another creator may have finished first
-      const raced = rooms.get(projectId);
+      if (isBranchRoomSealed(projectId, branchId)) {
+        await room.destroy({ skipFlush: true });
+        roomCreating.delete(key);
+        throw Object.assign(new Error("This tip was pruned and cannot be opened"), { status: 410 });
+      }
+      const raced = rooms.get(key);
       if (raced && raced !== room) {
-        await room.destroy();
+        await room.destroy({ skipFlush: true });
         return raced;
       }
-      rooms.set(projectId, room);
-      roomCreating.delete(projectId);
+      rooms.set(key, room);
+      roomCreating.delete(key);
       return room;
     })();
-    roomCreating.set(projectId, creating);
+    roomCreating.set(key, creating);
   }
   return creating;
 }
 
 export async function flushProjectRoom(
   projectId: string,
-  opts?: { author?: GitAuthor; message?: string; commit?: boolean },
+  opts?: { author?: GitAuthor; message?: string; commit?: boolean; branchId?: string },
 ): Promise<GitCommitResult | null> {
-  const room = rooms.get(projectId);
-  if (room) return room.flushNow(opts);
-  if (opts?.commit === false) return null;
-  return autoCommitProject(projectId, {
-    author: opts?.author,
-    message: opts?.message,
-  });
+  const branchId = opts?.branchId ?? "main";
+  const room = rooms.get(roomKey(projectId, branchId));
+  if (room) return room.flushNow({ ...opts, commit: opts?.commit === true });
+  // No live room: disk-only flush never auto-commits anymore.
+  return null;
 }
 
-export async function reseedProjectRoom(projectId: string): Promise<void> {
-  const room = rooms.get(projectId);
+export async function reseedProjectRoom(projectId: string, branchId = "main"): Promise<void> {
+  const room = rooms.get(roomKey(projectId, branchId));
   if (room) await room.reseedFromDisk();
 }
 
 export function notifyProjectTreeChange(
   projectId: string,
   event: Omit<TreeChangeEvent, "type">,
+  branchId?: string,
 ): void {
-  const room = rooms.get(projectId);
-  if (room) room.notifyTreeChange(event);
+  if (branchId) {
+    rooms.get(roomKey(projectId, branchId))?.notifyTreeChange(event);
+    return;
+  }
+  for (const room of getProjectRooms(projectId)) room.notifyTreeChange(event);
 }
 
-export function notifyProjectCommentsChanged(projectId: string): void {
-  const room = rooms.get(projectId);
-  if (room) room.bumpCommentsVersion();
+export function notifyProjectCommentsChanged(projectId: string, branchId?: string): void {
+  if (branchId) {
+    rooms.get(roomKey(projectId, branchId))?.bumpCommentsVersion();
+    return;
+  }
+  for (const room of getProjectRooms(projectId)) room.bumpCommentsVersion();
 }
 
-export async function releaseRoomIfEmpty(projectId: string): Promise<void> {
-  const room = rooms.get(projectId);
+/** Fan-out so every live room refreshes cross-branch leaf +/- stats. */
+export function bumpProjectLeavesVersion(projectId: string): void {
+  const v = Date.now();
+  for (const room of getProjectRooms(projectId)) room.bumpLeavesVersion(v);
+}
+
+export async function releaseRoomIfEmpty(projectId: string, branchId = "main"): Promise<void> {
+  const key = roomKey(projectId, branchId);
+  const room = rooms.get(key);
   if (!room || room.clientCount > 0) return;
-  // Keep map entry until destroy finishes so reconnect won't race with flush
-  roomCreating.delete(projectId);
+  roomCreating.delete(key);
   try {
     await room.destroy();
   } finally {
-    if (rooms.get(projectId) === room) {
-      rooms.delete(projectId);
+    if (rooms.get(key) === room) {
+      rooms.delete(key);
     }
   }
+}
+
+/**
+ * Force-teardown a branch room for prune/delete: wait for in-flight create, kick clients,
+ * skip disk flush (tip is sealed/pruned), clear snapshot.
+ */
+export async function forceDestroyBranchRoom(
+  projectId: string,
+  branchId: string,
+  opts?: { skipFlush?: boolean },
+): Promise<void> {
+  const key = roomKey(projectId, branchId);
+  sealBranchRoom(projectId, branchId);
+  await awaitRoomCreating(projectId, branchId);
+  const room = rooms.get(key);
+  roomCreating.delete(key);
+  if (room) {
+    try {
+      await room.destroy({ skipFlush: opts?.skipFlush !== false });
+    } finally {
+      if (rooms.get(key) === room) rooms.delete(key);
+    }
+  }
+  await clearCollabSnapshot(projectId, branchId);
 }

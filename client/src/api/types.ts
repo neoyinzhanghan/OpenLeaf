@@ -95,6 +95,45 @@ export type GitCommitInfo = {
   date: string;
 };
 
+export type TimelineNode = {
+  id: string;
+  branchId: string;
+  parentId: string | null;
+  /** Second parent of a merge leaf (source tip that was merged in). */
+  mergeParentId?: string | null;
+  gitHash: string;
+  message: string;
+  author: string;
+  createdAt: string;
+  legacy?: boolean;
+};
+
+export type TimelineBranch = {
+  id: string;
+  name: string;
+  sacred: boolean;
+  headNodeId: string | null;
+  createdAt: string;
+  gitRef: string;
+  /** Soft-pruned tips are omitted from the timeline view. */
+  prunedAt?: string | null;
+};
+
+export type TimelineView = {
+  version: 1;
+  activeBranchId: string;
+  viewingNodeId: string | null;
+  branches: TimelineBranch[];
+  nodes: TimelineNode[];
+  dirty: boolean;
+  canEdit: boolean;
+  activeBranch: TimelineBranch;
+  headNode: TimelineNode | null;
+  viewingNode: TimelineNode | null;
+  /** Historical commit hash when viewing a non-tip leaf; null at tip. */
+  viewingGitHash: string | null;
+};
+
 export type DiffHighlightBox = {
   page: number;
   x: number;
@@ -103,12 +142,31 @@ export type DiffHighlightBox = {
   height: number;
 };
 
+export type DiffDeletedHunk = {
+  afterLine: number;
+  lines: string[];
+};
+
+export type FileChangeDiff = {
+  file: string;
+  status: "added" | "deleted" | "modified" | "renamed";
+  fromFile?: string;
+  addedLines: number[];
+  deletedHunks: DiffDeletedHunk[];
+  additions: number;
+  deletions: number;
+  entireFile?: boolean;
+};
+
 export type DiffHighlightsResult = {
   gitEnabled: boolean;
   since: GitCommitInfo | null;
   files: number;
   lines: number;
+  additions: number;
+  deletions: number;
   boxes: DiffHighlightBox[];
+  changes: FileChangeDiff[];
   warning?: string;
 };
 

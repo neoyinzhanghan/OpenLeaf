@@ -31,9 +31,7 @@ export type PaperflowProjectConfig = {
 };
 
 const DEFAULT_PROJECT_IDENTITIES: Identity[] = [
-  { id: "alice", name: "Alice", color: "#3B82F6" },
-  { id: "bob", name: "Bob", color: "#10B981" },
-  { id: "carol", name: "Carol", color: "#F59E0B" },
+  { id: "admin-neo", name: "Admin Neo", color: "#0F766E" },
 ];
 
 export function defaultProjectIdentities(): Identity[] {
@@ -61,18 +59,22 @@ export function projectDir(id: string): string {
   return dir;
 }
 
-/** Resolve a path inside a project; rejects escapes and absolute inputs. */
-export function resolveProjectPath(id: string, relativePath: string): string {
-  const base = projectDir(id);
+/** Resolve a path inside an arbitrary project root (main dir or worktree). */
+export function resolveRootPath(rootDir: string, relativePath: string): string {
   const normalized = relativePath.replace(/\\/g, "/").replace(/^\/+/, "");
   if (normalized.split("/").some((p) => p === "..")) {
     throw Object.assign(new Error("Path escape"), { status: 400 });
   }
-  const full = path.resolve(base, normalized);
-  if (!full.startsWith(base + path.sep) && full !== base) {
+  const full = path.resolve(rootDir, normalized);
+  if (!full.startsWith(rootDir + path.sep) && full !== rootDir) {
     throw Object.assign(new Error("Path escape"), { status: 400 });
   }
   return full;
+}
+
+/** Resolve a path inside a project; rejects escapes and absolute inputs. */
+export function resolveProjectPath(id: string, relativePath: string): string {
+  return resolveRootPath(projectDir(id), relativePath);
 }
 
 export async function ensureProjectsRoot(): Promise<void> {
@@ -194,8 +196,8 @@ async function buildTree(absDir: string, relBase: string): Promise<TreeNode[]> {
   return nodes;
 }
 
-export async function getTree(id: string): Promise<TreeNode[]> {
-  const dir = projectDir(id);
+export async function getTree(id: string, rootDir?: string): Promise<TreeNode[]> {
+  const dir = rootDir ?? projectDir(id);
   if (!fsSync.existsSync(dir)) {
     throw Object.assign(new Error("Project not found"), { status: 404 });
   }
@@ -357,7 +359,7 @@ export const MAX_INLINE_FILE_BYTES = 1.5 * 1024 * 1024;
 export async function readFile(
   id: string,
   relativePath: string,
-  opts?: { forceText?: boolean; meta?: boolean },
+  opts?: { forceText?: boolean; meta?: boolean; rootDir?: string },
 ): Promise<{
   encoding: "utf8" | "base64";
   content: string;
@@ -366,7 +368,9 @@ export async function readFile(
   text: boolean;
   contentOmitted?: boolean;
 }> {
-  const full = resolveProjectPath(id, relativePath);
+  const full = opts?.rootDir
+    ? resolveRootPath(opts.rootDir, relativePath)
+    : resolveProjectPath(id, relativePath);
   if (!fsSync.existsSync(full) || fsSync.statSync(full).isDirectory()) {
     throw Object.assign(new Error("File not found"), { status: 404 });
   }
@@ -416,8 +420,11 @@ export async function writeFile(
   relativePath: string,
   content: string,
   encoding: "utf8" | "base64" = "utf8",
+  rootDir?: string,
 ): Promise<void> {
-  const full = resolveProjectPath(id, relativePath);
+  const full = rootDir
+    ? resolveRootPath(rootDir, relativePath)
+    : resolveProjectPath(id, relativePath);
   await fs.mkdir(path.dirname(full), { recursive: true });
   if (encoding === "base64") {
     await fs.writeFile(full, Buffer.from(content, "base64"));
@@ -434,29 +441,34 @@ function assertWritableRel(relativePath: string): string {
   return normalized;
 }
 
-export async function deletePath(id: string, relativePath: string): Promise<void> {
+export async function deletePath(id: string, relativePath: string, rootDir?: string): Promise<void> {
   const rel = assertWritableRel(relativePath);
   if (rel === "openleaf.json") {
     throw Object.assign(new Error("Refusing to delete openleaf.json"), { status: 400 });
   }
-  const full = resolveProjectPath(id, rel);
+  const full = rootDir ? resolveRootPath(rootDir, rel) : resolveProjectPath(id, rel);
   if (!fsSync.existsSync(full)) {
     throw Object.assign(new Error("Path not found"), { status: 404 });
   }
   await fs.rm(full, { recursive: true, force: true });
 }
 
-export async function mkdirPath(id: string, relativePath: string): Promise<void> {
+export async function mkdirPath(id: string, relativePath: string, rootDir?: string): Promise<void> {
   const rel = assertWritableRel(relativePath);
-  const full = resolveProjectPath(id, rel);
+  const full = rootDir ? resolveRootPath(rootDir, rel) : resolveProjectPath(id, rel);
   await fs.mkdir(full, { recursive: true });
 }
 
-export async function renamePath(id: string, from: string, to: string): Promise<void> {
+export async function renamePath(
+  id: string,
+  from: string,
+  to: string,
+  rootDir?: string,
+): Promise<void> {
   const fromRel = assertWritableRel(from);
   const toRel = assertWritableRel(to);
-  const fromFull = resolveProjectPath(id, fromRel);
-  const toFull = resolveProjectPath(id, toRel);
+  const fromFull = rootDir ? resolveRootPath(rootDir, fromRel) : resolveProjectPath(id, fromRel);
+  const toFull = rootDir ? resolveRootPath(rootDir, toRel) : resolveProjectPath(id, toRel);
   if (!fsSync.existsSync(fromFull)) {
     throw Object.assign(new Error("Source not found"), { status: 404 });
   }
@@ -467,9 +479,14 @@ export async function renamePath(id: string, from: string, to: string): Promise<
   await fs.rename(fromFull, toFull);
 }
 
-export async function createEmptyFile(id: string, relativePath: string, content = ""): Promise<void> {
+export async function createEmptyFile(
+  id: string,
+  relativePath: string,
+  content = "",
+  rootDir?: string,
+): Promise<void> {
   const rel = assertWritableRel(relativePath);
-  const full = resolveProjectPath(id, rel);
+  const full = rootDir ? resolveRootPath(rootDir, rel) : resolveProjectPath(id, rel);
   if (fsSync.existsSync(full)) {
     throw Object.assign(new Error("File already exists"), { status: 409 });
   }
@@ -544,17 +561,19 @@ async function copyDir(src: string, dest: string): Promise<void> {
   }
 }
 
-export function outputDirAbs(id: string): string {
+export function outputDirAbs(id: string, rootDir?: string): string {
   const cfg = loadConfig();
-  return resolveProjectPath(id, cfg.latex.outputDir);
+  const base = rootDir ?? projectDir(id);
+  const out = cfg.latex.outputDir;
+  return path.isAbsolute(out) ? out : path.resolve(base, out);
 }
 
-export function pdfPathAbs(id: string, mainFile: string): string {
+export function pdfPathAbs(id: string, mainFile: string, rootDir?: string): string {
   const base = path.basename(mainFile, path.extname(mainFile));
-  return path.join(outputDirAbs(id), `${base}.pdf`);
+  return path.join(outputDirAbs(id, rootDir), `${base}.pdf`);
 }
 
-export function synctexPathAbs(id: string, mainFile: string): string {
+export function synctexPathAbs(id: string, mainFile: string, rootDir?: string): string {
   const base = path.basename(mainFile, path.extname(mainFile));
-  return path.join(outputDirAbs(id), `${base}.synctex.gz`);
+  return path.join(outputDirAbs(id, rootDir), `${base}.synctex.gz`);
 }

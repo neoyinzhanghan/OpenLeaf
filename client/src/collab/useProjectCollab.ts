@@ -24,6 +24,8 @@ export type ProjectCollab = {
   treeEventPaths: string[];
   /** Bumped when comments.json changes on the server (live panel refresh). */
   commentsVersion: number;
+  /** Cross-branch leaf +/- bump — any branch flush in this project. */
+  leavesVersion: number;
 };
 
 function collabWsBase(): string {
@@ -34,8 +36,13 @@ function collabWsBase(): string {
 /**
  * @param fixedIdentity When set (guest via share link), the identity is fixed by
  *   the server-side sign-in and the project identity list is not consulted.
+ * @param branchId Collab room / working copy for this timeline branch (default main).
  */
-export function useProjectCollab(projectId: string | undefined, fixedIdentity?: Identity | null): ProjectCollab {
+export function useProjectCollab(
+  projectId: string | undefined,
+  fixedIdentity?: Identity | null,
+  branchId = "main",
+): ProjectCollab {
   const [identities, setIdentities] = useState<Identity[]>([]);
   const [identityId, setIdentityIdState] = useState<string | null>(null);
   const [status, setStatus] = useState<CollabStatus>("disconnected");
@@ -44,6 +51,7 @@ export function useProjectCollab(projectId: string | undefined, fixedIdentity?: 
   const [treeVersion, setTreeVersion] = useState(0);
   const [treeEventPaths, setTreeEventPaths] = useState<string[]>([]);
   const [commentsVersion, setCommentsVersion] = useState(0);
+  const [leavesVersion, setLeavesVersion] = useState(0);
   const [session, setSession] = useState<{
     doc: Y.Doc;
     awareness: Awareness;
@@ -115,7 +123,7 @@ export function useProjectCollab(projectId: string | undefined, fixedIdentity?: 
 
     const doc = new Y.Doc();
     const provider = new WebsocketProvider(collabWsBase(), projectId, doc, {
-      params: { identity: identity.id },
+      params: { identity: identity.id, branch: branchId || "main" },
       connect: true,
       disableBc: true,
     });
@@ -170,6 +178,8 @@ export function useProjectCollab(projectId: string | undefined, fixedIdentity?: 
       }
       const cv = meta.get("commentsVersion");
       if (typeof cv === "number") setCommentsVersion(cv);
+      const lv = meta.get("leavesVersion");
+      if (typeof lv === "number") setLeavesVersion(lv);
     };
     const onFiles = () => setFilesTick((n) => n + 1);
 
@@ -191,7 +201,7 @@ export function useProjectCollab(projectId: string | undefined, fixedIdentity?: 
       doc.destroy();
       setSession(null);
     };
-  }, [projectId, identity?.id, identity?.name, identity?.color]);
+  }, [projectId, branchId, identity?.id, identity?.name, identity?.color]);
 
   const getFileText = useCallback(
     (filePath: string): Y.Text | null => {
@@ -210,7 +220,7 @@ export function useProjectCollab(projectId: string | undefined, fixedIdentity?: 
       const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/collab/ensure`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: filePath }),
+        body: JSON.stringify({ path: filePath, branchId }),
       });
       if (!res.ok) return null;
       for (let i = 0; i < 40; i += 1) {
@@ -223,7 +233,7 @@ export function useProjectCollab(projectId: string | undefined, fixedIdentity?: 
       }
       return session.doc.getMap<Y.Text>("files").get(filePath) ?? null;
     },
-    [projectId, session],
+    [projectId, branchId, session],
   );
 
   return {
@@ -241,12 +251,13 @@ export function useProjectCollab(projectId: string | undefined, fixedIdentity?: 
     treeVersion,
     treeEventPaths,
     commentsVersion,
+    leavesVersion,
   };
 }
 
 export async function flushCollab(
   projectId: string,
-  opts?: { identityId?: string; message?: string },
+  opts?: { identityId?: string; message?: string; branchId?: string },
 ): Promise<{ ok: boolean; git?: { committed: boolean; hash: string | null; message: string } }> {
   const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/collab/flush`, {
     method: "POST",
@@ -257,6 +268,7 @@ export async function flushCollab(
     body: JSON.stringify({
       identityId: opts?.identityId,
       message: opts?.message ?? "Save & sync",
+      branchId: opts?.branchId ?? "main",
     }),
   });
   if (!res.ok) {

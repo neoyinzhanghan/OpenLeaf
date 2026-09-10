@@ -111,7 +111,26 @@ function guestRouteDenial(req: Request, session: ShareSession): { status: number
     return m === "GET" ? null : { status: 403, error: "Identities are managed by the host" };
   }
   if (sub.startsWith("/history/restore")) return { status: 403, error: "Restoring history is host-only" };
-  if (sub.startsWith("/history")) {
+  if (
+    sub.startsWith("/timeline/fork") ||
+    sub.startsWith("/timeline/checkout") ||
+    sub.startsWith("/timeline/prune") ||
+    sub.startsWith("/timeline/unprune") ||
+    sub.startsWith("/timeline/trash")
+  ) {
+    return { status: 403, error: "Branch navigation and forking are host-only" };
+  }
+  if (sub.startsWith("/timeline/merge")) {
+    return { status: 403, error: "Merging branches is host-only" };
+  }
+  if (sub.startsWith("/timeline/commit")) {
+    if (s.readOnly) return { status: 403, error: "This link is read-only" };
+    return null;
+  }
+  if (sub.startsWith("/branch-leaves") || sub.startsWith("/diff-highlights")) {
+    return null;
+  }
+  if (sub.startsWith("/timeline") || sub.startsWith("/history")) {
     return s.allowHistory ? null : { status: 403, error: "History is not shared for this link" };
   }
   if (sub.startsWith("/compile")) {
@@ -151,6 +170,11 @@ export function shareGate(req: Request, res: Response, next: NextFunction): void
     return;
   }
   if (req.path.startsWith("/api/guest") || req.path === "/api/health") {
+    next();
+    return;
+  }
+  // AI collaborator tools authenticate with their own Bearer token (not the guest cookie).
+  if (req.path.startsWith("/api/ai/")) {
     next();
     return;
   }

@@ -33,18 +33,25 @@ export type PdfDiffOverlay = {
 
 export type PdfDiffHighlightControls = {
   enabled: boolean;
-  since: string;
-  commits: Array<{ hash: string; shortHash: string; message: string; date: string }>;
+  /** Baseline commit hash to compare against */
+  baselineHash: string;
+  /** Short human label for the baseline (message / hash) */
+  baselineLabel: string;
+  /** @deprecated prefer additions/deletions */
   lineCount: number | null;
   fileCount: number | null;
+  additions: number | null;
+  deletions: number | null;
   loading?: boolean;
   warning?: string | null;
   onEnabledChange: (on: boolean) => void;
-  onSinceChange: (hash: string) => void;
+  onPickBaseline: () => void;
 };
 
 type Props = {
   url: string | null;
+  /** Shown when there is no PDF URL yet (e.g. auto-building after a branch switch). */
+  emptyHint?: string | null;
   onReverseSearch?: (page: number, x: number, y: number) => void;
   /** Shift+click PDF → create a comment at the SyncTeX source hit */
   onCommentAt?: (page: number, x: number, y: number) => void;
@@ -63,24 +70,6 @@ type ScrollAnchor = {
 function clampScale(scale: number): number {
   const stepped = Math.round(scale / SCALE_STEP) * SCALE_STEP;
   return Math.min(MAX_SCALE, Math.max(MIN_SCALE, Number(stepped.toFixed(1))));
-}
-
-function formatDiffWhen(iso: string): string {
-  try {
-    return new Date(iso).toLocaleString(undefined, {
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  } catch {
-    return iso;
-  }
-}
-
-function truncateMsg(msg: string, max = 36): string {
-  const t = msg.trim() || "snapshot";
-  return t.length <= max ? t : `${t.slice(0, max - 1)}…`;
 }
 
 function captureScrollAnchor(scroller: HTMLElement, container: HTMLElement): ScrollAnchor | null {
@@ -122,6 +111,7 @@ function releaseCanvas(canvas: HTMLCanvasElement): void {
 
 export function PdfViewer({
   url,
+  emptyHint,
   onReverseSearch,
   onCommentAt,
   highlight,
@@ -223,7 +213,13 @@ export function PdfViewer({
         setDocVersion((v) => v + 1);
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to load PDF");
+          setError(
+            err instanceof Error
+              ? /missing pdf|unexpected server response|404/i.test(err.message)
+                ? "No PDF on this branch yet — click Compile (each branch has its own build)."
+                : err.message
+              : "Failed to load PDF",
+          );
           setPageCount(0);
         }
       } finally {
@@ -534,10 +530,10 @@ export function PdfViewer({
           PDF
         </span>
         <span
-          className="status-pill"
-          title="Click PDF → source · Shift+click → comment · Ctrl/Cmd+Click source → PDF · Ctrl/Cmd+scroll to zoom"
+          className="status-pill pdf-comment-hint"
+          title="Shift+click anywhere in the PDF to start a comment at the matching source line"
         >
-          SyncTeX
+          Shift+click → comment
         </span>
         {diffHighlight && (
           <div className="pdf-diff-controls">
@@ -545,52 +541,50 @@ export function PdfViewer({
               type="button"
               className={`btn btn-ghost${diffHighlight.enabled ? " pdf-diff-toggle-on" : ""}`}
               aria-pressed={diffHighlight.enabled}
-              title="Highlight manuscript text added since a git snapshot. Overlay only — the downloaded PDF stays clean."
+              title="Show differences between what you’re viewing and a baseline leaf on the timeline"
               onClick={() => diffHighlight.onEnabledChange(!diffHighlight.enabled)}
             >
-              {diffHighlight.enabled ? "Additions on" : "Highlight additions"}
+              {diffHighlight.enabled ? "Differences on" : "Differences"}
             </button>
             {diffHighlight.enabled && (
               <>
-                <label className="pdf-diff-since">
-                  <span>since</span>
-                  <select
-                    value={diffHighlight.since}
-                    onChange={(e) => diffHighlight.onSinceChange(e.target.value)}
-                    aria-label="Highlight additions since this snapshot"
-                    disabled={diffHighlight.commits.length === 0}
-                  >
-                    {diffHighlight.commits.length === 0 ? (
-                      <option value="">No snapshots</option>
-                    ) : (
-                      <>
-                        {diffHighlight.since &&
-                          !diffHighlight.commits.some((c) => c.hash === diffHighlight.since) && (
-                            <option value={diffHighlight.since}>
-                              {diffHighlight.since.slice(0, 7)}
-                            </option>
-                          )}
-                        {diffHighlight.commits.map((c) => (
-                          <option key={c.hash} value={c.hash}>
-                            {c.shortHash} · {formatDiffWhen(c.date)} · {truncateMsg(c.message)}
-                          </option>
-                        ))}
-                      </>
-                    )}
-                  </select>
-                </label>
+                <button
+                  type="button"
+                  className="btn btn-ghost pdf-diff-compare-btn"
+                  title="Pick a timeline leaf to compare against"
+                  onClick={() => diffHighlight.onPickBaseline()}
+                >
+                  <span className="pdf-diff-compare-kicker">Compare to</span>
+                  <span className="pdf-diff-compare-label">
+                    {diffHighlight.baselineLabel ||
+                      (diffHighlight.baselineHash
+                        ? diffHighlight.baselineHash.slice(0, 7)
+                        : "Pick a leaf…")}
+                  </span>
+                </button>
                 <span
-                  className="status-pill"
-                  title={diffHighlight.warning ?? "Added .tex lines mapped onto the PDF via SyncTeX"}
+                  className="status-pill pdf-diff-stat"
+                  title={
+                    diffHighlight.warning ??
+                    "Editor: +/− line decorations. PDF: SyncTeX boxes for added .tex lines on the live tip."
+                  }
                 >
                   {diffHighlight.loading
                     ? "…"
-                    : diffHighlight.lineCount != null
-                      ? `${diffHighlight.lineCount} line${diffHighlight.lineCount === 1 ? "" : "s"}${
-                          diffHighlight.fileCount != null && diffHighlight.fileCount > 0
-                            ? ` · ${diffHighlight.fileCount} file${diffHighlight.fileCount === 1 ? "" : "s"}`
-                            : ""
-                        }`
+                    : diffHighlight.additions != null && diffHighlight.deletions != null
+                      ? (
+                          <>
+                            <span className="pdf-diff-stat-add">
+                              +{diffHighlight.additions}
+                            </span>
+                            <span className="pdf-diff-stat-del">
+                              −{diffHighlight.deletions}
+                            </span>
+                            {diffHighlight.fileCount != null && diffHighlight.fileCount > 0
+                              ? ` · ${diffHighlight.fileCount} file${diffHighlight.fileCount === 1 ? "" : "s"}`
+                              : ""}
+                          </>
+                        )
                       : "—"}
                 </span>
               </>
@@ -627,7 +621,12 @@ export function PdfViewer({
           {fullscreen ? "Exit full screen" : "Full screen"}
         </button>
       </div>
-      {!url && <div className="empty-hint">Compile to preview the PDF.</div>}
+      {!url && (
+        <div className="empty-hint empty-hint-card pdf-empty">
+          <strong>{emptyHint ? "PDF not ready" : "No PDF yet"}</strong>
+          <p>{emptyHint || "Compile the project to build a preview for this branch."}</p>
+        </div>
+      )}
       {loading && <div className="empty-hint">Loading PDF…</div>}
       {error && (
         <div className="error-banner" style={{ margin: "1rem" }}>

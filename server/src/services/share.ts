@@ -28,7 +28,7 @@ export type ShareSettings = {
   readOnly: boolean;
   allowCompile: boolean;
   allowDownload: boolean;
-  /** Guests may view the git history (restore is always host-only). */
+  /** Guests may view the timeline tree (fork/checkout of non-bound branches stay host-only). */
   allowHistory: boolean;
 };
 
@@ -46,9 +46,30 @@ export type ShareStatus = "starting" | "active" | "stopped" | "error";
 
 export type ShareEvent = { at: number; text: string };
 
+/** AI sandbox bound to this share tip (eager-forked `ai/…` branch). Defined fully in aiShare.ts. */
+export type ShareAiCollaborator = {
+  id: string;
+  token: string;
+  slug: string;
+  branchId: string;
+  branchName: string;
+  parentBranchId: string;
+  parentBranchName: string;
+  parentTipNodeId: string;
+  parentTipHash: string;
+  createdAt: number;
+  expiresAt: number | null;
+  revoked: boolean;
+  compileCount: number;
+  writeCount: number;
+};
+
 export type ShareSession = {
   id: string;
   projectId: string;
+  /** Guests on this link may only collaborate / commit on this branch. */
+  branchId: string;
+  branchName: string;
   hostname: string;
   url: string;
   username: string;
@@ -58,7 +79,6 @@ export type ShareSession = {
   secret: Buffer;
   createdAt: number;
   settings: ShareSettings;
-  /** ip -> first seen */
   /** Distinct client addresses admitted, with first-seen time. */
   ips: Map<string, number>;
   /** Addresses turned away by the device cap (never admitted). */
@@ -76,6 +96,8 @@ export type ShareSession = {
   logTail: string[];
   /** Host-facing activity feed: joins, limits, extensions. */
   events: ShareEvent[];
+  /** AI collaborator sandboxes forked from this share’s tip (host-only mint). */
+  aiCollaborators: ShareAiCollaborator[];
 };
 
 export type ShareError = Error & { status: number };
@@ -84,8 +106,12 @@ function shareError(status: number, message: string): ShareError {
   return Object.assign(new Error(message), { status });
 }
 
-const sessionsByProject = new Map<string, ShareSession>();
+const sessionsByKey = new Map<string, ShareSession>();
 const sessionsByHost = new Map<string, ShareSession>();
+
+function shareKey(projectId: string, branchId: string): string {
+  return `${projectId}::${branchId}`;
+}
 
 const GUEST_COLORS = [
   "#EF4444",
@@ -206,6 +232,8 @@ export function hostView(s: ShareSession) {
   return {
     id: s.id,
     projectId: s.projectId,
+    branchId: s.branchId,
+    branchName: s.branchName,
     status: s.status,
     error: s.error,
     url: s.url,
@@ -229,6 +257,53 @@ export function hostView(s: ShareSession) {
     guests: Array.from(s.guests.values()).map((g) => ({ ...g })),
     logTail: s.logTail.slice(-12),
     events: s.events.slice(-40),
+    aiCollaborators: (s.aiCollaborators ?? []).map((ai) => {
+      const expired = (ai.expiresAt != null && Date.now() > ai.expiresAt) || isExpired(s);
+      const dead = ai.revoked || expired || s.status === "stopped" || s.status === "error";
+      const aiUrl = dead || !s.url ? null : `${s.url}/ai/${ai.token}`;
+      return {
+        id: ai.id,
+        slug: ai.slug,
+        branchId: ai.branchId,
+        branchName: ai.branchName,
+        parentBranchId: ai.parentBranchId,
+        parentBranchName: ai.parentBranchName,
+        parentTipHash: ai.parentTipHash,
+        /** Host may re-copy while the link is live; cleared after revoke/expiry. */
+        token: dead ? null : ai.token,
+        aiUrl,
+        starterPrompt:
+          aiUrl == null || dead
+            ? null
+            : [
+                "You are an OpenLeaf branch editor with HTTP tool access.",
+                "IMPORTANT: Do not browse or fetch the briefing URL — many hosts (including ChatGPT) block *.trycloudflare.com. Use the API below directly instead.",
+                `Parent branch “${ai.parentBranchName}” is read-only for you.`,
+                `You may only modify the sandbox branch “${ai.branchName}”.`,
+                `API base: ${s.url}/api/ai/v1`,
+                `On every request set header: Authorization: Bearer ${ai.token}`,
+                "Tools (paths relative to API base):",
+                "GET /context — parent + sandbox tip, dirty flag, file list",
+                "GET /files — list files",
+                "GET /files/{path} — read text file",
+                "PUT /files/{path}  body {\"content\":\"...\"} — write full file",
+                "POST /apply_patch  body {\"patches\":[{\"path\":\"...\",\"content\":\"...\"}]} — each content is the FULL new file (not a unified diff)",
+                "GET /search?q=... — search tex/md/txt",
+                "GET /diff — changes vs parent tip (what the human reviews)",
+                "POST /compile — build PDF (quota-limited)",
+                "POST /commit  body {\"message\":\"...\"} — intentional commit on your sandbox only",
+                "GET /status — waiting_for_human_review + context",
+                "Workflow: GET /context → read files → apply_patch/write → GET /diff → POST /commit → summarize.",
+                "Never print the bearer token in your replies. Never write the parent branch.",
+                `Optional human briefing page (may be blocked): ${aiUrl}`,
+              ].join("\n"),
+        createdAt: ai.createdAt,
+        expiresAt: ai.expiresAt,
+        revoked: ai.revoked || expired,
+        compileCount: ai.compileCount,
+        writeCount: ai.writeCount,
+      };
+    }),
   };
 }
 
@@ -238,8 +313,12 @@ export type ShareUpdate = Partial<Pick<ShareSettings, "expiresAt" | "maxIps" | "
  * Live adjustment of a running session: extend (or shorten) the deadline and
  * raise/lower the device and guest caps without rotating link or credentials.
  */
-export function updateShare(projectId: string, patch: ShareUpdate): ShareSession {
-  const s = sessionsByProject.get(projectId);
+export function updateShare(
+  projectId: string,
+  patch: ShareUpdate,
+  branchId?: string,
+): ShareSession {
+  const s = getShare(projectId, branchId);
   if (!s || s.status !== "active") throw shareError(404, "No active share session for this project");
   const next = normalizeSettings({ ...s.settings, ...patch });
   const changes: string[] = [];
@@ -252,11 +331,11 @@ export function updateShare(projectId: string, patch: ShareUpdate): ShareSession
       changes.push("removed the deadline (indefinite)");
     } else if (s.settings.expiresAt === null) {
       changes.push(`set a deadline of ${humanDuration(next.expiresAt - Date.now())}`);
-      armExpiry(s, projectId, next.expiresAt);
+      armExpiry(s, next.expiresAt);
     } else {
       const delta = next.expiresAt - s.settings.expiresAt;
       changes.push(`${delta > 0 ? "extended" : "shortened"} the deadline by ${humanDuration(Math.abs(delta))}`);
-      armExpiry(s, projectId, next.expiresAt);
+      armExpiry(s, next.expiresAt);
     }
   }
   if (next.maxIps !== s.settings.maxIps) changes.push(`device limit ${s.settings.maxIps} → ${next.maxIps}`);
@@ -264,7 +343,7 @@ export function updateShare(projectId: string, patch: ShareUpdate): ShareSession
   s.settings = next;
   if (changes.length) {
     logEvent(s, `Host ${changes.join("; ")}`);
-    console.log(`[share] ${projectId}: ${changes.join("; ")}`);
+    console.log(`[share] ${projectId}/${s.branchId}: ${changes.join("; ")}`);
   }
   return s;
 }
@@ -273,6 +352,8 @@ export function updateShare(projectId: string, patch: ShareUpdate): ShareSession
 export function guestView(s: ShareSession) {
   return {
     projectId: s.projectId,
+    branchId: s.branchId,
+    branchName: s.branchName,
     expiresAt: s.settings.expiresAt,
     readOnly: s.settings.readOnly,
     allowCompile: s.settings.allowCompile,
@@ -281,12 +362,19 @@ export function guestView(s: ShareSession) {
   };
 }
 
-export function getShare(projectId: string): ShareSession | undefined {
-  return sessionsByProject.get(projectId);
+export function getShare(projectId: string, branchId?: string): ShareSession | undefined {
+  if (branchId) return sessionsByKey.get(shareKey(projectId, branchId));
+  // Prefer an active session; otherwise any for this project.
+  const all = listSharesForProject(projectId);
+  return all.find((s) => s.status === "active" || s.status === "starting") ?? all[0];
 }
 
 export function listShares(): ShareSession[] {
-  return Array.from(sessionsByProject.values());
+  return Array.from(sessionsByKey.values());
+}
+
+export function listSharesForProject(projectId: string): ShareSession[] {
+  return listShares().filter((s) => s.projectId === projectId);
 }
 
 export function getShareByHost(hostHeader: string | undefined): ShareSession | undefined {
@@ -299,7 +387,7 @@ export function isExpired(s: ShareSession): boolean {
   return s.settings.expiresAt !== null && Date.now() >= s.settings.expiresAt;
 }
 
-function armExpiry(s: ShareSession, projectId: string, expiresAt: number): void {
+function armExpiry(s: ShareSession, expiresAt: number): void {
   if (s.expiryTimer) {
     clearTimeout(s.expiryTimer);
     s.expiryTimer = null;
@@ -310,7 +398,7 @@ function armExpiry(s: ShareSession, projectId: string, expiresAt: number): void 
   }
   s.expiryTimer = setTimeout(() => {
     logEvent(s, "Session expired");
-    void stopShare(projectId, "expired");
+    void stopShare(s.projectId, "expired", s.branchId);
   }, Math.min(expiresAt - Date.now(), 2 ** 31 - 1));
 }
 
@@ -323,7 +411,7 @@ function humanDuration(ms: number): string {
   return `${Math.round(h / 24)} days`;
 }
 
-function logEvent(s: ShareSession, text: string) {
+export function logEvent(s: ShareSession, text: string) {
   s.events.push({ at: Date.now(), text });
   if (s.events.length > 200) s.events.splice(0, s.events.length - 200);
 }
@@ -384,20 +472,56 @@ function startDnsProbe(s: ShareSession): void {
 
 const TUNNEL_URL_RE = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/i;
 
-export async function startShare(projectId: string, input: Partial<ShareSettings> | undefined): Promise<ShareSession> {
+export type StartShareInput = Partial<ShareSettings> & {
+  branchId: string;
+  branchName?: string;
+  /** Host acknowledges warning when sharing the sacred main branch. */
+  allowMainShare?: boolean;
+};
+
+export async function startShare(projectId: string, input: StartShareInput): Promise<ShareSession> {
   const dir = projectDir(projectId);
   if (!fs.existsSync(dir)) throw shareError(404, "Project not found");
-  const existing = sessionsByProject.get(projectId);
-  if (existing && (existing.status === "active" || existing.status === "starting")) {
-    throw shareError(409, "This project already has an active share session");
+
+  const branchId = (input.branchId || "").trim();
+  if (!branchId) throw shareError(400, "branchId is required — each public link is bound to one branch");
+  const branchName = (input.branchName || branchId).trim();
+
+  if (branchId === "main" && !input.allowMainShare) {
+    throw shareError(
+      400,
+      "Sharing the sacred main branch requires explicit confirmation (allowMainShare). Prefer a feature branch link.",
+    );
   }
-  const settings = normalizeSettings(input);
+
+  try {
+    const { loadTimeline, getBranch, isBranchPruned } = await import("./timeline.js");
+    const timeline = await loadTimeline(projectId);
+    const branch = getBranch(timeline, branchId);
+    if (isBranchPruned(branch)) {
+      throw shareError(410, `Tip “${branch.name}” was pruned and cannot be shared`);
+    }
+  } catch (e) {
+    if (e && typeof e === "object" && "status" in e) throw e;
+    /* timeline optional during early failures — still require valid branchId via share */
+  }
+
+  const key = shareKey(projectId, branchId);
+  const existing = sessionsByKey.get(key);
+  if (existing && (existing.status === "active" || existing.status === "starting")) {
+    throw shareError(409, `Branch “${branchName}” already has an active public link (one link per branch)`);
+  }
+
+  const { branchId: _b, branchName: _n, allowMainShare: _a, ...settingsIn } = input;
+  const settings = normalizeSettings(settingsIn);
   const bin = findCloudflared();
   const port = loadConfig().port;
 
   const session: ShareSession = {
     id: crypto.randomUUID(),
     projectId,
+    branchId,
+    branchName,
     hostname: "",
     url: "",
     username: makeUsername(),
@@ -417,8 +541,9 @@ export async function startShare(projectId: string, input: Partial<ShareSettings
     dnsReady: false,
     logTail: [],
     events: [],
+    aiCollaborators: [],
   };
-  sessionsByProject.set(projectId, session);
+  sessionsByKey.set(key, session);
 
   const proc = spawn(
     bin,
@@ -484,19 +609,19 @@ export async function startShare(projectId: string, input: Partial<ShareSettings
     session.error = err instanceof Error ? err.message : String(err);
     killProc(session);
     teardown(session);
-    sessionsByProject.delete(projectId);
+    sessionsByKey.delete(key);
     throw shareError(502, `Could not start the public link: ${session.error}`);
   }
 
   session.status = "active";
   startDnsProbe(session);
   if (settings.expiresAt === null) {
-    logEvent(session, "Link opened with no expiry");
-    console.log(`[share] ${projectId} -> ${session.url} (indefinite)`);
+    logEvent(session, `Link opened on branch “${branchName}” with no expiry`);
+    console.log(`[share] ${projectId}/${branchId} -> ${session.url} (indefinite)`);
   } else {
-    logEvent(session, `Link opened for ${humanDuration(settings.expiresAt - Date.now())}`);
-    armExpiry(session, projectId, settings.expiresAt);
-    console.log(`[share] ${projectId} -> ${session.url} (expires ${new Date(settings.expiresAt).toISOString()})`);
+    logEvent(session, `Link opened on branch “${branchName}” for ${humanDuration(settings.expiresAt - Date.now())}`);
+    armExpiry(session, settings.expiresAt);
+    console.log(`[share] ${projectId}/${branchId} -> ${session.url} (expires ${new Date(settings.expiresAt).toISOString()})`);
   }
   return session;
 }
@@ -530,20 +655,34 @@ function teardown(s: ShareSession) {
   s.secret = crypto.randomBytes(32);
 }
 
-export async function stopShare(projectId: string, reason = "stopped by host"): Promise<boolean> {
-  const s = sessionsByProject.get(projectId);
+export async function stopShare(
+  projectId: string,
+  reason = "stopped by host",
+  branchId?: string,
+): Promise<boolean> {
+  const s = getShare(projectId, branchId);
   if (!s) return false;
   logEvent(s, `Stopping: ${reason}`);
+  // Drop AI bearer tokens so tunnel-stop also ends AI access.
+  try {
+    const { unregisterAiToken } = await import("./aiShare.js");
+    for (const ai of s.aiCollaborators ?? []) {
+      ai.revoked = true;
+      unregisterAiToken(ai.token);
+    }
+  } catch {
+    /* aiShare may be unavailable during early boot */
+  }
   s.status = "stopped";
   killProc(s);
   teardown(s);
-  sessionsByProject.delete(projectId);
-  console.log(`[share] ${projectId} stopped (${reason})`);
+  sessionsByKey.delete(shareKey(s.projectId, s.branchId));
+  console.log(`[share] ${projectId}/${s.branchId} stopped (${reason})`);
   return true;
 }
 
-export function revokeGuest(projectId: string, guestId: string): boolean {
-  const s = sessionsByProject.get(projectId);
+export function revokeGuest(projectId: string, guestId: string, branchId?: string): boolean {
+  const s = getShare(projectId, branchId);
   const g = s?.guests.get(guestId);
   if (!s || !g) return false;
   g.revoked = true;
@@ -552,7 +691,9 @@ export function revokeGuest(projectId: string, guestId: string): boolean {
 }
 
 export function stopAllShares(): void {
-  for (const id of Array.from(sessionsByProject.keys())) void stopShare(id, "server shutdown");
+  for (const s of Array.from(sessionsByKey.values())) {
+    void stopShare(s.projectId, "server shutdown", s.branchId);
+  }
 }
 
 for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
@@ -563,7 +704,7 @@ for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
   });
 }
 process.once("exit", () => {
-  for (const s of sessionsByProject.values()) killProc(s);
+  for (const s of sessionsByKey.values()) killProc(s);
 });
 
 /* ------------------------------------------------------------------ */

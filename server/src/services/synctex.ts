@@ -190,13 +190,14 @@ export async function reverseSynctex(
   page: number,
   x: number,
   y: number,
+  rootDir?: string,
 ): Promise<SynctexReverseHit | null> {
   const cfg = await readProjectConfig(id);
-  const synctex = synctexPathAbs(id, cfg.mainFile);
-  const pdf = pdfPathAbs(id, cfg.mainFile);
+  const cwd = rootDir ?? projectDir(id);
+  const synctex = synctexPathAbs(id, cfg.mainFile, cwd);
+  const pdf = pdfPathAbs(id, cfg.mainFile, cwd);
   if (!fs.existsSync(synctex) || !fs.existsSync(pdf)) return null;
 
-  const cwd = projectDir(id);
   // Prefer the official synctex binary — far more accurate than our parser
   const cli = await trySynctexEditCli(cwd, pdf, page, x, y);
   if (cli) return cli;
@@ -251,13 +252,14 @@ export async function forwardSynctex(
   file: string,
   line: number,
   column = 1,
+  rootDir?: string,
 ): Promise<SynctexForwardHit | null> {
   const cfg = await readProjectConfig(id);
-  const synctex = synctexPathAbs(id, cfg.mainFile);
-  const pdf = pdfPathAbs(id, cfg.mainFile);
+  const cwd = rootDir ?? projectDir(id);
+  const synctex = synctexPathAbs(id, cfg.mainFile, cwd);
+  const pdf = pdfPathAbs(id, cfg.mainFile, cwd);
   if (!fs.existsSync(synctex) || !fs.existsSync(pdf)) return null;
 
-  const cwd = projectDir(id);
   const cli = await trySynctexViewCli(cwd, pdf, file, line, column);
   if (cli) return cli;
 
@@ -330,14 +332,15 @@ function dropContainedBoxes(boxes: SynctexBox[]): SynctexBox[] {
 export async function boxesForFileLines(
   id: string,
   fileLines: Map<string, Set<number> | "all">,
+  rootDir?: string,
 ): Promise<SynctexBox[]> {
   if (fileLines.size === 0) return [];
   const cfg = await readProjectConfig(id);
-  const synctex = synctexPathAbs(id, cfg.mainFile);
-  const pdf = pdfPathAbs(id, cfg.mainFile);
+  const cwd = rootDir ?? projectDir(id);
+  const synctex = synctexPathAbs(id, cfg.mainFile, cwd);
+  const pdf = pdfPathAbs(id, cfg.mainFile, cwd);
   if (!fs.existsSync(synctex) || !fs.existsSync(pdf)) return [];
 
-  const cwd = projectDir(id);
   const parsed = parseSynctexFile(synctex, cwd);
   if (!parsed) return [];
 

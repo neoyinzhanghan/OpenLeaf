@@ -23,7 +23,8 @@ function makeProject(): { id: string; dir: string } {
 }
 
 async function openRoom(id: string): Promise<InstanceType<typeof ProjectRoom>> {
-  const room = new ProjectRoom(id, seq);
+  const rootDir = path.join(projectsRoot, id);
+  const room = new ProjectRoom(id, "main", rootDir, seq);
   await room.whenReady();
   return room;
 }

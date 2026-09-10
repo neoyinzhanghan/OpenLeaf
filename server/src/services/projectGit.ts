@@ -4,7 +4,7 @@ import fsSync from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 import { loadConfig } from "../config.js";
-import { projectDir, resolveProjectPath } from "./projectFs.js";
+import { projectDir, resolveProjectPath, resolveRootPath } from "./projectFs.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -50,9 +50,9 @@ function gitEnv(author?: GitAuthor): NodeJS.ProcessEnv {
 async function runGit(
   id: string,
   args: string[],
-  opts?: { author?: GitAuthor; allowFailure?: boolean },
+  opts?: { author?: GitAuthor; allowFailure?: boolean; cwd?: string },
 ): Promise<{ stdout: string; stderr: string; code: number }> {
-  const cwd = projectDir(id);
+  const cwd = opts?.cwd ?? projectDir(id);
   try {
     const { stdout, stderr } = await execFileAsync("git", args, {
       cwd,
@@ -344,6 +344,67 @@ export type ParsedAddedDiff = {
   newFiles: Set<string>;
 };
 
+export type DiffDeletedHunk = {
+  /** Insert view zone after this 1-based line in the *new* file (0 = before first line). */
+  afterLine: number;
+  lines: string[];
+};
+
+export type FileChangeDiff = {
+  file: string;
+  status: "added" | "deleted" | "modified" | "renamed";
+  /** Previous path when renamed. */
+  fromFile?: string;
+  addedLines: number[];
+  deletedHunks: DiffDeletedHunk[];
+  additions: number;
+  deletions: number;
+  /** True when the whole file is new (every line is an addition). */
+  entireFile?: boolean;
+};
+
+export type WorkingTreeChanges = {
+  files: FileChangeDiff[];
+  additions: number;
+  deletions: number;
+};
+
+export function isDiffableSourcePath(rel: string): boolean {
+  const n = rel.replace(/\\/g, "/").replace(/^\.\//, "");
+  if (!n || n.startsWith(".openleaf/") || n.startsWith(".git/")) return false;
+  if (n === ".gitignore" || n === "openleaf.json" || n === "comments.json") return true;
+  const ext = path.extname(n).toLowerCase();
+  if (
+    [
+      ".tex",
+      ".ltx",
+      ".bib",
+      ".sty",
+      ".cls",
+      ".bst",
+      ".md",
+      ".txt",
+      ".json",
+      ".csv",
+      ".yaml",
+      ".yml",
+      ".toml",
+      ".py",
+      ".sh",
+      ".r",
+      ".js",
+      ".ts",
+      ".tsx",
+      ".css",
+      ".html",
+      ".svg",
+    ].includes(ext)
+  ) {
+    return true;
+  }
+  return false;
+}
+
 /**
  * Source lines added in manuscript .tex files since `since` (working tree vs that commit).
  * Skips `misc/`, comments, and blank lines.
@@ -352,110 +413,263 @@ export async function listAddedManuscriptLines(
   id: string,
   since: string,
 ): Promise<AddedTexLines[]> {
-  if (!isGitEnabled()) return [];
+  const changes = await listWorkingTreeChanges(id, since, { manuscriptTexOnly: true });
+  return changes.files
+    .filter((f) => f.status !== "deleted" && (f.addedLines.length || f.entireFile))
+    .map((f) => ({
+      file: f.file,
+      lines: f.addedLines,
+      entireFile: f.entireFile,
+    }));
+}
+
+/**
+ * Full working-tree vs commit changes for the editor “show changes” UI.
+ * Includes additions, deletions, and file create/delete/rename.
+ */
+export async function listWorkingTreeChanges(
+  id: string,
+  since: string,
+  opts?: { manuscriptTexOnly?: boolean; cwd?: string; /** If set, diff `since..until` instead of working tree. */ until?: string },
+): Promise<WorkingTreeChanges> {
+  if (!isGitEnabled()) return { files: [], additions: 0, deletions: 0 };
   if (!HASH_RE.test(since)) {
+    throw Object.assign(new Error("Invalid commit hash"), { status: 400 });
+  }
+  if (opts?.until && !HASH_RE.test(opts.until)) {
     throw Object.assign(new Error("Invalid commit hash"), { status: 400 });
   }
   await ensureProjectGit(id);
 
-  const verify = await runGit(id, ["cat-file", "-t", since], { allowFailure: true });
+  const cwd = opts?.cwd ?? projectDir(id);
+
+  const verify = await runGit(id, ["cat-file", "-t", since], { allowFailure: true, cwd });
   if (verify.code !== 0 || !verify.stdout.includes("commit")) {
     throw Object.assign(new Error("Commit not found"), { status: 404 });
   }
-
-  const diff = await runGit(
-    id,
-    ["diff", "-U0", "--find-renames", "--diff-filter=ACMR", since],
-    { allowFailure: true },
-  );
-
-  const { byFile, newFiles } = parseAddedLinesFromUnifiedDiff(diff.stdout);
-
-  const untracked = await runGit(id, ["ls-files", "--others", "--exclude-standard"], {
-    allowFailure: true,
-  });
-  for (const rel of untracked.stdout.split("\n").map((l) => l.trim()).filter(Boolean)) {
-    if (!isManuscriptTexPath(rel) || byFile.has(rel)) continue;
-    try {
-      const full = resolveProjectPath(id, rel);
-      const text = await fs.readFile(full, "utf8");
-      const lines: number[] = [];
-      const raw = text.split(/\n/);
-      for (let i = 0; i < raw.length; i += 1) {
-        if (isHighlightableTexLine(raw[i] ?? "")) lines.push(i + 1);
-      }
-      if (lines.length) {
-        byFile.set(rel, lines);
-        newFiles.add(rel);
-      }
-    } catch {
-      /* ignore unreadable */
+  if (opts?.until) {
+    const verifyUntil = await runGit(id, ["cat-file", "-t", opts.until], { allowFailure: true, cwd });
+    if (verifyUntil.code !== 0 || !verifyUntil.stdout.includes("commit")) {
+      throw Object.assign(new Error("Commit not found"), { status: 404 });
     }
   }
 
-  const out: AddedTexLines[] = [];
-  for (const [file, lines] of byFile) {
-    if (!isManuscriptTexPath(file)) continue;
-    const unique = [...new Set(lines)].filter((n) => n > 0).sort((a, b) => a - b);
-    const entireFile = newFiles.has(file);
-    if (unique.length || entireFile) out.push({ file, lines: unique, entireFile });
+  const diffArgs = opts?.until
+    ? ["diff", "-U0", "--find-renames", "--diff-filter=ACMRD", since, opts.until]
+    : ["diff", "-U0", "--find-renames", "--diff-filter=ACMRD", since];
+  const diff = await runGit(id, diffArgs, { allowFailure: true, cwd });
+
+  const parsed = parseWorkingTreeDiff(diff.stdout);
+
+  // Untracked files → entire-file additions (working tree only)
+  if (!opts?.until) {
+    const untracked = await runGit(id, ["ls-files", "--others", "--exclude-standard"], {
+      allowFailure: true,
+      cwd,
+    });
+    for (const rel of untracked.stdout.split("\n").map((l) => l.trim()).filter(Boolean)) {
+      if (parsed.has(rel)) continue;
+      const ok = opts?.manuscriptTexOnly ? isManuscriptTexPath(rel) : isDiffableSourcePath(rel);
+      if (!ok) continue;
+      try {
+        const full = resolveRootPath(cwd, rel);
+        const text = await fs.readFile(full, "utf8");
+        const raw = text.split(/\n/);
+        const addedLines: number[] = [];
+        for (let i = 0; i < raw.length; i += 1) {
+          if (opts?.manuscriptTexOnly) {
+            if (isHighlightableTexLine(raw[i] ?? "")) addedLines.push(i + 1);
+          } else if ((raw[i] ?? "").length > 0 || i < raw.length - 1) {
+            addedLines.push(i + 1);
+          }
+        }
+        // empty file still counts as added file
+        parsed.set(rel, {
+          file: rel,
+          status: "added",
+          addedLines,
+          deletedHunks: [],
+          additions: addedLines.length,
+          deletions: 0,
+          entireFile: true,
+        });
+      } catch {
+        /* ignore */
+      }
+    }
   }
-  out.sort((a, b) => a.file.localeCompare(b.file));
-  return out;
+
+  let files = [...parsed.values()];
+  if (opts?.manuscriptTexOnly) {
+    files = files.filter((f) => isManuscriptTexPath(f.file) || (f.fromFile ? isManuscriptTexPath(f.fromFile) : false));
+  } else {
+    files = files.filter((f) => isDiffableSourcePath(f.file) || (f.fromFile ? isDiffableSourcePath(f.fromFile) : false));
+  }
+
+  files.sort((a, b) => a.file.localeCompare(b.file));
+  const additions = files.reduce((s, f) => s + f.additions, 0);
+  const deletions = files.reduce((s, f) => s + f.deletions, 0);
+  return { files, additions, deletions };
 }
 
 /** Exported for tests / reuse. */
 export function parseAddedLinesFromUnifiedDiff(diff: string): ParsedAddedDiff {
+  const full = parseWorkingTreeDiff(diff);
   const byFile = new Map<string, number[]>();
   const newFiles = new Set<string>();
+  for (const f of full.values()) {
+    if (f.status === "deleted") continue;
+    byFile.set(
+      f.file,
+      f.addedLines.filter((n) => {
+        // legacy filter used highlightable only for tex path — keep lines as-is here;
+        // listAddedManuscriptLines re-filters via manuscript path
+        return n > 0;
+      }),
+    );
+    if (f.entireFile || f.status === "added") newFiles.add(f.file);
+  }
+  return { byFile, newFiles };
+}
+
+export function parseWorkingTreeDiff(diff: string): Map<string, FileChangeDiff> {
+  const out = new Map<string, FileChangeDiff>();
   let file: string | null = null;
+  let fromFile: string | undefined;
+  let status: FileChangeDiff["status"] = "modified";
   let newLine = 0;
   let inHunk = false;
   let pendingNew = false;
+  let pendingDel = false;
+  let curDeleted: string[] = [];
+  let deletedAfter = 0;
+
+  const ensure = (): FileChangeDiff | null => {
+    if (!file) return null;
+    let entry = out.get(file);
+    if (!entry) {
+      entry = {
+        file,
+        status,
+        fromFile,
+        addedLines: [],
+        deletedHunks: [],
+        additions: 0,
+        deletions: 0,
+        entireFile: status === "added",
+      };
+      out.set(file, entry);
+    }
+    return entry;
+  };
+
+  const flushDeleted = () => {
+    if (!curDeleted.length) return;
+    const entry = ensure();
+    if (entry) {
+      entry.deletedHunks.push({ afterLine: deletedAfter, lines: curDeleted });
+      entry.deletions += curDeleted.length;
+    }
+    curDeleted = [];
+  };
 
   for (const raw of diff.split("\n")) {
     if (raw.startsWith("diff --git ")) {
+      flushDeleted();
       file = null;
+      fromFile = undefined;
+      status = "modified";
       inHunk = false;
       pendingNew = false;
+      pendingDel = false;
+      const m = /^diff --git a\/(.+?) b\/(.+)$/.exec(raw);
+      if (m) {
+        fromFile = m[1];
+        file = m[2] ?? m[1] ?? null;
+      }
       continue;
     }
-    if (raw.startsWith("new file mode") || raw === "--- /dev/null") {
+    if (raw.startsWith("new file mode")) {
       pendingNew = true;
+      status = "added";
+      continue;
+    }
+    if (raw.startsWith("deleted file mode")) {
+      pendingDel = true;
+      status = "deleted";
+      continue;
+    }
+    if (raw.startsWith("rename from ")) {
+      status = "renamed";
+      fromFile = raw.slice("rename from ".length).trim();
+      continue;
+    }
+    if (raw.startsWith("rename to ")) {
+      status = "renamed";
+      file = raw.slice("rename to ".length).trim();
+      continue;
+    }
+    if (raw === "--- /dev/null") {
+      pendingNew = true;
+      status = status === "renamed" ? status : "added";
+      continue;
+    }
+    if (raw.startsWith("--- ")) {
+      const spec = (raw.slice(4).split("\t")[0] ?? "").trim().replace(/^"|"$/g, "").replace(/^a\//, "");
+      if (spec && spec !== "/dev/null") fromFile = spec;
       continue;
     }
     if (raw.startsWith("+++ ")) {
+      flushDeleted();
       const spec = (raw.slice(4).split("\t")[0] ?? "").trim().replace(/^"|"$/g, "");
       if (spec === "/dev/null") {
-        file = null;
-        inHunk = false;
-        pendingNew = false;
+        status = "deleted";
+        file = fromFile ?? file;
+        pendingDel = true;
+        ensure();
         continue;
       }
       file = spec.replace(/^[ab]\//, "");
-      if (pendingNew && file) newFiles.add(file);
+      if (pendingNew) status = "added";
       pendingNew = false;
+      ensure();
       continue;
     }
-    const hunk = /^@@\s+-\d+(?:,\d+)?\s+\+(\d+)(?:,(\d+))?\s+@@/.exec(raw);
+    const hunk = /^@@\s+-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s+@@/.exec(raw);
     if (hunk) {
-      newLine = Number(hunk[1]);
+      flushDeleted();
+      newLine = Number(hunk[3]);
+      const newCount = hunk[4] !== undefined ? Number(hunk[4]) : 1;
+      deletedAfter = newCount === 0 ? Math.max(0, newLine - 1) : Math.max(0, newLine - 1);
       inHunk = true;
       continue;
     }
     if (!inHunk || !file) continue;
     if (raw.startsWith("+") && !raw.startsWith("+++")) {
-      if (isHighlightableTexLine(raw.slice(1))) {
-        const list = byFile.get(file) ?? [];
-        list.push(newLine);
-        byFile.set(file, list);
+      flushDeleted();
+      const entry = ensure();
+      if (entry) {
+        entry.addedLines.push(newLine);
+        entry.additions += 1;
       }
       newLine += 1;
       continue;
     }
-    if (raw.startsWith("-") && !raw.startsWith("---")) continue;
+    if (raw.startsWith("-") && !raw.startsWith("---")) {
+      curDeleted.push(raw.slice(1));
+      continue;
+    }
     if (raw.startsWith("\\")) continue;
+    flushDeleted();
     newLine += 1;
   }
-  return { byFile, newFiles };
+  flushDeleted();
+
+  // For deleted files with no hunks captured, still register the file
+  for (const [k, v] of out) {
+    v.addedLines = [...new Set(v.addedLines)].filter((n) => n > 0).sort((a, b) => a - b);
+    if (v.status === "added") v.entireFile = true;
+    out.set(k, v);
+  }
+  return out;
 }
