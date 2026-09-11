@@ -556,7 +556,7 @@ describe("cursor trajectory recorder", () => {
         rec(
           "afterAgentResponse",
           {
-            text: "I decided to rephrase the claim because it overreached. What remains open? Next: check figure 2.",
+            text: "I decided to rephrase the claim because it overreached and because the previous wording mixed DREAM-only skill with the pair-mode scheduler requirement in a way that later readers would not be able to audit. What remains open? Next: check figure 2.",
           },
           5,
         ),
@@ -577,9 +577,63 @@ describe("cursor trajectory recorder", () => {
     assert.ok(capsule.changedFiles.includes("main.tex"));
     assert.ok(capsule.verification.some((v) => v.check === "tests" && v.status === "passed"));
     assert.ok(capsule.objective?.includes("[redacted-key]"));
+    assert.ok(capsule.objective?.includes("Tighten methods"));
+    assert.equal(capsule.objective?.endsWith("…"), false);
     assert.ok(capsule.decisions.length > 0);
+    assert.ok(
+      capsule.decisions[0]!.statement.includes(
+        "later readers would not be able to audit",
+      ),
+    );
+    assert.equal(capsule.decisions[0]!.statement.endsWith("…"), false);
     assert.ok(capsule.openQuestions.length > 0);
     assert.ok(capsule.nextSteps.length > 0);
+    assert.ok(capsule.outcome?.includes("I decided to rephrase the claim"));
+  });
+
+  it("stores a redacted final reply as outcome when the turn is only a summary", () => {
+    const root = paper("alpha");
+    const rec = (hook: string, payload: unknown, seq: number): TrajectoryRecord => ({
+      v: 1,
+      seq,
+      prevHash: "p",
+      hash: "h",
+      ts: "2026-01-01T00:00:00.000Z",
+      hook,
+      conversation_id: "c",
+      generation_id: "g",
+      session_id: "c",
+      model: null,
+      model_id: null,
+      cursor_version: null,
+      attributed: [],
+      payload,
+    });
+    const capsule = buildAgentContextCapsule({
+      records: [
+        rec("beforeSubmitPrompt", { prompt: "okay quick follow up summarise what you just did" }, 1),
+        rec("afterAgentThought", { text: "SECRET_THINKING_BLOCK do not copy" }, 2),
+        rec(
+          "afterAgentResponse",
+          {
+            text: "I added a % comment after the Problem Statement label in article.tex and left the compiled text alone.",
+          },
+          3,
+        ),
+      ],
+      conversationId: "c",
+      generationId: "g",
+      root,
+      writtenAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.equal(capsule.objective, "okay quick follow up summarise what you just did");
+    assert.equal(
+      capsule.outcome,
+      "I added a % comment after the Problem Statement label in article.tex and left the compiled text alone.",
+    );
+    assert.equal(capsule.outcome?.includes("SECRET_THINKING_BLOCK"), false);
+    assert.deepEqual(capsule.decisions, []);
+    assert.deepEqual(capsule.changedFiles, []);
   });
 
   it("binds the capsule to the current HEAD and a content digest", async () => {

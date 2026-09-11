@@ -13,16 +13,11 @@ import type { TrajectoryRecord } from "./schema.js";
 
 const execFileAsync = promisify(execFile);
 
-const MAX_OBJECTIVE = 240;
-const MAX_DECISION = 160;
 const MAX_DECISIONS = 8;
 const MAX_FILES = 40;
 const MAX_CHECKS = 20;
-const MAX_QUESTION = 160;
 const MAX_QUESTIONS = 8;
-const MAX_ASSUMPTION = 160;
 const MAX_ASSUMPTIONS = 8;
-const MAX_NEXT = 160;
 const MAX_NEXT_STEPS = 8;
 
 export const CAPSULE_USAGE =
@@ -49,6 +44,8 @@ export type AgentContextCapsule = {
   baseCommit: string | null;
   diffDigest: string | null;
   objective: string | null;
+  /** Redacted final assistant reply; never thinking. */
+  outcome: string | null;
   decisions: CapsuleDecision[];
   changedFiles: string[];
   verification: CapsuleCheck[];
@@ -97,11 +94,8 @@ export function redactSecrets(text: string): string {
   return out;
 }
 
-function clip(text: string, max: number): string {
-  const t = text.replace(/\s+/g, " ").trim();
-  if (!t) return "";
-  if (t.length <= max) return t;
-  return `${t.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
+function collapse(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
 }
 
 function payloadOf(record: TrajectoryRecord): Record<string, unknown> {
@@ -209,6 +203,7 @@ export function buildAgentContextCapsule(opts: {
   const questions: string[] = [];
   const assumptions: string[] = [];
   const nextSteps: string[] = [];
+  let outcome: string | null = null;
 
   for (const record of records) {
     if (record.hook === "afterAgentThought") continue;
@@ -217,8 +212,8 @@ export function buildAgentContextCapsule(opts: {
     if (record.hook === "beforeSubmitPrompt" && !objective) {
       const prompt = str(payload.prompt);
       if (prompt) {
-        const clipped = clip(redactSecrets(prompt), MAX_OBJECTIVE);
-        objective = clipped || null;
+        const cleaned = collapse(redactSecrets(prompt));
+        objective = cleaned || null;
       }
     }
 
@@ -242,27 +237,37 @@ export function buildAgentContextCapsule(opts: {
       const text = str(payload.text);
       if (text) {
         const redacted = redactSecrets(text);
+        const cleaned = collapse(redacted);
+        if (cleaned) outcome = cleaned;
         for (const sentence of splitSentences(redacted)) {
           const low = sentence.toLowerCase();
           if (/\b(i (will|am going to|chose|decided|switched)|decision:|i'll )\b/.test(low) || /\bbecause\b/.test(low)) {
-            const statement = clip(sentence, MAX_DECISION);
+            const statement = collapse(sentence);
             if (statement && decisions.length < MAX_DECISIONS) {
               decisions.push({ statement });
             }
           }
           if (sentence.includes("?")) {
-            const q = clip(sentence, MAX_QUESTION);
+            const q = collapse(sentence);
             if (q) questions.push(q);
           }
           if (/\bassum(?:e|ing|ption)\b/i.test(sentence)) {
-            const a = clip(sentence, MAX_ASSUMPTION);
+            const a = collapse(sentence);
             if (a) assumptions.push(a);
           }
           if (/^(next(?: step)?s?|todo|follow[- ]up)\b/i.test(sentence)) {
-            const n = clip(sentence, MAX_NEXT);
+            const n = collapse(sentence);
             if (n) nextSteps.push(n);
           }
         }
+      }
+    }
+
+    if (record.hook === "stop" && !outcome) {
+      const text = str(payload.text);
+      if (text) {
+        const cleaned = collapse(redactSecrets(text));
+        if (cleaned) outcome = cleaned;
       }
     }
 
@@ -305,6 +310,7 @@ export function buildAgentContextCapsule(opts: {
     baseCommit: opts.baseCommit ?? null,
     diffDigest: opts.diffDigest ?? (changedFiles.length > 0 ? diffDigestOf(root, changedFiles) : null),
     objective,
+    outcome,
     decisions: decisions.slice(0, MAX_DECISIONS),
     changedFiles,
     verification: uniqueChecks(checks, MAX_CHECKS),
