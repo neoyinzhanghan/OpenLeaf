@@ -31,6 +31,7 @@ const COLLAB_SKIP_DIRS = new Set([
   "vendor",
   "node_modules",
   "cursor-trajectories",
+  "agent-context",
 ]);
 /** Build/run logs and aux files — view via REST, never hydrate into the CRDT. */
 const COLLAB_NEVER_EXT = new Set([
@@ -58,7 +59,8 @@ function hasSkippedCollabDir(relativePath: string): boolean {
 
 function isCollabTextFile(rootDir: string, relativePath: string): boolean {
   if (!relativePath || relativePath.includes(".openleaf/")) return false;
-  if (relativePath.replace(/\\/g, "/").includes("cursor-trajectories")) return false;
+  const norm = relativePath.replace(/\\/g, "/");
+  if (norm.includes("cursor-trajectories") || norm.includes("agent-context")) return false;
   if (COLLAB_NEVER_EXT.has(pathExt(relativePath))) return false;
   let full: string;
   try {
@@ -142,7 +144,7 @@ async function getTreeFromRoot(rootDir: string): Promise<TreeNode[]> {
     const entries = await fs.readdir(dir, { withFileTypes: true });
     const nodes: TreeNode[] = [];
     for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-      if (entry.name === ".git" || entry.name === ".openleaf" || entry.name === "node_modules") continue;
+      if (entry.name === ".git" || entry.name === ".openleaf" || entry.name === "node_modules" || entry.name === ".cursor") continue;
       const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
       if (entry.isDirectory()) {
         nodes.push({ name: entry.name, path: rel, type: "directory", children: await walk(path.join(dir, entry.name), rel) });
@@ -425,7 +427,7 @@ export class ProjectRoom {
           if (
             filePath
               .split("/")
-              .some((p) => p === ".git" || p === ".openleaf" || p === "node_modules" || p === "cursor-trajectories")
+              .some((p) => p === ".git" || p === ".openleaf" || p === "node_modules" || p === "cursor-trajectories" || p === "agent-context" || p === ".cursor")
           ) {
             continue;
           }

@@ -4,6 +4,8 @@ import { HOOK_EVENTS, TRAJECTORY_SCHEMA_VERSION, type TrajectoryHookEvent } from
 export type Attribution = {
   projectId: string;
   branchId: string;
+  /** Absolute paper directory when the Cursor workspace is the paper itself. */
+  root?: string;
 };
 
 export type TrajectoryRecord = {

@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { after, before, describe, it } from "node:test";
+import type { TrajectoryRecord } from "./schema.js";
 
 const execFileAsync = promisify(execFile);
 const projectsRoot = fs.mkdtempSync(path.join(os.tmpdir(), "openleaf-traj-"));
@@ -17,11 +18,13 @@ loadConfig(true);
 
 const { autoCommitProject } = await import("../projectGit.js");
 const { collectZipFiles } = await import("../zip.js");
-const { isCursorTrajectoryRel } = await import("./constants.js");
+const { isAgentContextRel, isCursorTrajectoryRel } = await import("./constants.js");
+const { buildAgentContextCapsule, redactSecrets } = await import("./capsule.js");
 const { generateTrajectoryIdentity } = await import("./encrypt.js");
-const { attributeAbsPath } = await import("./paths.js");
+const { attributeAbsPath, attributionFromOpenleafDir } = await import("./paths.js");
 const { decryptTurnFile, ingestHookStdin, processHookEvent } = await import("./recorder.js");
 const { pendingPath, projectSpoolPath, readJsonlRecords } = await import("./spool.js");
+const { ensureProjectCursorHooks, projectRecorderSidecar } = await import("./install.js");
 
 const userConfigDir = path.join(projectsRoot, "user-config");
 const stateRoot = path.join(projectsRoot, ".openleaf-runtime", "cursor-trajectories");
@@ -77,6 +80,8 @@ describe("cursor trajectory recorder", () => {
     assert.deepEqual(hit, { projectId: "alpha", branchId: "feature-1" });
     assert.equal(isCursorTrajectoryRel("misc/cursor-trajectories/conv/gen.jsonl.age"), true);
     assert.equal(isCursorTrajectoryRel("sections/01.tex"), false);
+    assert.equal(isAgentContextRel("misc/agent-context/conv/gen.json"), true);
+    assert.equal(isAgentContextRel("sections/01.tex"), false);
   });
 
   it("buffers prompts until a paper is identified, then encrypts a raw thinking turn", async () => {
@@ -143,6 +148,20 @@ describe("cursor trajectory recorder", () => {
     for (const entry of fs.readdirSync(miscPlain, { recursive: true, encoding: "utf8" })) {
       assert.equal(String(entry).endsWith(".jsonl"), false);
     }
+
+    assert.equal(stop.capsules?.length, 1);
+    const capsulePath = stop.capsules![0]!;
+    assert.match(capsulePath, /misc\/agent-context\/.+\/g-think\.json$/);
+    const capsule = JSON.parse(fs.readFileSync(capsulePath, "utf8")) as {
+      objective: string | null;
+      changedFiles: string[];
+      kind: string;
+    };
+    assert.equal(capsule.kind, "agent-context");
+    assert.equal(capsule.objective, "Tighten the abstract");
+    assert.ok(capsule.changedFiles.includes("sections/01_intro.tex"));
+    const capsuleText = fs.readFileSync(capsulePath, "utf8");
+    assert.equal(capsuleText.includes("the claim is vague"), false);
   });
 
   it("writes the complete turn to every paper a generation touches", async () => {
@@ -220,6 +239,8 @@ describe("cursor trajectory recorder", () => {
     assert.equal(fs.existsSync(projectSpoolPath(paper("gamma"), conv, "g-none")), true);
     const misc = path.join(paper("gamma"), "misc", "cursor-trajectories");
     assert.equal(fs.existsSync(misc), false);
+    assert.equal(stop.capsules?.length, 1);
+    assert.equal(fs.existsSync(stop.capsules![0]!), true);
   });
 
   it("deduplicates the same tool event and survives a crash mid-turn", async () => {
@@ -346,6 +367,9 @@ describe("cursor trajectory recorder", () => {
     const tracked = String(stdout).split("\n").map((l) => l.trim());
     assert.ok(tracked.includes(ageRel));
     assert.equal(tracked.some((f) => f.includes("cursor-trajectories/spool")), false);
+    const capsuleRel = stop.capsules![0]!.slice(paper("beta").length + 1).replace(/\\/g, "/");
+    assert.ok(zipped.includes(capsuleRel));
+    assert.ok(tracked.includes(capsuleRel));
   });
 
   it("sessionEnd encrypts an opaque transcript copy when present", async () => {
@@ -418,5 +442,182 @@ describe("cursor trajectory recorder", () => {
     assert.equal(empty.skipped, "empty");
     const bad = await ingestHookStdin("not-json", opts);
     assert.equal(bad.skipped, "empty");
+  });
+
+  it("stamps Cursor hooks into a paper and records a standalone workspace session", async () => {
+    const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), "openleaf-standalone-"));
+    const dir = path.join(elsewhere, "Transmissions_paper");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "openleaf.json"), `${JSON.stringify({ mainFile: "main.tex" }, null, 2)}\n`);
+    fs.writeFileSync(path.join(dir, "main.tex"), "hello\n");
+    fs.mkdirSync(path.join(dir, "misc", "cursor-trajectories"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "misc", "cursor-trajectories", "recipients.txt"), `${recipient}\n`);
+
+    await ensureProjectCursorHooks(dir, { openleafRoot: REPO_ROOT });
+    assert.equal(fs.existsSync(path.join(dir, ".cursor", "hooks.json")), true);
+    assert.equal(fs.existsSync(path.join(dir, ".cursor", "hooks", "record-trajectory.sh")), true);
+    const sidecar = JSON.parse(fs.readFileSync(projectRecorderSidecar(dir), "utf8")) as { openleafRoot: string };
+    assert.equal(sidecar.openleafRoot, REPO_ROOT);
+    assert.deepEqual(attributionFromOpenleafDir(dir), {
+      projectId: "Transmissions_paper",
+      branchId: "main",
+      root: path.resolve(dir),
+    });
+
+    const conv = "conv-standalone";
+    const prompt = await processHookEvent(
+      basePayload({
+        conversation_id: conv,
+        generation_id: "g-st",
+        hook_event_name: "beforeSubmitPrompt",
+        prompt: "Revise the methods",
+        workspace_roots: [dir],
+      }),
+      opts,
+    );
+    assert.equal(prompt.attributed[0]?.projectId, "Transmissions_paper");
+    assert.equal(prompt.attributed[0]?.root, path.resolve(dir));
+
+    const stop = await processHookEvent(
+      basePayload({
+        conversation_id: conv,
+        generation_id: "g-st",
+        hook_event_name: "stop",
+        status: "completed",
+        workspace_roots: [dir],
+      }),
+      opts,
+    );
+    assert.ok(stop.encrypted?.some((p) => p.startsWith(path.resolve(dir) + path.sep)));
+    const age = stop.encrypted!.find((p) => p.endsWith(".jsonl.age"))!;
+    const turned = await decryptTurnFile(age, identity);
+    assert.ok(turned.records.some((r) => r.hook === "beforeSubmitPrompt"));
+    fs.rmSync(elsewhere, { recursive: true, force: true });
+  });
+
+  it("redacts secrets, emails, and absolute paths from shareable text", () => {
+    const out = redactSecrets(
+      "sk-abcdefghijklmnopqrstuvwxyz123456 mail ada@example.com path /Users/petchma/Papers/main.tex https://x.test/a?token=secret",
+    );
+    assert.equal(out.includes("sk-abcdefghijklmnopqrstuvwxyz123456"), false);
+    assert.equal(out.includes("ada@example.com"), false);
+    assert.equal(out.includes("/Users/petchma"), false);
+    assert.equal(out.includes("token=secret"), false);
+    assert.ok(out.includes("[redacted-key]"));
+    assert.ok(out.includes("[redacted-email]"));
+  });
+
+  it("extracts a capsule without thinking, stdout, secrets, or absolute paths", () => {
+    const root = paper("alpha");
+    const rec = (hook: string, payload: unknown, seq: number): TrajectoryRecord => ({
+      v: 1,
+      seq,
+      prevHash: "p",
+      hash: "h",
+      ts: "2026-01-01T00:00:00.000Z",
+      hook,
+      conversation_id: "c",
+      generation_id: "g",
+      session_id: "c",
+      model: null,
+      model_id: null,
+      cursor_version: null,
+      attributed: [],
+      payload,
+    });
+    const capsule = buildAgentContextCapsule({
+      records: [
+        rec(
+          "beforeSubmitPrompt",
+          {
+            prompt:
+              "Tighten methods. sk-abcdefghijklmnopqrstuvwxyz123456 contact bob@lab.edu under /Users/petchma/Papers/alpha/main.tex",
+          },
+          1,
+        ),
+        rec("afterAgentThought", { text: "SECRET_THINKING_BLOCK I will leak this" }, 2),
+        rec(
+          "afterFileEdit",
+          {
+            file_path: path.join(root, "main.tex"),
+            edits: [{ old_string: "Hi", new_string: "SECRET_EDIT_BODY" }],
+          },
+          3,
+        ),
+        rec(
+          "postToolUse",
+          {
+            tool_name: "Shell",
+            tool_input: { command: "npm test -- --run" },
+            tool_output: '{"exitCode":0,"stdout":"ALL_STDOUT_LEAK"}',
+          },
+          4,
+        ),
+        rec(
+          "afterAgentResponse",
+          {
+            text: "I decided to rephrase the claim because it overreached. What remains open? Next: check figure 2.",
+          },
+          5,
+        ),
+      ],
+      conversationId: "c",
+      generationId: "g",
+      root,
+      writtenAt: "2026-01-01T00:00:00.000Z",
+    });
+    const dump = JSON.stringify(capsule);
+    assert.equal(dump.includes("SECRET_THINKING_BLOCK"), false);
+    assert.equal(dump.includes("ALL_STDOUT_LEAK"), false);
+    assert.equal(dump.includes("SECRET_EDIT_BODY"), false);
+    assert.equal(dump.includes("sk-abcdefghijklmnopqrstuvwxyz123456"), false);
+    assert.equal(dump.includes("bob@lab.edu"), false);
+    assert.equal(dump.includes(root), false);
+    assert.equal(dump.includes("npm test"), false);
+    assert.ok(capsule.changedFiles.includes("main.tex"));
+    assert.ok(capsule.verification.some((v) => v.check === "tests" && v.status === "passed"));
+    assert.ok(capsule.objective?.includes("[redacted-key]"));
+    assert.ok(capsule.decisions.length > 0);
+    assert.ok(capsule.openQuestions.length > 0);
+    assert.ok(capsule.nextSteps.length > 0);
+  });
+
+  it("binds the capsule to the current HEAD and a content digest", async () => {
+    writePaper("bind");
+    const dir = paper("bind");
+    const commit = await autoCommitProject("bind", { message: "base" });
+    assert.equal(commit.committed, true);
+    assert.ok(commit.hash);
+    fs.writeFileSync(path.join(dir, "main.tex"), "changed after commit\n");
+
+    const conv = "conv-bind";
+    await processHookEvent(
+      basePayload({
+        conversation_id: conv,
+        generation_id: "g-bind",
+        hook_event_name: "afterFileEdit",
+        file_path: path.join(dir, "main.tex"),
+        edits: [{ old_string: "Hi", new_string: "changed after commit" }],
+      }),
+      opts,
+    );
+    const stop = await processHookEvent(
+      basePayload({
+        conversation_id: conv,
+        generation_id: "g-bind",
+        hook_event_name: "stop",
+        status: "completed",
+      }),
+      opts,
+    );
+    assert.equal(stop.capsules?.length, 1);
+    const capsule = JSON.parse(fs.readFileSync(stop.capsules![0]!, "utf8")) as {
+      baseCommit: string | null;
+      diffDigest: string | null;
+      changedFiles: string[];
+    };
+    assert.equal(capsule.baseCommit, commit.hash);
+    assert.match(capsule.diffDigest ?? "", /^sha256:[0-9a-f]{64}$/);
+    assert.ok(capsule.changedFiles.includes("main.tex"));
   });
 });

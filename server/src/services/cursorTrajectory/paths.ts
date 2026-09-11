@@ -95,12 +95,66 @@ export function attributionsFromPayload(
 
 export function unionAttributions(a: Attribution[], b: Attribution[]): Attribution[] {
   const found = new Map<string, Attribution>();
-  for (const hit of [...a, ...b]) found.set(`${hit.projectId}::${hit.branchId}`, hit);
+  for (const hit of [...a, ...b]) {
+    const key = `${hit.projectId}::${hit.branchId}::${hit.root ?? ""}`;
+    found.set(key, hit);
+  }
   return [...found.values()];
 }
 
+export function projectAbs(projectsRoot: string, hit: Attribution): string {
+  if (hit.root) return path.resolve(hit.root);
+  return path.join(path.resolve(projectsRoot), hit.projectId);
+}
+
 export function branchRootFor(projectsRoot: string, hit: Attribution): string {
-  const project = path.join(path.resolve(projectsRoot), hit.projectId);
+  const project = projectAbs(projectsRoot, hit);
   if (hit.branchId === "main") return project;
   return path.join(project, ".openleaf", "worktrees", hit.branchId);
+}
+
+export function isOpenleafProjectDir(dir: string): boolean {
+  try {
+    return fs.existsSync(path.join(dir, "openleaf.json")) && fs.statSync(dir).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+export function attributionFromOpenleafDir(dir: string): Attribution | null {
+  const resolved = path.resolve(dir);
+  if (!isOpenleafProjectDir(resolved)) return null;
+  const projectId = path.basename(resolved);
+  if (!SAFE_ID.test(projectId) || projectId.startsWith(".")) return null;
+  const rel = resolved.replace(/\\/g, "/");
+  const wt = rel.split("/.openleaf/worktrees/");
+  if (wt.length === 2) {
+    const branchId = wt[1]!.split("/").filter(Boolean)[0];
+    const parentPaper = wt[0]!;
+    const id = path.basename(parentPaper);
+    if (branchId && SAFE_ID.test(branchId) && SAFE_ID.test(id)) {
+      return { projectId: id, branchId, root: parentPaper };
+    }
+  }
+  return { projectId, branchId: "main", root: resolved };
+}
+
+/** Cursor workspace folders that are themselves OpenLeaf papers. */
+export function standaloneAttributionsFromPayload(payload: Record<string, unknown>): Attribution[] {
+  const dirs: string[] = [];
+  if (Array.isArray(payload.workspace_roots)) {
+    for (const w of payload.workspace_roots) {
+      if (typeof w === "string") dirs.push(w);
+    }
+  }
+  for (const envName of ["CURSOR_PROJECT_DIR", "OPENLEAF_TRAJECTORY_PROJECT_DIR", "CLAUDE_PROJECT_DIR"]) {
+    const v = process.env[envName];
+    if (v) dirs.push(v);
+  }
+  const found = new Map<string, Attribution>();
+  for (const dir of dirs) {
+    const hit = attributionFromOpenleafDir(dir);
+    if (hit) found.set(`${hit.projectId}::${hit.branchId}::${hit.root ?? ""}`, hit);
+  }
+  return [...found.values()];
 }

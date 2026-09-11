@@ -1,15 +1,22 @@
 import fs from "node:fs";
 import path from "node:path";
-import { isCursorTrajectoryRel } from "../cursorTrajectory/constants.js";
+import { isAgentContextRel, isCursorTrajectoryRel } from "../cursorTrajectory/constants.js";
 
 /** Never attach inotify watches here — these trees are huge and not manuscript source. */
-const SKIP_DIR_NAMES = new Set([".git", ".openleaf", "node_modules", "cursor-trajectories"]);
+const SKIP_DIR_NAMES = new Set([
+  ".git",
+  ".openleaf",
+  "node_modules",
+  "cursor-trajectories",
+  "agent-context",
+  ".cursor",
+]);
 /** One watch descriptor per directory; LaTeX projects are tiny, this is a safety rail. */
 const MAX_WATCH_DIRS = 512;
 const DEBOUNCE_MS = 200;
 
 function isSkippedRel(rel: string): boolean {
-  if (isCursorTrajectoryRel(rel)) return true;
+  if (isCursorTrajectoryRel(rel) || isAgentContextRel(rel)) return true;
   return rel.split("/").some((p) => SKIP_DIR_NAMES.has(p));
 }
 

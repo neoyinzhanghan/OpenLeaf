@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import fsSync from "node:fs";
 import path from "node:path";
 import { getProjectsRootAbs } from "../../config.js";
+import { writeAgentContextCapsule } from "./capsule.js";
 import {
   TRAJECTORY_MISC_DIR,
   TRAJECTORY_RECIPIENTS_FILE,
@@ -19,7 +20,9 @@ import {
 import {
   attributionsFromPayload,
   branchRootFor,
+  projectAbs,
   safeFsId,
+  standaloneAttributionsFromPayload,
   unionAttributions,
 } from "./paths.js";
 import {
@@ -57,6 +60,7 @@ export type IngestResult = {
   ingested: boolean;
   skipped?: "untracked" | "duplicate" | "empty";
   encrypted?: string[];
+  capsules?: string[];
   spoolOnly?: boolean;
   attributed: Attribution[];
 };
@@ -102,11 +106,9 @@ function ensureGen(state: SessionState, generationId: string): SessionState["gen
   return created;
 }
 
-export function listRecipients(projectId: string, opts?: RecorderOptions): string[] {
-  const projectsRoot = projectsRootOf(opts);
-  const fromProject = readRecipientsFile(
-    path.join(projectsRoot, projectId, TRAJECTORY_RECIPIENTS_FILE),
-  );
+function recipientsFor(hit: Attribution, opts?: RecorderOptions): string[] {
+  const projectRoot = projectAbs(projectsRootOf(opts), hit);
+  const fromProject = readRecipientsFile(path.join(projectRoot, TRAJECTORY_RECIPIENTS_FILE));
   const fromEnv = parseRecipientsText(process.env.OPENLEAF_TRAJECTORY_RECIPIENTS ?? "");
   const fromUser = readRecipientsFile(path.join(userConfigDirOf(opts), "cursor-trajectory.recipients"));
   const seen = new Set<string>();
@@ -117,6 +119,10 @@ export function listRecipients(projectId: string, opts?: RecorderOptions): strin
     out.push(r);
   }
   return out;
+}
+
+export function listRecipients(projectId: string, opts?: RecorderOptions): string[] {
+  return recipientsFor({ projectId, branchId: "main" }, opts);
 }
 
 function canonicalSpool(stateRoot: string, conversationId: string, generationId: string): string {
@@ -132,7 +138,7 @@ async function syncProjectSpools(
 ): Promise<void> {
   for (const hit of attributed) {
     const dest = projectSpoolPath(
-      path.join(projectsRoot, hit.projectId),
+      projectAbs(projectsRoot, hit),
       conversationId,
       generationId,
     );
@@ -151,7 +157,7 @@ async function appendEverywhere(
   await appendJsonl(canonical, record);
   for (const hit of attributed) {
     const dest = projectSpoolPath(
-      path.join(projectsRoot, hit.projectId),
+      projectAbs(projectsRoot, hit),
       record.conversation_id,
       record.generation_id,
     );
@@ -163,19 +169,19 @@ export async function encryptGeneration(
   conversationId: string,
   generationId: string,
   opts?: RecorderOptions,
-): Promise<{ encrypted: string[]; spoolOnly: boolean }> {
+): Promise<{ encrypted: string[]; capsules: string[]; spoolOnly: boolean }> {
   const projectsRoot = projectsRootOf(opts);
   const stateRoot = stateRootOf(opts);
   const state = await loadSession(stateRoot, conversationId);
   const canonical = canonicalSpool(stateRoot, conversationId, generationId);
   const records = await readJsonlRecords(canonical);
   if (records.length === 0) {
-    return { encrypted: [], spoolOnly: false };
+    return { encrypted: [], capsules: [], spoolOnly: false };
   }
 
   const attributed = state.attributed.length > 0 ? state.attributed : records.at(-1)?.attributed ?? [];
   if (attributed.length === 0) {
-    return { encrypted: [], spoolOnly: true };
+    return { encrypted: [], capsules: [], spoolOnly: true };
   }
 
   const header: TurnHeader = {
@@ -193,6 +199,7 @@ export async function encryptGeneration(
   const plaintext = `${JSON.stringify(header)}\n${records.map((r) => JSON.stringify(r)).join("\n")}\n`;
 
   const encrypted: string[] = [];
+  const capsules: string[] = [];
   let spoolOnly = false;
   const byProject = new Map<string, Attribution[]>();
   for (const hit of attributed) {
@@ -202,31 +209,47 @@ export async function encryptGeneration(
   }
 
   for (const [projectId, hits] of byProject) {
-    const recipients = listRecipients(projectId, opts);
+    const recipients = recipientsFor(hits[0]!, opts);
+    let ciphertext: Uint8Array | null = null;
     if (recipients.length === 0) {
       spoolOnly = true;
-      continue;
-    }
-    let ciphertext: Uint8Array;
-    try {
-      ciphertext = await encryptToRecipients(plaintext, recipients);
-    } catch (err) {
-      console.error("[cursor-trajectory] encrypt failed", projectId, err);
-      spoolOnly = true;
-      continue;
+    } else {
+      try {
+        ciphertext = await encryptToRecipients(plaintext, recipients);
+      } catch (err) {
+        console.error("[cursor-trajectory] encrypt failed", projectId, err);
+        spoolOnly = true;
+      }
     }
     for (const hit of hits) {
       const root = branchRootFor(projectsRoot, hit);
-      const dest = path.join(
-        root,
-        TRAJECTORY_MISC_DIR,
-        safeFsId(conversationId),
-        `${safeFsId(generationId)}.jsonl.age`,
-      );
-      await atomicWriteFile(dest, ciphertext);
-      encrypted.push(dest);
+      if (ciphertext) {
+        const dest = path.join(
+          root,
+          TRAJECTORY_MISC_DIR,
+          safeFsId(conversationId),
+          `${safeFsId(generationId)}.jsonl.age`,
+        );
+        await atomicWriteFile(dest, ciphertext);
+        encrypted.push(dest);
+      }
+      try {
+        capsules.push(
+          await writeAgentContextCapsule({
+            records,
+            conversationId,
+            generationId,
+            root,
+            writtenAt: header.encryptedAt,
+          }),
+        );
+      } catch (err) {
+        console.error("[cursor-trajectory] capsule failed", projectId, err);
+      }
     }
-    await removeFile(projectSpoolPath(path.join(projectsRoot, projectId), conversationId, generationId));
+    if (ciphertext) {
+      await removeFile(projectSpoolPath(projectAbs(projectsRoot, hits[0]!), conversationId, generationId));
+    }
   }
 
   if (encrypted.length > 0 && !spoolOnly) {
@@ -236,7 +259,7 @@ export async function encryptGeneration(
     await saveSession(stateRoot, state);
   }
 
-  return { encrypted, spoolOnly };
+  return { encrypted, capsules, spoolOnly };
 }
 
 async function encryptTranscript(state: SessionState, opts?: RecorderOptions): Promise<string[]> {
@@ -252,7 +275,7 @@ async function encryptTranscript(state: SessionState, opts?: RecorderOptions): P
     byProject.set(hit.projectId, list);
   }
   for (const [projectId, hits] of byProject) {
-    const recipients = listRecipients(projectId, opts);
+    const recipients = recipientsFor(hits[0]!, opts);
     if (recipients.length === 0) continue;
     let ciphertext: Uint8Array;
     try {
@@ -298,7 +321,10 @@ export async function processHookEvent(
     const transcript = str(payload.transcript_path) || process.env.CURSOR_TRANSCRIPT_PATH;
     if (transcript) state.transcriptPath = transcript;
 
-    const hits = attributionsFromPayload(payload, projectsRoot);
+    const hits = unionAttributions(
+      attributionsFromPayload(payload, projectsRoot),
+      standaloneAttributionsFromPayload(payload),
+    );
     state.attributed = unionAttributions(state.attributed, hits);
 
     const gen = ensureGen(state, generationId);
@@ -359,6 +385,7 @@ export async function processHookEvent(
         ingested,
         skipped: ingested ? undefined : "duplicate",
         encrypted: result.encrypted,
+        capsules: result.capsules,
         spoolOnly: result.spoolOnly,
         attributed: state.attributed,
       };
@@ -366,12 +393,14 @@ export async function processHookEvent(
 
     if (hook === "sessionEnd") {
       const encrypted: string[] = [];
+      const capsules: string[] = [];
       let spoolOnly = false;
       await saveSession(stateRoot, state);
       for (const [genId, g] of Object.entries(state.generations)) {
         if (g.flushed || g.seq === 0) continue;
         const result = await encryptGeneration(conversationId, genId, opts);
         encrypted.push(...result.encrypted);
+        capsules.push(...result.capsules);
         spoolOnly = spoolOnly || result.spoolOnly;
       }
       encrypted.push(...(await encryptTranscript(state, opts)));
@@ -380,6 +409,7 @@ export async function processHookEvent(
         ingested,
         skipped: ingested ? undefined : "duplicate",
         encrypted,
+        capsules,
         spoolOnly,
         attributed: state.attributed,
       };

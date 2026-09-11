@@ -22,6 +22,7 @@ projects/.openleaf-runtime/
 
 # Encrypted Cursor trajectories belong in each paper's nested git, not the app repo
 projects/example-article/misc/cursor-trajectories/
+projects/example-article/misc/agent-context/
 
 # Per-project git backups (local to each paper)
 projects/**/.git/
