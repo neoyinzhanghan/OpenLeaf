@@ -21,6 +21,9 @@ For human setup and usage, see [README.md](README.md).
 | `projects/<id>/` | One LaTeX project per folder |
 | `projects/<id>/metrics.tex` | Optional shared numbers as LaTeX macros (`\input{metrics}` in `main.tex`) |
 | `projects/<id>/misc/` | Notes, drafts, and other non-compiled material |
+| `projects/<id>/misc/cursor-trajectories/` | Encrypted Cursor agent trajectories (age); committed with the paper |
+| `projects/<id>/.openleaf/cursor-trajectories/spool/` | Private plaintext hook spool (gitignored; never portable) |
+| `.cursor/hooks.json` | Records observable Cursor agent events into the papers they touch |
 | `projects/<id>/openleaf.json` | `mainFile`, `engine`, `identities[]` |
 | `projects/<id>/comments.json` | Review threads (author, file:line, replies); git-tracked |
 
@@ -38,11 +41,12 @@ For human setup and usage, see [README.md](README.md).
 ## Config knobs
 
 - File: `config/default.json` / `config/local.json`
-- Env: `OPENLEAF_HOST`, `OPENLEAF_PORT`, `OPENLEAF_CLIENT_PORT` (Vite UI in dev), `OPENLEAF_PROJECTS_ROOT` (relative or absolute), `OPENLEAF_ENGINE`
+- Env: `OPENLEAF_HOST`, `OPENLEAF_PORT`, `OPENLEAF_CLIENT_PORT` (Vite UI in dev), `OPENLEAF_PROJECTS_ROOT` (relative or absolute), `OPENLEAF_ENGINE`, `OPENLEAF_TRAJECTORY_RECIPIENTS` (age public keys for Cursor logs)
 - HTTP: `GET/PATCH /api/config`
 - Dev proxy: `client/vite.config.ts` reads `OPENLEAF_PORT` / `OPENLEAF_CLIENT_PORT` (no manual proxy edit needed)
 - Identities (collab): **per project** in `projects/<id>/openleaf.json` → `identities[]`. Seeded from `defaultIdentities` in app config on create. `GET/PUT /api/projects/:id/identities`. UI toggles among that project's presets (stored per-project in localStorage).
-- Collab: WebSocket `/collab/<project>?identity=<id>`; Yjs CRDT flushed to disk; snapshot under `projects/<id>/.openleaf/collab/`. While a room is open, a lightweight per-directory `fs.watch` (skips `.git` / `.openleaf` / `node_modules`; no file cache) pushes external disk edits into the live CRDT so the editor updates without a refresh. Concurrent unflushed editor edits are 3-way merged with disk (disk wins on overlapping hunks); flush will not overwrite an external write it has not ingested.
+- Collab: WebSocket `/collab/<project>?identity=<id>`; Yjs CRDT flushed to disk; snapshot under `projects/<id>/.openleaf/collab/`. While a room is open, a lightweight per-directory `fs.watch` (skips `.git` / `.openleaf` / `node_modules` / `cursor-trajectories`; no file cache) pushes external disk edits into the live CRDT so the editor updates without a refresh. Concurrent unflushed editor edits are 3-way merged with disk (disk wins on overlapping hunks); flush will not overwrite an external write it has not ingested.
+- Cursor trajectories: project hooks at `.cursor/hooks.json` append observable prompts, thinking blocks, tool results, and edits. Raw plaintext stays under `.openleaf/cursor-trajectories/spool/` until a `stop`/`sessionEnd` encrypts the turn to `misc/cursor-trajectories/` with age recipients. Hooks never auto-commit. Private keys stay outside all git repos (`~/.openleaf/cursor-trajectory.agekey`).
 - Git backups: each project is its own git repo; **intentional Commit** creates timeline nodes (`.openleaf/timeline.json`). Autosave / Save flush the CRDT working copy to disk without committing. Background CRDT flush does **not** commit. `GET /api/projects/:id/timeline`, `POST .../timeline/commit|fork|checkout`. Share links are bound to one branch (one link per branch; multiple links OK). Toggle via `git.enabled`. `GET /api/projects/:id/diff-highlights?since=<hash>` maps added manuscript `.tex` lines (not `misc/`) onto PDF boxes via SyncTeX.
 
 ## Commands

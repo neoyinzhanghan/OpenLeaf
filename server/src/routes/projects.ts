@@ -984,7 +984,9 @@ projectsRouter.get("/:id/download", async (req, res) => {
       return;
     }
     if (format === "zip") {
-      streamProjectZip(req.params.id, res);
+      const branchId = await resolveBranchIdWithActive(req, req.params.id);
+      const root = await branchRoot(req.params.id, branchId);
+      streamProjectZip(req.params.id, res, { rootDir: root });
       return;
     }
     res.status(400).json({ error: "format must be pdf or zip" });

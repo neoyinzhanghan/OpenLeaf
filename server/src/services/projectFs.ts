@@ -243,6 +243,7 @@ const BINARY_EXT = new Set([
   ".dylib",
   ".exe",
   ".dll",
+  ".age",
 ]);
 
 const TEXT_HINT_EXT = new Set([

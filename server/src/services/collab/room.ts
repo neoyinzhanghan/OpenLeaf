@@ -24,7 +24,14 @@ const MAX_COLLAB_FILE_BYTES = 256 * 1024;
 const MAX_COLLAB_SNAPSHOT_BYTES = 2 * 1024 * 1024;
 
 /** Path segments that are research artifacts / deps, not the manuscript. */
-const COLLAB_SKIP_DIRS = new Set(["data", "private", "tmp", "vendor", "node_modules"]);
+const COLLAB_SKIP_DIRS = new Set([
+  "data",
+  "private",
+  "tmp",
+  "vendor",
+  "node_modules",
+  "cursor-trajectories",
+]);
 /** Build/run logs and aux files — view via REST, never hydrate into the CRDT. */
 const COLLAB_NEVER_EXT = new Set([
   ".log",
@@ -51,6 +58,7 @@ function hasSkippedCollabDir(relativePath: string): boolean {
 
 function isCollabTextFile(rootDir: string, relativePath: string): boolean {
   if (!relativePath || relativePath.includes(".openleaf/")) return false;
+  if (relativePath.replace(/\\/g, "/").includes("cursor-trajectories")) return false;
   if (COLLAB_NEVER_EXT.has(pathExt(relativePath))) return false;
   let full: string;
   try {
@@ -414,7 +422,11 @@ export class ProjectRoom {
 
       this.doc.transact(() => {
         for (const filePath of unique) {
-          if (filePath.split("/").some((p) => p === ".git" || p === ".openleaf" || p === "node_modules")) {
+          if (
+            filePath
+              .split("/")
+              .some((p) => p === ".git" || p === ".openleaf" || p === "node_modules" || p === "cursor-trajectories")
+          ) {
             continue;
           }
           let full: string;

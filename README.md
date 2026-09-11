@@ -117,8 +117,20 @@ projects/my-paper/
   assets/
   scripts/
   misc/             # notes, drafts, non-compiled material
+  misc/cursor-trajectories/  # encrypted Cursor agent logs (age); git-tracked in the paper
   .openleaf/        # build + collab runtime (gitignored; not in ZIP)
+  .openleaf/cursor-trajectories/spool/  # private plaintext hook buffer
 ```
+
+Cursor Agent/CLI sessions in this repo are recorded by [`.cursor/hooks.json`](.cursor/hooks.json). Events are attributed to a paper by the files they touch. Raw logs never enter Git or ZIP exports: each finished turn is age-encrypted into `misc/cursor-trajectories/` when recipients are configured.
+
+**Recipients (public keys only) — any of:**
+
+- `projects/<id>/misc/cursor-trajectories/recipients.txt` (one `age1…` key per line)
+- `~/.openleaf/cursor-trajectory.recipients`
+- `OPENLEAF_TRAJECTORY_RECIPIENTS`
+
+Keep the matching private identity in `~/.openleaf/cursor-trajectory.agekey` (or `age-keygen`). If no recipient is available, the plaintext spool stays in `.openleaf/` and nothing portable is written.
 
 Only `projects/example-article/` is tracked in git. Your real papers under `projects/` stay local (see `.gitignore`).
 
@@ -133,6 +145,7 @@ Priority: `config/default.json` → `config/local.json` (gitignored) → env var
 | `OPENLEAF_CLIENT_PORT` | Vite UI port in `npm run dev` (default `5173`) |
 | `OPENLEAF_PROJECTS_ROOT` | Projects directory (relative to repo root, or absolute) |
 | `OPENLEAF_ENGINE` | `pdflatex` or `xelatex` |
+| `OPENLEAF_TRAJECTORY_RECIPIENTS` | Age public keys used to encrypt Cursor trajectory artifacts |
 
 You can also `GET` / `PATCH /api/config` (PATCH writes `config/local.json`).
 
