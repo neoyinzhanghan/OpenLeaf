@@ -81,6 +81,17 @@ export function getProjectTimeline(id: string, branchId?: string): Promise<impor
   return request(`/api/projects/${encodeURIComponent(id)}/timeline${q}`);
 }
 
+export function getProjectAgentContext(
+  id: string,
+  opts: { nodeId?: string; commit?: string },
+): Promise<import("./types").AgentContextView> {
+  const q = new URLSearchParams();
+  if (opts.nodeId) q.set("nodeId", opts.nodeId);
+  if (opts.commit) q.set("commit", opts.commit);
+  const qs = q.toString();
+  return request(`/api/projects/${encodeURIComponent(id)}/agent-context${qs ? `?${qs}` : ""}`);
+}
+
 export function commitProjectTimeline(
   id: string,
   body: { message: string; branchId?: string; identityId?: string },

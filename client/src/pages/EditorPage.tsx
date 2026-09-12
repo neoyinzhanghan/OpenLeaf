@@ -267,6 +267,7 @@ export function EditorPage() {
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const [flushedContent, setFlushedContent] = useState("");
   const saveLock = useRef(false);
+  const timelineHeadRef = useRef<string | null>(null);
   const [diffOn, setDiffOn] = useState(false);
   const [diffSince, setDiffSince] = useState("");
   const [diffBaselineLabel, setDiffBaselineLabel] = useState("");
@@ -933,25 +934,45 @@ export function EditorPage() {
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
-    (async () => {
+    const applyQuiet = (view: TimelineView) => {
+      setBranchId(view.activeBranchId);
+      setBranchLabel(view.activeBranch.name);
+      setTimelineCanEdit(
+        view.canEdit && (!guestBranchId || view.activeBranchId === guestBranchId),
+      );
+      setViewingGitHash(view.viewingGitHash ?? null);
+      if (view.headNode) setLastCommit(view.headNode.gitHash.slice(0, 7));
+      const head = view.headNode?.gitHash ?? "";
+      if (timelineHeadRef.current && timelineHeadRef.current !== head && !view.viewingGitHash) {
+        void refreshTree();
+      }
+      timelineHeadRef.current = head || null;
+    };
+    void (async () => {
       try {
         const view = await getProjectTimeline(id, guestBranchId ?? undefined);
         if (cancelled) return;
-        setBranchId(view.activeBranchId);
-        setBranchLabel(view.activeBranch.name);
-        setTimelineCanEdit(
-          view.canEdit && (!guestBranchId || view.activeBranchId === guestBranchId),
-        );
-        setViewingGitHash(view.viewingGitHash ?? null);
-        if (view.headNode) setLastCommit(view.headNode.gitHash.slice(0, 7));
+        applyQuiet(view);
       } catch {
         /* timeline optional until first open */
       }
     })();
+    const t = window.setInterval(() => {
+      void (async () => {
+        try {
+          const view = await getProjectTimeline(id, guestBranchId ?? undefined);
+          if (cancelled) return;
+          applyQuiet(view);
+        } catch {
+          /* keep last known head */
+        }
+      })();
+    }, 4000);
     return () => {
       cancelled = true;
+      window.clearInterval(t);
     };
-  }, [id, guestBranchId]);
+  }, [id, guestBranchId, refreshTree]);
 
   useEffect(() => {
     if (!id || isGuest) return;

@@ -146,6 +146,113 @@ function emptyMain(): TimelineState {
   };
 }
 
+/** Max first-parent commits to ingest per branch per sync (next fetch continues). */
+const GIT_CATCH_UP_LIMIT = 100;
+
+/**
+ * Fast-forward live timeline tips from git when an agent/CLI committed outside OpenLeaf.
+ * Appends only: never rewrites, deletes, or rewinds. Skips a branch if its timeline head
+ * is not an ancestor of the git tip (rebase / divergence).
+ */
+async function catchUpTimelineFromGit(projectId: string): Promise<boolean> {
+  if (!isGitEnabled()) return false;
+  const state = await loadTimeline(projectId);
+  if (state.nodes.length === 0) return false;
+
+  let dirty = false;
+  const knownOnBranch = new Map<string, TimelineNode>();
+  for (const n of state.nodes) {
+    if (!n.gitHash) continue;
+    knownOnBranch.set(`${n.branchId}:${n.gitHash}`, n);
+  }
+
+  for (const branch of state.branches) {
+    if (isBranchPruned(branch)) continue;
+    const head = branch.headNodeId
+      ? state.nodes.find((n) => n.id === branch.headNodeId) ?? null
+      : null;
+    if (!head?.gitHash) continue;
+
+    const tipHash = await resolveBranchGitTip(projectId, branch);
+    if (!tipHash || tipHash === head.gitHash) continue;
+
+    const ancestor = await runGit(
+      projectId,
+      ["merge-base", "--is-ancestor", head.gitHash, tipHash],
+      { allowFailure: true },
+    );
+    if (ancestor.code !== 0) continue;
+
+    const log = await runGit(
+      projectId,
+      [
+        "log",
+        "--first-parent",
+        "--reverse",
+        `-n${GIT_CATCH_UP_LIMIT}`,
+        "--pretty=format:%H%x09%h%x09%an%x09%aI%x09%s",
+        `${head.gitHash}..${tipHash}`,
+      ],
+      { allowFailure: true },
+    );
+    if (log.code !== 0 || !log.stdout.trim()) continue;
+
+    let parentId = head.id;
+    for (const line of log.stdout.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const [hash, , author, date, ...rest] = trimmed.split("\t");
+      if (!hash) continue;
+      const existing = knownOnBranch.get(`${branch.id}:${hash}`);
+      if (existing) {
+        parentId = existing.id;
+        continue;
+      }
+      const id = `n-${crypto.randomBytes(6).toString("hex")}`;
+      const node: TimelineNode = {
+        id,
+        branchId: branch.id,
+        parentId,
+        gitHash: hash,
+        message: rest.join("\t") || "(no message)",
+        author: author || "unknown",
+        createdAt: date || new Date().toISOString(),
+      };
+      state.nodes.push(node);
+      knownOnBranch.set(`${branch.id}:${hash}`, node);
+      parentId = id;
+      dirty = true;
+    }
+    if (parentId !== head.id) {
+      branch.headNodeId = parentId;
+      dirty = true;
+    }
+  }
+
+  if (dirty) await saveTimeline(projectId, state);
+  return dirty;
+}
+
+async function resolveBranchGitTip(projectId: string, branch: TimelineBranch): Promise<string | null> {
+  if (branch.gitRef) {
+    const named = await runGit(
+      projectId,
+      ["rev-parse", "--verify", `refs/heads/${branch.gitRef}^{commit}`],
+      { allowFailure: true },
+    );
+    if (named.code === 0 && named.stdout.trim()) return named.stdout.trim();
+  }
+  if (branch.id === "main" || branch.sacred) {
+    const head = await runGit(projectId, ["rev-parse", "--verify", "HEAD"], { allowFailure: true });
+    if (head.code === 0 && head.stdout.trim()) return head.stdout.trim();
+  }
+  return null;
+}
+
+async function syncTimelineFromGit(projectId: string): Promise<void> {
+  await withTimelineLock(projectId, () => catchUpTimelineFromGit(projectId));
+}
+
 /** Import linear git history onto main as legacy nodes (once). */
 async function migrateFromGit(projectId: string, state: TimelineState): Promise<TimelineState> {
   if (state.nodes.length > 0) return state;
@@ -377,8 +484,11 @@ async function enrichMergeParentsFromGit(
 
 export async function getTimelineView(
   projectId: string,
-  opts?: { branchId?: string; includePruned?: boolean },
+  opts?: { branchId?: string; includePruned?: boolean; skipGitSync?: boolean },
 ): Promise<TimelineView> {
+  if (opts?.skipGitSync !== true) {
+    await syncTimelineFromGit(projectId);
+  }
   const raw = await loadTimeline(projectId);
   // Fill missing mergeParentId from git's second parent so older merges still draw.
   if (await enrichMergeParentsFromGit(projectId, raw)) {
@@ -496,6 +606,7 @@ export async function intentionalCommit(
   const message = opts.message.trim();
   if (!message) throw err(400, "Commit message is required");
 
+  await syncTimelineFromGit(projectId);
   const state = await loadTimeline(projectId);
   const branch = getBranch(state, opts.branchId);
   assertBranchAccessible(branch, "committed to");
@@ -560,6 +671,7 @@ export async function forkBranch(
   if (!/^[a-zA-Z0-9._/-]{1,64}$/.test(name) || name === "main") {
     throw err(400, "Fork name must be 1–64 chars (letters, numbers, . _ / -) and not “main”");
   }
+  await syncTimelineFromGit(projectId);
   const state = await loadTimeline(projectId);
   if (state.branches.some((b) => b.name === name || b.id === name)) {
     throw err(409, `Branch “${name}” already exists`);
@@ -666,7 +778,7 @@ export async function pruneBranchTip(
       } catch {
         /* optional */
       }
-      return getTimelineView(projectId);
+      return getTimelineView(projectId, { skipGitSync: true });
     } catch (e) {
       // Only unseal if we did not successfully mark the tip pruned.
       try {
@@ -737,7 +849,7 @@ export async function unpruneBranchTip(
     } catch {
       /* optional */
     }
-    return getTimelineView(projectId);
+    return getTimelineView(projectId, { skipGitSync: true });
   });
 }
 
@@ -822,7 +934,7 @@ export async function deletePrunedBranchForever(
         /* optional */
       }
 
-      return { ok: true, timeline: await getTimelineView(projectId), deleted };
+      return { ok: true, timeline: await getTimelineView(projectId, { skipGitSync: true }), deleted };
     } catch (e) {
       // Keep seal if tip remains pruned; clear if we aborted before deletion completed
       // and tip still exists pruned (seal should stay) or was never pruned.

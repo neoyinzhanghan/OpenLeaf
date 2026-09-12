@@ -8,6 +8,14 @@ export {
   TRAJECTORY_SCHEMA_VERSION,
 } from "./constants.js";
 export { attributionsFromPayload, attributeAbsPath, attributionFromOpenleafDir } from "./paths.js";
+export {
+  groupTurnsBySession,
+  listAgentSessionsAtCommit,
+  parseAgentContextCapsule,
+  type AgentContextSession,
+  type AgentContextTurn,
+  type AgentContextView,
+} from "./agentContext.js";
 export { generateTrajectoryIdentity } from "./encrypt.js";
 export { ensureProjectCursorHooks, stampOpenleafHome } from "./install.js";
 export {

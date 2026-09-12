@@ -119,6 +119,47 @@ export type TimelineBranch = {
   prunedAt?: string | null;
 };
 
+export type AgentContextTurn = {
+  schemaVersion: number;
+  kind: "agent-context";
+  usage: string;
+  shareStatus: "auto";
+  conversationId: string;
+  generationId: string;
+  writtenAt: string;
+  capsulePath: string;
+  baseCommit: string | null;
+  diffDigest: string | null;
+  objective: string | null;
+  outcome: string | null;
+  decisions: Array<{ statement: string; rationale?: string }>;
+  changedFiles: string[];
+  verification: Array<{ check: string; status: "passed" | "failed" | "error" | "unknown" }>;
+  assumptions: string[];
+  openQuestions: string[];
+  nextSteps: string[];
+};
+
+export type AgentContextSession = {
+  conversationId: string;
+  startedAt: string | null;
+  turnCount: number;
+  turns: AgentContextTurn[];
+};
+
+export type AgentContextView = {
+  commit: {
+    nodeId: string | null;
+    gitHash: string;
+    shortHash: string;
+    message: string;
+    author: string;
+    createdAt: string;
+  };
+  sessions: AgentContextSession[];
+  skipped: number;
+};
+
 export type TimelineView = {
   version: 1;
   activeBranchId: string;

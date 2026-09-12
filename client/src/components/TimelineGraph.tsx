@@ -119,7 +119,9 @@ export function TimelineGraph({
   useEffect(() => {
     if (loading && layout.nodes.length === 0) return;
     requestAnimationFrame(() => recenter());
-  }, [recenterToken, layout.nodes.length, loading, recenter]);
+    // Recenter only when asked. Quiet git catch-up must not yank the camera.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- token is the explicit trigger
+  }, [recenterToken]);
 
   useEffect(() => {
     return () => {
