@@ -15,6 +15,7 @@ import {
 } from "../api/client";
 import type { TimelineBranch, TimelineNode, TimelineView } from "../api/types";
 import { TimelineGraph } from "./TimelineGraph";
+import { AgentTrajectoryWindow } from "./AgentTrajectoryWindow";
 import { formatWhen } from "./timelineLayout";
 
 type Props = {
@@ -64,6 +65,7 @@ export function BranchTreePanel({
   const [deleteTarget, setDeleteTarget] = useState<PrunedTipInfo | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [mergeTarget, setMergeTarget] = useState<{ id: string; name: string } | null>(null);
+  const [trajOpen, setTrajOpen] = useState(false);
 
   /** Stick the hover dock so actions (Prune, etc.) remain clickable. */
   const keepDock = useCallback((id: string | null) => {
@@ -81,7 +83,7 @@ export function BranchTreePanel({
     };
     const onDown = (e: MouseEvent) => {
       const t = e.target as HTMLElement;
-      if (t.closest(".tl-hover-dock, .tl-orb, .tl-fork-modal, .tl-trash-delete-modal, .tl-trash-panel")) {
+      if (t.closest(".tl-hover-dock, .tl-orb, .tl-fork-modal, .tl-trash-delete-modal, .tl-trash-panel, .traj-window")) {
         return;
       }
       dismissDock();
@@ -131,7 +133,24 @@ export function BranchTreePanel({
 
   useEffect(() => {
     if (open) void refresh();
+    else setTrajOpen(false);
   }, [open, refresh]);
+
+  useEffect(() => {
+    if (!open) return;
+    const t = window.setInterval(() => {
+      void (async () => {
+        try {
+          const next = await getProjectTimeline(projectId, guestBranchId ?? undefined);
+          setView(next);
+          await Promise.all([refreshLeaves(), refreshTrash()]);
+        } catch {
+          /* keep last view */
+        }
+      })();
+    }, 4000);
+    return () => window.clearInterval(t);
+  }, [open, projectId, guestBranchId, refreshLeaves, refreshTrash]);
 
   useEffect(() => {
     if (!open || !leavesVersion) return;
@@ -149,6 +168,10 @@ export function BranchTreePanel({
   const hover = hoveredId && view ? view.nodes.find((n) => n.id === hoveredId) : null;
   const hoverBranch =
     hover && view ? view.branches.find((b) => b.id === hover.branchId) ?? null : null;
+  const selectedNode =
+    (pinnedId && view?.nodes.find((n) => n.id === pinnedId)) ||
+    (activeId && view?.nodes.find((n) => n.id === activeId)) ||
+    null;
 
   const selectNode = async (node: TimelineNode, branch: TimelineBranch) => {
     setBusy(true);
@@ -380,6 +403,19 @@ export function BranchTreePanel({
           {view ? ` · ${view.nodes.length} leaf${view.nodes.length === 1 ? "" : "ves"}` : ""}
         </strong>
         <div className="history-drawer-actions">
+          <button
+            type="button"
+            className={`btn btn-ghost${trajOpen ? " is-active" : ""}`}
+            disabled={!selectedNode || loading}
+            title={
+              selectedNode
+                ? `View agent sessions first included by ${selectedNode.gitHash.slice(0, 7)}`
+                : "Select a commit on the timeline first"
+            }
+            onClick={() => setTrajOpen((v) => !v)}
+          >
+            View agent trajectory
+          </button>
           {showTrash && (
             <button
               type="button"
@@ -426,7 +462,8 @@ export function BranchTreePanel({
 
       <p className="history-hint timeline-hint">
         Time left → right. Hover a tip for actions. To merge: stay on the tip that should receive changes, then hover
-        another tip → <em>Merge in</em>. Host-only prune moves tips to Trash.
+        another tip → <em>Merge in</em>. Host-only prune moves tips to Trash. Agent and CLI git commits appear here
+        automatically.
       </p>
 
       {error && <div className="error-banner">{error}</div>}
@@ -578,6 +615,16 @@ export function BranchTreePanel({
                   Fork
                 </button>
               )}
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => {
+                  setPinnedId(hover.id);
+                  setTrajOpen(true);
+                }}
+              >
+                Agent sessions
+              </button>
               {canMerge &&
                 !guestBranchId &&
                 hoverIsHead &&
@@ -741,6 +788,12 @@ export function BranchTreePanel({
           </div>
         </div>
       )}
+      <AgentTrajectoryWindow
+        projectId={projectId}
+        open={open && trajOpen}
+        node={selectedNode}
+        onClose={() => setTrajOpen(false)}
+      />
     </aside>
   );
 }

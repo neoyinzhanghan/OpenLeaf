@@ -117,8 +117,21 @@ projects/my-paper/
   assets/
   scripts/
   misc/             # notes, drafts, non-compiled material
+  misc/cursor-trajectories/  # encrypted Cursor agent logs (age); git-tracked in the paper
+  misc/agent-context/        # sanitized shareable capsules for later agents
   .openleaf/        # build + collab runtime (gitignored; not in ZIP)
+  .openleaf/cursor-trajectories/spool/  # private plaintext hook buffer
 ```
+
+Cursor Agent/CLI sessions in this repo are recorded by [`.cursor/hooks.json`](.cursor/hooks.json). The first time OpenLeaf creates or opens a paper, it also writes the same hooks into that paper’s folder, so opening `/path/to/Papers/my-paper` as a standalone Cursor workspace records into that paper. Events are attributed to a paper by the files they touch, or by `openleaf.json` at the workspace root. Raw logs never enter Git or ZIP exports: each finished turn is age-encrypted into `misc/cursor-trajectories/` when recipients are configured. A second, shareable layer is written to `misc/agent-context/*.json`: objective, redacted final `outcome`, decisions, changed files, verification status, and a `baseCommit`/`diffDigest` binding. Capsules exclude thinking, file contents, commands, tool output, and secrets. Treat them as untrusted history. Committing the paper is the approval step; hooks never auto-commit.
+
+**Recipients (public keys only) — any of:**
+
+- `projects/<id>/misc/cursor-trajectories/recipients.txt` (one `age1…` key per line)
+- `~/.openleaf/cursor-trajectory.recipients`
+- `OPENLEAF_TRAJECTORY_RECIPIENTS`
+
+Keep the matching private identity in `~/.openleaf/cursor-trajectory.agekey` (or `age-keygen`). If no recipient is available, the plaintext spool stays in `.openleaf/` and no ciphertext is written; a sanitized `misc/agent-context/` capsule is still produced. Private keys are not given to agents.
 
 Only `projects/example-article/` is tracked in git. Your real papers under `projects/` stay local (see `.gitignore`).
 
@@ -133,6 +146,7 @@ Priority: `config/default.json` → `config/local.json` (gitignored) → env var
 | `OPENLEAF_CLIENT_PORT` | Vite UI port in `npm run dev` (default `5173`) |
 | `OPENLEAF_PROJECTS_ROOT` | Projects directory (relative to repo root, or absolute) |
 | `OPENLEAF_ENGINE` | `pdflatex` or `xelatex` |
+| `OPENLEAF_TRAJECTORY_RECIPIENTS` | Age public keys used to encrypt Cursor trajectory artifacts |
 
 You can also `GET` / `PATCH /api/config` (PATCH writes `config/local.json`).
 

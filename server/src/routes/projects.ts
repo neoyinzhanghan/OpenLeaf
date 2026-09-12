@@ -486,6 +486,17 @@ projectsRouter.get("/:id/timeline", async (req, res) => {
   }
 });
 
+projectsRouter.get("/:id/agent-context", async (req, res) => {
+  try {
+    const nodeId = typeof req.query.nodeId === "string" ? req.query.nodeId : undefined;
+    const gitHash = typeof req.query.commit === "string" ? req.query.commit : undefined;
+    const { listAgentSessionsAtCommit } = await import("../services/cursorTrajectory/agentContext.js");
+    res.json(await listAgentSessionsAtCommit(req.params.id, { nodeId, gitHash }));
+  } catch (err) {
+    res.status(statusOf(err)).json({ error: err instanceof Error ? err.message : "Failed" });
+  }
+});
+
 projectsRouter.post("/:id/timeline/commit", async (req, res) => {
   const schema = z.object({
     message: z.string().min(1),
@@ -984,7 +995,9 @@ projectsRouter.get("/:id/download", async (req, res) => {
       return;
     }
     if (format === "zip") {
-      streamProjectZip(req.params.id, res);
+      const branchId = await resolveBranchIdWithActive(req, req.params.id);
+      const root = await branchRoot(req.params.id, branchId);
+      streamProjectZip(req.params.id, res, { rootDir: root });
       return;
     }
     res.status(400).json({ error: "format must be pdf or zip" });

@@ -163,6 +163,12 @@ export async function getProject(id: string): Promise<ProjectMeta> {
     throw Object.assign(new Error("Project not found"), { status: 404 });
   }
   const cfg = await readProjectConfig(id);
+  try {
+    const { ensureProjectCursorHooks } = await import("./cursorTrajectory/install.js");
+    await ensureProjectCursorHooks(dir);
+  } catch (err) {
+    console.error("[cursor-trajectory] hook install failed", id, err);
+  }
   return {
     id,
     name: id,
@@ -243,6 +249,7 @@ const BINARY_EXT = new Set([
   ".dylib",
   ".exe",
   ".dll",
+  ".age",
 ]);
 
 const TEXT_HINT_EXT = new Set([
@@ -534,6 +541,12 @@ export async function createProject(id: string, fromTemplate = "example-article"
     } catch {
       /* ignore */
     }
+  }
+  try {
+    const { ensureProjectCursorHooks } = await import("./cursorTrajectory/install.js");
+    await ensureProjectCursorHooks(dest);
+  } catch (err) {
+    console.error("[cursor-trajectory] hook install on create failed", err);
   }
   // Initialize per-project git backup repo with an initial snapshot
   try {

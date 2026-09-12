@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [{ "command": ".cursor/hooks/record-trajectory.sh" }],
+    "sessionEnd": [{ "command": ".cursor/hooks/record-trajectory.sh" }],
+    "beforeSubmitPrompt": [{ "command": ".cursor/hooks/record-trajectory.sh" }],
+    "afterAgentThought": [{ "command": ".cursor/hooks/record-trajectory.sh" }],
+    "afterAgentResponse": [{ "command": ".cursor/hooks/record-trajectory.sh" }],
+    "postToolUse": [{ "command": ".cursor/hooks/record-trajectory.sh" }],
+    "postToolUseFailure": [{ "command": ".cursor/hooks/record-trajectory.sh" }],
+    "subagentStart": [{ "command": ".cursor/hooks/record-trajectory.sh" }],
+    "subagentStop": [{ "command": ".cursor/hooks/record-trajectory.sh" }],
+    "afterShellExecution": [{ "command": ".cursor/hooks/record-trajectory.sh" }],
+    "afterMCPExecution": [{ "command": ".cursor/hooks/record-trajectory.sh" }],
+    "afterFileEdit": [{ "command": ".cursor/hooks/record-trajectory.sh" }],
+    "stop": [{ "command": ".cursor/hooks/record-trajectory.sh" }]
+  }
+}

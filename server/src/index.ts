@@ -7,6 +7,7 @@ import path from "node:path";
 import { getPublicConfig, loadConfig, REPO_ROOT } from "./config.js";
 import { attachCollabServer } from "./services/collab/server.js";
 import { ensureProjectsRoot } from "./services/projectFs.js";
+import { ensureAllProjectCursorHooks, stampOpenleafHome } from "./services/cursorTrajectory/install.js";
 import { configRouter } from "./routes/config.js";
 import { guestRouter, joinRouter } from "./routes/guest.js";
 import { identitiesRouter } from "./routes/identities.js";
@@ -27,6 +28,10 @@ function lanIp(): string | undefined {
 async function main() {
   loadConfig(true);
   await ensureProjectsRoot();
+  await stampOpenleafHome().catch((err) => console.error("[cursor-trajectory] stamp home failed", err));
+  await ensureAllProjectCursorHooks().catch((err) =>
+    console.error("[cursor-trajectory] install project hooks failed", err),
+  );
 
   const app = express();
   const cfg = getPublicConfig();
