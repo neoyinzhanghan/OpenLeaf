@@ -43,6 +43,7 @@ function parseAtomEntry(entryXml: string, arxivId: string): ResolvedPaper | null
   return {
     doi,
     arxivId,
+    url: doi ? `https://doi.org/${doi}` : `https://arxiv.org/abs/${arxivId}`,
     title,
     authors,
     venue: "arXiv",

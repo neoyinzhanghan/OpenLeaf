@@ -18,6 +18,7 @@ const { parseBibtex } = await import("./bibtex.js");
 const mockResolved = {
   doi: "10.1000/test.doi",
   arxivId: null,
+  url: "https://doi.org/10.1000/test.doi",
   title: "Mock Paper Title",
   authors: [{ given: "Ada", family: "Lovelace" }],
   venue: "Journal of Tests",

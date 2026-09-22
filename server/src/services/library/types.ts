@@ -34,6 +34,8 @@ export const PaperRecordSchema = z.object({
   citekey: CitekeySchema,
   doi: z.string().nullable().default(null),
   arxivId: z.string().nullable().default(null),
+  /** Canonical public landing page (doi.org, arxiv.org, publisher, or Scholar). */
+  url: z.string().nullable().default(null),
   title: z.string().min(1),
   authors: z.array(AuthorSchema).default([]),
   venue: z.string().default(""),
@@ -73,6 +75,7 @@ export const CreatePaperInputSchema = z.object({
   citekey: CitekeySchema.optional(),
   doi: z.string().nullable().optional(),
   arxivId: z.string().nullable().optional(),
+  url: z.string().nullable().optional(),
   title: z.string().min(1),
   authors: z.array(AuthorSchema).optional(),
   venue: z.string().optional(),

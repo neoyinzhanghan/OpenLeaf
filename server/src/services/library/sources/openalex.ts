@@ -13,7 +13,7 @@ function fromOpenAlexWork(work: Record<string, unknown>): ResolvedPaper | null {
     if (parts.length === 1) return { given: "", family: parts[0]! };
     return { given: parts.slice(0, -1).join(" "), family: parts[parts.length - 1]! };
   });
-  const ids = work.ids as { doi?: string } | undefined;
+  const ids = work.ids as { doi?: string; openalex?: string } | undefined;
   let doi: string | null = null;
   if (typeof ids?.doi === "string") {
     doi = ids.doi.replace(/^https?:\/\/doi\.org\//i, "");
@@ -21,7 +21,9 @@ function fromOpenAlexWork(work: Record<string, unknown>): ResolvedPaper | null {
     doi = work.doi.replace(/^https?:\/\/doi\.org\//i, "");
   }
   const year = typeof work.publication_year === "number" ? work.publication_year : null;
-  const primary = work.primary_location as { source?: { display_name?: string } } | undefined;
+  const primary = work.primary_location as
+    | { source?: { display_name?: string }; landing_page_url?: string | null }
+    | undefined;
   const venue = primary?.source?.display_name ?? "";
   const abstractInverted = work.abstract_inverted_index as Record<string, number[]> | undefined;
   let abstract = "";
@@ -33,9 +35,14 @@ function fromOpenAlexWork(work: Record<string, unknown>): ResolvedPaper | null {
     pairs.sort((a, b) => a[0] - b[0]);
     abstract = pairs.map((p) => p[1]).join(" ");
   }
+  const landing =
+    (typeof primary?.landing_page_url === "string" && primary.landing_page_url) ||
+    (doi ? `https://doi.org/${doi}` : null) ||
+    (typeof ids?.openalex === "string" ? ids.openalex : null);
   return {
     doi,
     arxivId: null,
+    url: landing,
     title,
     authors,
     venue,

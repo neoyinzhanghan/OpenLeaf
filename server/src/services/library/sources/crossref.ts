@@ -28,6 +28,7 @@ function fromCrossrefMessage(msg: Record<string, unknown>): ResolvedPaper | null
   return {
     doi,
     arxivId: null,
+    url: doi ? `https://doi.org/${doi}` : null,
     title,
     authors,
     venue: container,

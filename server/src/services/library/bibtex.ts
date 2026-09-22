@@ -55,6 +55,11 @@ function parseAuthors(authorField: string): Array<{ given: string; family: strin
 export function bibEntryToCreateInput(entry: BibEntry): CreatePaperInput {
   const f = entry.fields;
   const yearRaw = f.year ? Number(f.year.slice(0, 4)) : null;
+  const howpublished = f.howpublished || "";
+  const urlFromHow =
+    howpublished.match(/https?:\/\/[^\s}\\]+/i)?.[0] ??
+    howpublished.match(/\\url\{([^}]+)\}/i)?.[1] ??
+    null;
   return {
     citekey: entry.citekey,
     title: f.title || entry.citekey,
@@ -64,6 +69,7 @@ export function bibEntryToCreateInput(entry: BibEntry): CreatePaperInput {
     abstract: f.abstract || "",
     doi: f.doi ? f.doi.replace(/^https?:\/\/(dx\.)?doi\.org\//i, "") : null,
     arxivId: f.eprint && /arxiv/i.test(f.archiveprefix ?? f.eprint ?? "") ? f.eprint : f.arxiv ?? null,
+    url: f.url || urlFromHow,
     notes: "",
     tags: [],
     collections: [],

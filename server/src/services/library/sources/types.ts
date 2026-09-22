@@ -5,6 +5,8 @@ export type ResolvedAuthor = { given: string; family: string };
 export type ResolvedPaper = {
   doi: string | null;
   arxivId: string | null;
+  /** Publisher / DOI / arXiv landing page when known. */
+  url: string | null;
   title: string;
   authors: ResolvedAuthor[];
   venue: string;

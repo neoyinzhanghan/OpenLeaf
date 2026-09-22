@@ -15,6 +15,7 @@ import {
   papersDir,
   recordPath,
 } from "./paths.js";
+import { derivePaperUrl } from "./paperUrl.js";
 import {
   CollectionsFileSchema,
   CreatePaperInputSchema,
@@ -184,10 +185,11 @@ export async function addPaper(input: CreatePaperInput): Promise<PaperRecord> {
   citekey = candidate;
 
   const now = new Date().toISOString();
-  const record = PaperRecordSchema.parse({
+  const draft = {
     citekey,
     doi: parsed.doi ?? null,
     arxivId: parsed.arxivId ?? null,
+    url: parsed.url ?? null,
     title: parsed.title,
     authors: parsed.authors ?? [],
     venue: parsed.venue ?? "",
@@ -200,7 +202,9 @@ export async function addPaper(input: CreatePaperInput): Promise<PaperRecord> {
     source: parsed.source ?? "manual",
     integrity: { existence: "unresolved", retraction: "clean", lastChecked: null },
     addedAt: now,
-  });
+  };
+  draft.url = derivePaperUrl(draft);
+  const record = PaperRecordSchema.parse(draft);
 
   await writeRecordFile(record);
   upsertPaperInIndex(record);
@@ -227,10 +231,11 @@ export async function updatePaper(citekey: string, patch: PatchPaperInput): Prom
     }
   }
 
-  const updated = PaperRecordSchema.parse({
+  const draft = {
     citekey: nextCitekey,
     doi: parsed.doi !== undefined ? parsed.doi : existing.doi,
     arxivId: parsed.arxivId !== undefined ? parsed.arxivId : existing.arxivId,
+    url: parsed.url !== undefined ? parsed.url : existing.url,
     title: parsed.title ?? existing.title,
     authors: parsed.authors ?? existing.authors,
     venue: parsed.venue ?? existing.venue,
@@ -243,7 +248,14 @@ export async function updatePaper(citekey: string, patch: PatchPaperInput): Prom
     source: parsed.source ?? existing.source,
     integrity: existing.integrity,
     addedAt: existing.addedAt,
-  });
+  };
+  if (!draft.url || !/^https?:\/\//i.test(draft.url)) {
+    draft.url = derivePaperUrl(draft);
+  } else if (parsed.doi !== undefined || parsed.arxivId !== undefined) {
+    // Prefer DOI/arXiv landing when identifiers change.
+    draft.url = derivePaperUrl(draft);
+  }
+  const updated = PaperRecordSchema.parse(draft);
 
   if (nextCitekey !== citekey) {
     await fsPromises.rename(paperDir(citekey), paperDir(nextCitekey));

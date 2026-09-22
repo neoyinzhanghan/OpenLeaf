@@ -550,6 +550,19 @@ export function LibraryPanel({
                     {p.year != null ? <span>· {p.year}</span> : null}
                     <span className={badge.className}>{badge.label}</span>
                   </div>
+                  {p.url ? (
+                    <div className="library-item-url">
+                      <a
+                        href={p.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {p.url.replace(/^https?:\/\//i, "").slice(0, 72)}
+                        {p.url.replace(/^https?:\/\//i, "").length > 72 ? "…" : ""}
+                      </a>
+                    </div>
+                  ) : null}
                   {p.collections.length ? (
                     <div className="library-item-collections">
                       {collectionNames(p, collections).map((name) => (
@@ -584,6 +597,13 @@ export function LibraryPanel({
                   {selected.venue || "—"}
                   {selected.year != null ? ` · ${selected.year}` : ""}
                 </p>
+                {selected.url ? (
+                  <p>
+                    <a href={selected.url} target="_blank" rel="noreferrer">
+                      {selected.url}
+                    </a>
+                  </p>
+                ) : null}
                 {selected.doi ? <p>DOI: {selected.doi}</p> : null}
                 {selected.arxivId ? <p>arXiv: {selected.arxivId}</p> : null}
                 {selected.collections.length ? (

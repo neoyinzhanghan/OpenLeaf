@@ -46,6 +46,7 @@ describe("cite into project", () => {
       year: 2023,
       doi: "10.1000/attention",
       arxivId: null,
+      url: "https://doi.org/10.1000/attention",
       venue: "NeurIPS",
       abstract: "",
       tags: [],

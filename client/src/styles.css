@@ -1506,6 +1506,17 @@ a {
   font-size: 0.72rem;
 }
 
+.library-item-url {
+  font-size: 0.72rem;
+  margin-top: 0.15rem;
+}
+
+.library-item-url a,
+.library-detail a {
+  color: var(--accent);
+  word-break: break-all;
+}
+
 .lib-badge-collection {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);

@@ -93,6 +93,7 @@ export function createSemanticScholarClient(opts?: {
       const result = {
         doi: normalized,
         arxivId: null,
+        url: `https://doi.org/${normalized}`,
         title: body.title ?? "",
         authors,
         venue: body.venue ?? "",

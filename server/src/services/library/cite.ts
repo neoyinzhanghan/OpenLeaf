@@ -34,6 +34,8 @@ export function paperToBibtex(paper: PaperRecord): string {
   if (paper.year != null) fields.push(`  year = {${paper.year}}`);
   if (paper.venue) fields.push(`  journal = {${escapeBibtex(paper.venue)}}`);
   if (paper.doi) fields.push(`  doi = {${escapeBibtex(paper.doi)}}`);
+  if (paper.url) fields.push(`  url = {${escapeBibtex(paper.url)}}`);
+  else if (paper.doi) fields.push(`  url = {https://doi.org/${escapeBibtex(paper.doi)}}`);
   if (paper.arxivId) {
     fields.push(`  eprint = {${escapeBibtex(paper.arxivId)}}`);
     fields.push(`  archivePrefix = {arXiv}`);

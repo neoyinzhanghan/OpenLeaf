@@ -5,6 +5,7 @@
 import { findByDoi, getPaper, listAllRecords, updatePaper } from "./index.js";
 import { lookupExternal } from "./import.js";
 import { checkPaperIntegrity, type IntegrityCheckResult } from "./integrity.js";
+import { derivePaperUrl } from "./paperUrl.js";
 import type { PaperRecord } from "./types.js";
 
 export type EnrichResult = {
@@ -108,6 +109,7 @@ export async function enrichPaper(
     abstract: resolved.abstract || paper.abstract,
     doi,
     arxivId,
+    url: resolved.url || derivePaperUrl({ ...paper, doi, arxivId, title: resolved.title || paper.title }),
     source: resolved.source,
     notes: cleanedNotes,
   });

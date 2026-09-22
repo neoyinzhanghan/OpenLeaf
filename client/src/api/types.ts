@@ -46,6 +46,7 @@ export type PaperRecord = {
   citekey: string;
   doi: string | null;
   arxivId: string | null;
+  url: string | null;
   title: string;
   authors: PaperAuthor[];
   venue: string;

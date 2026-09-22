@@ -45,6 +45,7 @@ function resolvedToInput(paper: ResolvedPaper, citekey?: string): CreatePaperInp
     citekey,
     doi: paper.doi,
     arxivId: paper.arxivId,
+    url: paper.url,
     title: paper.title,
     authors: paper.authors,
     venue: paper.venue,

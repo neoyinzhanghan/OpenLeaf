@@ -23,6 +23,7 @@ describe("integrity checks", () => {
             ? {
                 doi,
                 arxivId: null,
+                url: `https://doi.org/${doi}`,
                 title: "Good Paper",
                 authors: [{ given: "A", family: "Author" }],
                 venue: "Tests",
@@ -34,6 +35,7 @@ describe("integrity checks", () => {
               ? {
                   doi,
                   arxivId: null,
+                  url: `https://doi.org/${doi}`,
                   title: "Completely Different Remote Title",
                   authors: [],
                   venue: "",
@@ -107,6 +109,7 @@ describe("integrity checks", () => {
         lookupDoi: async (doi) => ({
           doi,
           arxivId: null,
+          url: `https://doi.org/${doi}`,
           title: "Retracted Work",
           authors: [],
           venue: "",
@@ -140,6 +143,7 @@ describe("integrity checks", () => {
         lookupDoi: async (doi) => ({
           doi,
           arxivId: null,
+          url: `https://doi.org/${doi}`,
           title: "Completely Different Remote Title",
           authors: [],
           venue: "",
