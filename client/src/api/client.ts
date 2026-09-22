@@ -797,6 +797,42 @@ export function checkLibraryPaperIntegrity(
   });
 }
 
+export function enrichLibrary(body?: {
+  force?: boolean;
+  citekeys?: string[];
+  checkIntegrity?: boolean;
+  delayMs?: number;
+}): Promise<{
+  results: Array<{
+    citekey: string;
+    enriched: boolean;
+    reason?: string;
+    paper: PaperRecord;
+  }>;
+  enriched: number;
+  total: number;
+}> {
+  return request("/api/library/enrich", {
+    method: "POST",
+    body: JSON.stringify(body ?? {}),
+  });
+}
+
+export function enrichLibraryPaper(
+  citekey: string,
+  body?: { force?: boolean; checkIntegrity?: boolean },
+): Promise<{
+  citekey: string;
+  enriched: boolean;
+  reason?: string;
+  paper: PaperRecord;
+}> {
+  return request(`/api/library/${encodeURIComponent(citekey)}/enrich`, {
+    method: "POST",
+    body: JSON.stringify(body ?? {}),
+  });
+}
+
 export function citeLibraryIntoProject(
   projectId: string,
   body: { citekey: string; file?: string; line?: number },

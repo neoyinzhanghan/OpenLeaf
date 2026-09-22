@@ -60,6 +60,10 @@ export function createOpenAlexClient(opts?: {
       headers: { Accept: "application/json", "User-Agent": `OpenLeaf/1.0 (mailto:${mailto})` },
     });
     if (res.status === 404) return null;
+    if (res.status === 429) {
+      // Polite backoff: caller may retry; treat as soft miss for this attempt.
+      return null;
+    }
     if (!res.ok) throw Object.assign(new Error(`OpenAlex HTTP ${res.status}`), { status: 502 });
     return res.json();
   }

@@ -96,23 +96,31 @@ async function checkTitleMatch(
 ): Promise<"verified" | "mismatch" | "unresolved"> {
   if (!paper.doi && !paper.title) return "unresolved";
   const clients = getSourceClients();
-  if (paper.doi) {
-    const remote =
-      (await clients.crossref.lookupDoi(paper.doi)) ?? (await clients.openalex.lookupDoi(paper.doi));
-    if (!remote) return "unresolved";
-    const local = paper.title.trim().toLowerCase();
-    const remoteTitle = remote.title.trim().toLowerCase();
-    if (!local || !remoteTitle) return "verified";
-    // Soft match: exact or containment of first 40 chars.
-    if (local === remoteTitle) return "verified";
-    if (local.includes(remoteTitle.slice(0, 40)) || remoteTitle.includes(local.slice(0, 40))) {
-      return "verified";
+  try {
+    if (paper.doi) {
+      const remote =
+        (await clients.crossref.lookupDoi(paper.doi)) ?? (await clients.openalex.lookupDoi(paper.doi));
+      if (!remote) return "unresolved";
+      const local = paper.title.trim().toLowerCase();
+      const remoteTitle = remote.title.trim().toLowerCase();
+      if (!local || !remoteTitle) return "verified";
+      // Soft match: exact or containment of first 40 chars.
+      if (local === remoteTitle) return "verified";
+      if (local.includes(remoteTitle.slice(0, 40)) || remoteTitle.includes(local.slice(0, 40))) {
+        return "verified";
+      }
+      return "mismatch";
     }
-    return "mismatch";
+    const remote = await clients.openalex.searchByTitle(paper.title);
+    if (!remote) return "unresolved";
+    return "verified";
+  } catch (err) {
+    console.warn(
+      `[integrity] title match failed for ${paper.citekey}:`,
+      err instanceof Error ? err.message : err,
+    );
+    return "unresolved";
   }
-  const remote = await clients.openalex.searchByTitle(paper.title);
-  if (!remote) return "unresolved";
-  return "verified";
 }
 
 export async function checkPaperIntegrity(
@@ -136,13 +144,36 @@ export async function checkPaperIntegrity(
   let detail: string | undefined;
 
   if (paper.doi) {
-    const cr = await checkCrossrefRetraction(paper.doi, opts?.fetchImpl);
-    existence = cr.existence;
-    retraction = cr.retraction;
-    detail = cr.detail;
-    if (existence === "verified") {
-      const match = await checkTitleMatch(paper);
-      if (match === "mismatch") existence = "mismatch";
+    const arxivFromDoi = paper.doi.match(/^10\.48550\/arxiv\.(.+)$/i)?.[1];
+    if (arxivFromDoi || paper.arxivId) {
+      const clients = getSourceClients();
+      const id = paper.arxivId || arxivFromDoi!;
+      const remote = await clients.arxiv.lookupId(id);
+      if (remote) {
+        existence = "verified";
+        detail = "arXiv id resolved (via DOI or arxivId)";
+      } else {
+        const cr = await checkCrossrefRetraction(paper.doi, opts?.fetchImpl);
+        existence = cr.existence;
+        retraction = cr.retraction;
+        detail = cr.detail ?? "arXiv lookup failed; used Crossref";
+      }
+    } else {
+      const cr = await checkCrossrefRetraction(paper.doi, opts?.fetchImpl);
+      existence = cr.existence;
+      retraction = cr.retraction;
+      detail = cr.detail;
+      if (existence === "verified") {
+        const match = await checkTitleMatch(paper);
+        if (match === "mismatch") existence = "mismatch";
+      } else if (existence === "unresolved") {
+        // Crossref miss — try OpenAlex before giving up.
+        const match = await checkTitleMatch(paper);
+        if (match === "verified") {
+          existence = "verified";
+          detail = "Crossref miss; verified via OpenAlex/title";
+        }
+      }
     }
   } else if (paper.arxivId) {
     const clients = getSourceClients();

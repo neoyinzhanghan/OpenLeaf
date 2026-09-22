@@ -1483,7 +1483,32 @@ a {
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
-  margin-top: 0.15rem;
+  align-items: baseline;
+}
+
+.library-authors,
+.library-authors-full {
+  white-space: normal;
+  line-height: 1.35;
+}
+
+.library-authors-full {
+  color: var(--ink);
+  font-size: 0.85rem;
+}
+
+.library-item-collections,
+.library-detail-collections {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.2rem;
+  font-size: 0.72rem;
+}
+
+.lib-badge-collection {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
 .library-detail {

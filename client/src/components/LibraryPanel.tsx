@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  checkLibraryIntegrity,
   checkLibraryPaperIntegrity,
   checkProjectCitations,
   createLibraryPaper,
   deleteLibraryPaper,
+  enrichLibrary,
+  enrichLibraryPaper,
   getLibraryCollections,
   importLibraryBibtex,
   importLibraryLink,
@@ -26,12 +29,15 @@ type Props = {
 
 type Density = "compact" | "comfortable";
 
-function authorsLabel(paper: PaperRecord): string {
+function authorsLabel(paper: PaperRecord, opts?: { compact?: boolean }): string {
   if (!paper.authors.length) return "Unknown authors";
-  return paper.authors
-    .slice(0, 3)
-    .map((a) => (a.given ? `${a.family}, ${a.given[0]}.` : a.family))
-    .join("; ") + (paper.authors.length > 3 ? " et al." : "");
+  const names = paper.authors.map((a) =>
+    a.given ? `${a.family}, ${a.given}` : a.family,
+  );
+  if (opts?.compact && names.length > 6) {
+    return `${names.slice(0, 6).join("; ")}; … (+${names.length - 6})`;
+  }
+  return names.join("; ");
 }
 
 function integrityBadge(paper: PaperRecord): { label: string; className: string } {
@@ -48,6 +54,11 @@ function integrityBadge(paper: PaperRecord): { label: string; className: string 
     return { label: "Mismatch", className: "lib-badge lib-badge-warn" };
   }
   return { label: "Unchecked", className: "lib-badge" };
+}
+
+function collectionNames(paper: PaperRecord, collections: LibraryCollections | null): string[] {
+  if (!collections) return paper.collections;
+  return paper.collections.map((id) => collections.collections[id]?.name ?? id);
 }
 
 export function LibraryPanel({
@@ -86,7 +97,12 @@ export function LibraryPanel({
   const refresh = useCallback(async () => {
     try {
       const [{ papers: list }, coll] = await Promise.all([
-        listLibraryPapers({ q: query || undefined, tag: tagFilter ?? undefined, collection: collectionFilter ?? undefined }),
+        listLibraryPapers({
+          q: query || undefined,
+          tag: tagFilter ?? undefined,
+          collection: collectionFilter ?? undefined,
+          limit: 2000,
+        }),
         getLibraryCollections(),
       ]);
       setPapers(list);
@@ -218,6 +234,44 @@ export function LibraryPanel({
     }
   };
 
+  const runEnrichSelected = async () => {
+    if (!selected) return;
+    setBusy(true);
+    try {
+      const result = await enrichLibraryPaper(selected.citekey, { force: true });
+      setPapers((prev) => prev.map((p) => (p.citekey === result.paper.citekey ? result.paper : p)));
+      if (!result.enriched && result.reason) {
+        setError(`Lookup: ${result.reason}`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Enrich failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const runCheckAll = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const enrich = await enrichLibrary({ force: false, checkIntegrity: true });
+      const unchecked = enrich.results.filter(
+        (r) => r.paper.integrity.existence === "unresolved" || !r.paper.integrity.lastChecked,
+      );
+      if (unchecked.length) {
+        await checkLibraryIntegrity({
+          force: true,
+          citekeys: unchecked.map((r) => r.citekey),
+        });
+      }
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Library check failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const runProjectCitationCheck = async () => {
     if (!projectId) return;
     setBusy(true);
@@ -301,6 +355,15 @@ export function LibraryPanel({
               Check cites
             </button>
           ) : null}
+          <button
+            type="button"
+            className="btn btn-ghost"
+            title="Enrich from Crossref/OpenAlex and verify all papers"
+            disabled={busy}
+            onClick={() => void runCheckAll()}
+          >
+            {busy ? "Checking…" : "Check all"}
+          </button>
           <button type="button" className="btn btn-ghost btn-icon" title="Import" onClick={() => setImportOpen((v) => !v)}>
             +
           </button>
@@ -483,10 +546,19 @@ export function LibraryPanel({
                 >
                   <div className="library-item-title">{p.title}</div>
                   <div className="library-item-meta">
-                    <span>{authorsLabel(p)}</span>
+                    <span className="library-authors">{authorsLabel(p, { compact: true })}</span>
                     {p.year != null ? <span>· {p.year}</span> : null}
                     <span className={badge.className}>{badge.label}</span>
                   </div>
+                  {p.collections.length ? (
+                    <div className="library-item-collections">
+                      {collectionNames(p, collections).map((name) => (
+                        <span key={name} className="lib-badge lib-badge-collection">
+                          {name}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
                   <div className="library-item-key">{p.citekey}</div>
                 </button>
               </li>
@@ -507,13 +579,19 @@ export function LibraryPanel({
                 open={sectionOpen.info}
                 onToggle={() => setSectionOpen((s) => ({ ...s, info: !s.info }))}
               >
-                <p>{authorsLabel(selected)}</p>
+                <p className="library-authors-full">{authorsLabel(selected)}</p>
                 <p>
                   {selected.venue || "—"}
                   {selected.year != null ? ` · ${selected.year}` : ""}
                 </p>
                 {selected.doi ? <p>DOI: {selected.doi}</p> : null}
                 {selected.arxivId ? <p>arXiv: {selected.arxivId}</p> : null}
+                {selected.collections.length ? (
+                  <p className="library-detail-collections">
+                    Projects:{" "}
+                    {collectionNames(selected, collections).join(" · ") || selected.collections.join(" · ")}
+                  </p>
+                ) : null}
                 {selected.abstract ? <p className="library-abstract">{selected.abstract}</p> : null}
               </Collapsible>
               <Collapsible
@@ -557,6 +635,9 @@ export function LibraryPanel({
                 <p className="muted">
                   Last checked: {selected.integrity.lastChecked ?? "never"}
                 </p>
+                <button type="button" className="btn btn-quiet" disabled={busy} onClick={() => void runEnrichSelected()}>
+                  Enrich from Crossref / OpenAlex
+                </button>{" "}
                 <button type="button" className="btn btn-quiet" disabled={busy} onClick={() => void runIntegrity()}>
                   Re-check now
                 </button>

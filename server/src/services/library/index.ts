@@ -116,7 +116,7 @@ export async function findByDoi(doi: string): Promise<PaperRecord | null> {
 
 export async function searchPapers(opts: LibrarySearchOpts = {}): Promise<PaperRecord[]> {
   ensureLibraryRoot();
-  const limit = Math.min(Math.max(opts.limit ?? 100, 1), 500);
+  const limit = Math.min(Math.max(opts.limit ?? 500, 1), 2000);
   let candidates: PaperRecord[];
 
   if (opts.q?.trim()) {

@@ -13,6 +13,7 @@ import {
   writeCollections,
 } from "../services/library/index.js";
 import { importBibtex, importFromLink, importPdf, lookupExternal } from "../services/library/import.js";
+import { enrichLibrary, enrichPaper } from "../services/library/enrich.js";
 import { checkLibraryIntegrity, checkPaperIntegrity } from "../services/library/integrity.js";
 import { CreatePaperInputSchema, PatchPaperInputSchema } from "../services/library/types.js";
 
@@ -183,6 +184,40 @@ libraryRouter.post("/integrity/check", async (req, res) => {
       citekeys,
     });
     res.json({ results });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+/** Pull live Crossref/OpenAlex/arXiv metadata into library records (not BibTeX stubs). */
+libraryRouter.post("/enrich", async (req, res) => {
+  try {
+    const citekeys = Array.isArray(req.body?.citekeys)
+      ? (req.body.citekeys as unknown[]).filter((c): c is string => typeof c === "string")
+      : undefined;
+    const results = await enrichLibrary({
+      force: Boolean(req.body?.force),
+      citekeys,
+      checkIntegrity: req.body?.checkIntegrity !== false,
+      delayMs: typeof req.body?.delayMs === "number" ? req.body.delayMs : 200,
+    });
+    res.json({
+      results,
+      enriched: results.filter((r) => r.enriched).length,
+      total: results.length,
+    });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+libraryRouter.post("/:citekey/enrich", async (req, res) => {
+  try {
+    const result = await enrichPaper(req.params.citekey, {
+      force: Boolean(req.body?.force),
+      checkIntegrity: req.body?.checkIntegrity !== false,
+    });
+    res.json(result);
   } catch (err) {
     sendError(res, err);
   }
