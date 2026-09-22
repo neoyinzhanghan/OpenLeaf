@@ -1427,6 +1427,12 @@ a {
   min-height: 0;
 }
 
+.library-back {
+  display: none;
+  margin-bottom: 0.65rem;
+  align-self: flex-start;
+}
+
 .library-sidebar {
   border-right: 1px solid var(--line);
   padding: 0.5rem;
@@ -1576,6 +1582,125 @@ a {
   padding: 1rem;
   color: var(--ink-faint);
   font-size: 0.9rem;
+}
+
+/* Tablet: filters on top, list | detail side-by-side */
+@media (max-width: 1100px) {
+  .library-master {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+    grid-template-rows: auto 1fr;
+  }
+
+  .library-sidebar {
+    grid-column: 1 / -1;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+    overflow: visible;
+  }
+
+  .library-filters {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    gap: 0.35rem;
+    overflow-x: auto;
+    padding-bottom: 0.15rem;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+
+  .library-filters .btn {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+}
+
+/* Phone: single column — list OR detail, never three panes */
+@media (max-width: 720px) {
+  .library-drawer {
+    width: 100vw;
+  }
+
+  .library-page .history-drawer-head,
+  .library-drawer .history-drawer-head {
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    align-items: flex-start;
+  }
+
+  .library-page .history-drawer-actions,
+  .library-drawer .history-drawer-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.25rem;
+  }
+
+  .library-master {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+
+  .library-sidebar {
+    grid-column: 1;
+    padding: 0.65rem 0.75rem;
+  }
+
+  .library-list {
+    border-right: none;
+    min-height: 0;
+  }
+
+  .library-detail {
+    display: none;
+    border-right: none;
+    padding: 0.85rem 1rem 1.25rem;
+    padding-bottom: max(1.25rem, env(safe-area-inset-bottom, 0px));
+  }
+
+  .library-master.has-selection {
+    grid-template-rows: 1fr;
+  }
+
+  .library-master.has-selection .library-sidebar,
+  .library-master.has-selection .library-list {
+    display: none;
+  }
+
+  .library-master.has-selection .library-detail {
+    display: block;
+    overflow: auto;
+  }
+
+  .library-back {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
+  }
+
+  .library-item {
+    padding: 0.75rem 0.7rem;
+    min-height: 44px;
+  }
+
+  .library-item-url {
+    display: none;
+  }
+
+  .library-item-key {
+    word-break: break-all;
+  }
+
+  .library-authors {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .library-lit-table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
 }
 
 .lib-badge {

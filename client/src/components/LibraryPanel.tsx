@@ -138,6 +138,11 @@ export function LibraryPanel({
         e.preventDefault();
         return;
       }
+      if (selectedKey) {
+        setSelectedKey(null);
+        e.preventDefault();
+        return;
+      }
       onClose();
       return;
     }
@@ -487,7 +492,7 @@ export function LibraryPanel({
           </button>
         </div>
       ) : (
-      <div className="library-master">
+      <div className={`library-master${selectedKey ? " has-selection" : ""}`}>
         <div className="library-sidebar">
           <input
             ref={searchRef}
@@ -497,7 +502,7 @@ export function LibraryPanel({
             placeholder="Filter… (Esc clears)"
             aria-label="Filter library"
           />
-          <div className="library-filters">
+          <div className="library-filters" role="toolbar" aria-label="Collections and tags">
             <button
               type="button"
               className={`btn btn-ghost${!collectionFilter && !tagFilter ? " is-active" : ""}`}
@@ -583,6 +588,13 @@ export function LibraryPanel({
         <div className="library-detail">
           {selected ? (
             <>
+              <button
+                type="button"
+                className="btn btn-ghost library-back"
+                onClick={() => setSelectedKey(null)}
+              >
+                ← Back to list
+              </button>
               <div className="library-detail-head">
                 <h3>{selected.title}</h3>
                 <code>{selected.citekey}</code>
