@@ -727,3 +727,40 @@ export function deleteLibraryCollection(id: string): Promise<LibraryCollections>
 export function reindexLibrary(): Promise<{ count: number }> {
   return request("/api/library/reindex", { method: "POST", body: "{}" });
 }
+
+export function lookupLibraryExternal(body: {
+  doi?: string;
+  arxivId?: string;
+  title?: string;
+  url?: string;
+}): Promise<{ paper: PaperRecord }> {
+  return request("/api/library/lookup", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function importLibraryLink(body: {
+  link: string;
+  citekey?: string;
+  dryRun?: boolean;
+}): Promise<{ paper: PaperRecord; created: boolean; existingCitekey?: string }> {
+  return request("/api/library/import/link", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function importLibraryBibtex(bibtex: string): Promise<{
+  imported: PaperRecord[];
+  skipped: Array<{ citekey: string; reason: string; existingCitekey?: string }>;
+  errors: Array<{ citekey: string; error: string }>;
+}> {
+  return request("/api/library/import/bibtex", {
+    method: "POST",
+    body: JSON.stringify({ bibtex }),
+  });
+}
+
+export function importLibraryPdf(body: {
+  pdfBase64: string;
+  filename?: string;
+  titleHint?: string;
+  citekey?: string;
+}): Promise<{ paper: PaperRecord; created: boolean; resolvedVia: string }> {
+  return request("/api/library/import/pdf", { method: "POST", body: JSON.stringify(body) });
+}

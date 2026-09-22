@@ -12,6 +12,7 @@ import {
   upsertCollection,
   writeCollections,
 } from "../services/library/index.js";
+import { importBibtex, importFromLink, importPdf, lookupExternal } from "../services/library/import.js";
 import { CreatePaperInputSchema, PatchPaperInputSchema } from "../services/library/types.js";
 
 export const libraryRouter = Router();
@@ -83,6 +84,89 @@ libraryRouter.delete("/collections/:id", async (req, res) => {
 libraryRouter.post("/reindex", async (_req, res) => {
   try {
     res.json(await reindexLibrary());
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+/** Preview external metadata without saving. */
+libraryRouter.post("/lookup", async (req, res) => {
+  try {
+    const paper = await lookupExternal({
+      doi: typeof req.body?.doi === "string" ? req.body.doi : undefined,
+      arxivId: typeof req.body?.arxivId === "string" ? req.body.arxivId : undefined,
+      title: typeof req.body?.title === "string" ? req.body.title : undefined,
+      url: typeof req.body?.url === "string" ? req.body.url : undefined,
+    });
+    if (!paper) {
+      res.status(404).json({ error: "No metadata found" });
+      return;
+    }
+    res.json({ paper });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+libraryRouter.post("/import/link", async (req, res) => {
+  try {
+    const link =
+      typeof req.body?.link === "string"
+        ? req.body.link
+        : typeof req.body?.url === "string"
+          ? req.body.url
+          : "";
+    if (!link.trim()) {
+      res.status(400).json({ error: "link is required" });
+      return;
+    }
+    const result = await importFromLink(link, {
+      citekey: typeof req.body?.citekey === "string" ? req.body.citekey : undefined,
+      dryRun: Boolean(req.body?.dryRun),
+    });
+    res.status(result.created ? 201 : 200).json(result);
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+libraryRouter.post("/import/bibtex", async (req, res) => {
+  try {
+    const text =
+      typeof req.body?.bibtex === "string"
+        ? req.body.bibtex
+        : typeof req.body?.text === "string"
+          ? req.body.text
+          : "";
+    if (!text.trim()) {
+      res.status(400).json({ error: "bibtex text is required" });
+      return;
+    }
+    res.json(await importBibtex(text));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+libraryRouter.post("/import/pdf", async (req, res) => {
+  try {
+    // Accept base64 body { pdfBase64, filename?, titleHint?, citekey? } to avoid multer dep for now.
+    const b64 = typeof req.body?.pdfBase64 === "string" ? req.body.pdfBase64 : "";
+    if (!b64) {
+      res.status(400).json({ error: "pdfBase64 is required" });
+      return;
+    }
+    const buffer = Buffer.from(b64, "base64");
+    if (buffer.length < 5 || buffer.subarray(0, 5).toString("latin1") !== "%PDF-") {
+      res.status(400).json({ error: "Not a PDF" });
+      return;
+    }
+    const result = await importPdf(buffer, {
+      filename: typeof req.body?.filename === "string" ? req.body.filename : undefined,
+      titleHint: typeof req.body?.titleHint === "string" ? req.body.titleHint : undefined,
+      citekey: typeof req.body?.citekey === "string" ? req.body.citekey : undefined,
+    });
+    res.status(result.created ? 201 : 200).json(result);
   } catch (err) {
     sendError(res, err);
   }
