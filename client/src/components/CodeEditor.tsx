@@ -38,6 +38,14 @@ export type CommentMark = {
   threadId?: string;
 };
 
+/** Integrity / claim-support gutter markers (same decoration mechanism as comments). */
+export type CitationGutterMark = {
+  line: number;
+  citekey: string;
+  /** supporting | contrasting | mentioning | unverifiable | not_checked | retracted | mismatch */
+  kind: string;
+};
+
 export type CommentSelection = {
   line: number;
   column: number;
@@ -75,6 +83,8 @@ type Props = {
   readOnly?: boolean;
   /** Gutter markers for comment threads on this file */
   commentMarks?: CommentMark[];
+  /** Citation integrity / claim gutter markers on this file */
+  citationMarks?: CitationGutterMark[];
   /** Cmd/Ctrl+Alt+M or selection helper — open compose for current selection */
   onRequestComment?: (sel: CommentSelection) => void;
   /** Click a gutter mark → focus that thread in the comments panel */
@@ -159,6 +169,7 @@ export function CodeEditor({
   awareness = null,
   readOnly = false,
   commentMarks = [],
+  citationMarks = [],
   onRequestComment,
   onOpenCommentThread,
   changeMarks = null,
@@ -172,6 +183,7 @@ export function CodeEditor({
   const monacoRef = useRef<typeof import("monaco-editor") | null>(null);
   const decoRef = useRef<string[]>([]);
   const commentDecoRef = useRef<string[]>([]);
+  const citationDecoRef = useRef<string[]>([]);
   const changeDecoRef = useRef<string[]>([]);
   const suggestDecoRef = useRef<string[]>([]);
   const changeZoneIdsRef = useRef<string[]>([]);
@@ -468,6 +480,46 @@ export function CodeEditor({
       })),
     );
   }, [commentMarks, editorReady, path]);
+
+  // Citation integrity / claim-support gutter marks (same mechanism as comments / highlight-since)
+  useEffect(() => {
+    const ed = editorRef.current;
+    if (!ed || !editorReady) return;
+    const marks = citationMarks.filter((m) => m.line >= 1);
+    citationDecoRef.current = ed.deltaDecorations(
+      citationDecoRef.current,
+      marks.map((m) => {
+        const kind = m.kind;
+        const color =
+          kind === "retracted" || kind === "contrasting"
+            ? "#B91C1C"
+            : kind === "mismatch" || kind === "unverifiable"
+              ? "#B45309"
+              : kind === "supporting"
+                ? "#0F766E"
+                : "#64748B";
+        return {
+          range: {
+            startLineNumber: m.line,
+            startColumn: 1,
+            endLineNumber: m.line,
+            endColumn: 1,
+          },
+          options: {
+            isWholeLine: false,
+            linesDecorationsClassName: `citation-line-glyph citation-${kind}`,
+            hoverMessage: {
+              value: `Citation \`${m.citekey}\` · ${kind} _(triage — not certified)_`,
+            },
+            overviewRuler: {
+              color,
+              position: monacoEditor.OverviewRulerLane.Center,
+            },
+          },
+        };
+      }),
+    );
+  }, [citationMarks, editorReady, path]);
 
   // Cursor-style show-changes: green additions + red deleted view zones.
   // Re-apply on model swap (file/path remount) — decorations die with the old model.

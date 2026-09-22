@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   checkLibraryPaperIntegrity,
+  checkProjectCitations,
   createLibraryPaper,
   deleteLibraryPaper,
   getLibraryCollections,
@@ -9,6 +10,7 @@ import {
   importLibraryPdf,
   listLibraryPapers,
   patchLibraryPaper,
+  type CitationInstance,
 } from "../api/client";
 import type { LibraryCollections, PaperRecord } from "../api/types";
 
@@ -17,6 +19,7 @@ type Props = {
   onClose: () => void;
   projectId?: string;
   onCiteIntoProject?: (citekey: string) => void;
+  onCitationsChanged?: (instances: CitationInstance[]) => void;
 };
 
 type Density = "compact" | "comfortable";
@@ -45,7 +48,7 @@ function integrityBadge(paper: PaperRecord): { label: string; className: string 
   return { label: "Unchecked", className: "lib-badge" };
 }
 
-export function LibraryPanel({ open, onClose, projectId, onCiteIntoProject }: Props) {
+export function LibraryPanel({ open, onClose, projectId, onCiteIntoProject, onCitationsChanged }: Props) {
   const [papers, setPapers] = useState<PaperRecord[]>([]);
   const [collections, setCollections] = useState<LibraryCollections | null>(null);
   const [query, setQuery] = useState("");
@@ -54,6 +57,10 @@ export function LibraryPanel({ open, onClose, projectId, onCiteIntoProject }: Pr
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [density, setDensity] = useState<Density>("comfortable");
   const [importOpen, setImportOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<"browse" | "litreview">("browse");
+  const [litRows, setLitRows] = useState<
+    Array<{ paper: PaperRecord; relevance: string; claim: string; integrity: string; importSelected: boolean }>
+  >([]);
   const [importLink, setImportLink] = useState("");
   const [importBib, setImportBib] = useState("");
   const [busy, setBusy] = useState(false);
@@ -202,6 +209,48 @@ export function LibraryPanel({ open, onClose, projectId, onCiteIntoProject }: Pr
     }
   };
 
+  const runProjectCitationCheck = async () => {
+    if (!projectId) return;
+    setBusy(true);
+    try {
+      const report = await checkProjectCitations(projectId, { force: true });
+      onCitationsChanged?.(report.claims);
+      const claimByKey = new Map<string, CitationInstance>();
+      for (const c of report.claims) claimByKey.set(c.citekey, c);
+      setLitRows(
+        papers.map((p) => {
+          const claim = claimByKey.get(p.citekey);
+          return {
+            paper: p,
+            relevance: p.tags[0] ?? "—",
+            claim: claim?.verdict ?? "not_checked",
+            integrity: `${p.integrity.existence}/${p.integrity.retraction}`,
+            importSelected: false,
+          };
+        }),
+      );
+      setViewMode("litreview");
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Citation check failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const seedLitReviewFromLibrary = () => {
+    setLitRows(
+      papers.map((p) => ({
+        paper: p,
+        relevance: "library",
+        claim: "not_checked",
+        integrity: `${p.integrity.existence}/${p.integrity.retraction}`,
+        importSelected: false,
+      })),
+    );
+    setViewMode("litreview");
+  };
+
   if (!open) return null;
 
   return (
@@ -222,6 +271,25 @@ export function LibraryPanel({ open, onClose, projectId, onCiteIntoProject }: Pr
           >
             {density === "compact" ? "▦" : "▤"}
           </button>
+          <button
+            type="button"
+            className={`btn btn-ghost${viewMode === "litreview" ? " is-active" : ""}`}
+            title="AI literature review table"
+            onClick={() => (viewMode === "litreview" ? setViewMode("browse") : seedLitReviewFromLibrary())}
+          >
+            Review
+          </button>
+          {projectId ? (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              title="Scan & check project citations"
+              disabled={busy}
+              onClick={() => void runProjectCitationCheck()}
+            >
+              Check cites
+            </button>
+          ) : null}
           <button type="button" className="btn btn-ghost btn-icon" title="Import" onClick={() => setImportOpen((v) => !v)}>
             +
           </button>
@@ -283,6 +351,66 @@ export function LibraryPanel({ open, onClose, projectId, onCiteIntoProject }: Pr
         </div>
       ) : null}
 
+      {viewMode === "litreview" ? (
+        <div className="library-litreview">
+          <p className="muted">
+            Candidate papers — import is a deliberate checkbox action (never a silent agent write).
+            Claim-support verdicts are triage signals, not certified facts.
+          </p>
+          <table className="library-lit-table">
+            <thead>
+              <tr>
+                <th>Import</th>
+                <th>Paper</th>
+                <th>Relevance</th>
+                <th>Claim support</th>
+                <th>Integrity</th>
+              </tr>
+            </thead>
+            <tbody>
+              {litRows.map((row, idx) => (
+                <tr key={row.paper.citekey}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={row.importSelected}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setLitRows((rows) =>
+                          rows.map((r, i) => (i === idx ? { ...r, importSelected: checked } : r)),
+                        );
+                      }}
+                    />
+                  </td>
+                  <td>
+                    <div className="library-item-title">{row.paper.title}</div>
+                    <div className="library-item-key">{row.paper.citekey}</div>
+                  </td>
+                  <td>{row.relevance}</td>
+                  <td>
+                    <span className="lib-badge">{row.claim}</span>
+                  </td>
+                  <td>
+                    <span className="lib-badge">{row.integrity}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={busy || !litRows.some((r) => r.importSelected)}
+            onClick={() => {
+              // Already in library when seeded from library; checkbox confirms deliberate keep/cite.
+              const selected = litRows.filter((r) => r.importSelected);
+              for (const row of selected) onCiteIntoProject?.(row.paper.citekey);
+            }}
+          >
+            Cite selected into project
+          </button>
+        </div>
+      ) : (
       <div className="library-master">
         <div className="library-sidebar">
           <input
@@ -450,6 +578,7 @@ export function LibraryPanel({ open, onClose, projectId, onCiteIntoProject }: Pr
           )}
         </div>
       </div>
+      )}
     </aside>
   );
 }

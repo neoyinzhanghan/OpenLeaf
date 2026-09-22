@@ -806,3 +806,32 @@ export function citeLibraryIntoProject(
     body: JSON.stringify(body),
   });
 }
+
+export type CitationInstance = {
+  citekey: string;
+  file: string;
+  line: number;
+  claimText: string;
+  verdict: "supporting" | "contrasting" | "mentioning" | "unverifiable" | "not_checked";
+  evidence: string;
+  confidence: number;
+  flaggedForReview: boolean;
+  checkedAt: string | null;
+};
+
+export function listProjectCitations(projectId: string): Promise<{ instances: CitationInstance[] }> {
+  return request(`/api/projects/${encodeURIComponent(projectId)}/citations`);
+}
+
+export function checkProjectCitations(
+  projectId: string,
+  body?: { force?: boolean },
+): Promise<{
+  integrity: Array<{ citekey: string; integrity: PaperRecord["integrity"] }>;
+  claims: CitationInstance[];
+}> {
+  return request(`/api/projects/${encodeURIComponent(projectId)}/citations/check`, {
+    method: "POST",
+    body: JSON.stringify(body ?? {}),
+  });
+}

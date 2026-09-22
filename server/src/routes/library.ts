@@ -199,6 +199,23 @@ libraryRouter.post("/:citekey/integrity", async (req, res) => {
   }
 });
 
+libraryRouter.post("/mcp", async (req, res) => {
+  // Host-only (router already behind hostOnly). See libraryMcp.ts security note —
+  // do not wire this into Share sessions without the same risk-ack gate.
+  try {
+    const { handleLibraryMcpHttp } = await import("../services/library/libraryMcp.js");
+    const result = await handleLibraryMcpHttp(req.body);
+    for (const [k, v] of Object.entries(result.headers)) res.setHeader(k, v);
+    if (result.status === 202) {
+      res.status(202).end();
+      return;
+    }
+    res.status(result.status).json(result.body);
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
 libraryRouter.get("/:citekey", async (req, res) => {
   try {
     res.json(await getPaper(req.params.citekey));

@@ -1524,6 +1524,27 @@ a {
   gap: 0.35rem;
 }
 
+.library-litreview {
+  padding: 0.75rem;
+  overflow: auto;
+  flex: 1;
+}
+
+.library-lit-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  margin: 0.75rem 0;
+}
+
+.library-lit-table th,
+.library-lit-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 0.45rem 0.4rem;
+  text-align: left;
+  vertical-align: top;
+}
+
 @keyframes drawer-in {
   from {
     opacity: 0;
@@ -1921,6 +1942,24 @@ a {
 .comment-line-glyph.resolved {
   background: #94a3b8;
   opacity: 0.7;
+}
+
+.citation-line-glyph {
+  background: #64748b;
+  width: 4px !important;
+  margin-left: 8px;
+  border-radius: 2px;
+}
+.citation-line-glyph.citation-supporting {
+  background: #0f766e;
+}
+.citation-line-glyph.citation-contrasting,
+.citation-line-glyph.citation-retracted {
+  background: #b91c1c;
+}
+.citation-line-glyph.citation-mismatch,
+.citation-line-glyph.citation-unverifiable {
+  background: #b45309;
 }
 
 .sr-only {

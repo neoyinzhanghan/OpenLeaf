@@ -29,13 +29,15 @@ import {
   type MergeSession,
   listLibraryPapers,
   citeLibraryIntoProject,
+  listProjectCitations,
+  type CitationInstance,
 } from "../api/client";
 import type { AppConfig, FileChangeDiff, GitCommitInfo, PaperRecord, ProjectMeta, TimelineView, TreeNode } from "../api/types";
 import { guestLogout, hostLogout, listProjectAiReview, acceptAiReview, rejectAiReview, type AiReviewCollaborator, type AiReviewHunk } from "../api/share";
 import { flushCollab, useProjectCollab } from "../collab/useProjectCollab";
 import { BinaryPane } from "../components/BinaryPane";
 import { BranchTreePanel } from "../components/BranchTreePanel";
-import { CodeEditor, type EditorChangeMarks, type EditorSuggestionMark } from "../components/CodeEditor";
+import { CodeEditor, type EditorChangeMarks, type EditorSuggestionMark, type CitationGutterMark } from "../components/CodeEditor";
 import { CompareBaselinePicker } from "../components/CompareBaselinePicker";
 import { CompileLog } from "../components/CompileLog";
 import { FileTree } from "../components/FileTree";
@@ -337,6 +339,7 @@ export function EditorPage() {
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [libraryPapers, setLibraryPapers] = useState<PaperRecord[]>([]);
+  const [citationInstances, setCitationInstances] = useState<CitationInstance[]>([]);
   const [aiReviewOpen, setAiReviewOpen] = useState(false);
   const [aiReviewCount, setAiReviewCount] = useState(0);
   const [aiCollabs, setAiCollabs] = useState<AiReviewCollaborator[]>([]);
@@ -496,6 +499,35 @@ export function EditorPage() {
     }
     setExtraLabels([...labelKeys].sort());
   }, []);
+
+  useEffect(() => {
+    if (isGuest || !id) return;
+    let cancelled = false;
+    void listProjectCitations(id)
+      .then((r) => {
+        if (!cancelled) setCitationInstances(r.instances);
+      })
+      .catch(() => {
+        if (!cancelled) setCitationInstances([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isGuest, id, libraryOpen]);
+
+  const citationMarks: CitationGutterMark[] = useMemo(() => {
+    if (!activePath) return [];
+    const libByKey = new Map(libraryPapers.map((p) => [p.citekey, p]));
+    return citationInstances
+      .filter((i) => i.file === activePath)
+      .map((i) => {
+        const paper = libByKey.get(i.citekey);
+        let kind: string = i.verdict;
+        if (paper?.integrity.retraction === "retracted") kind = "retracted";
+        else if (paper?.integrity.existence === "mismatch") kind = "mismatch";
+        return { line: i.line, citekey: i.citekey, kind };
+      });
+  }, [citationInstances, activePath, libraryPapers]);
 
   useEffect(() => {
     if (isGuest) return;
@@ -2665,6 +2697,7 @@ export function EditorPage() {
           onClose={() => setLibraryOpen(false)}
           projectId={id}
           onCiteIntoProject={(citekey) => void syncLibraryCite(citekey)}
+          onCitationsChanged={(instances) => setCitationInstances(instances)}
         />
       )}
 
@@ -2853,6 +2886,7 @@ export function EditorPage() {
                         awareness={collabText ? collab.awareness : null}
                         readOnly={readOnly || !timelineCanEdit || viewingDeletedFile}
                         commentMarks={commentMarks}
+                        citationMarks={citationMarks}
                         onRequestComment={onRequestComment}
                         onOpenCommentThread={(threadId) => {
                           setFocusCommentId(threadId);
