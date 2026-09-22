@@ -143,23 +143,98 @@ export async function importBibtex(text: string): Promise<BibImportResult> {
   for (const entry of entries) {
     try {
       const input = bibEntryToCreateInput(entry);
+      let existing: Awaited<ReturnType<typeof getPaper>> | null = null;
+      try {
+        existing = await getPaper(entry.citekey);
+      } catch {
+        existing = null;
+      }
+      if (existing) {
+        const stubNotes = existing.notes ?? "";
+        const isStub =
+          existing.title === existing.citekey ||
+          /Imported as stub/i.test(stubNotes) ||
+          (existing.authors.length === 0 && existing.title === entry.citekey);
+        if (isStub && input.title && input.title !== entry.citekey) {
+          const { updatePaper } = await import("./index.js");
+          // Prefer metadata from the bib; drop DOI if another record already owns it.
+          let doi = input.doi ?? null;
+          if (doi) {
+            const owner = await findByDoi(doi);
+            if (owner && owner.citekey !== entry.citekey) doi = existing.doi;
+          }
+          const upgraded = await updatePaper(entry.citekey, {
+            title: input.title,
+            authors: input.authors,
+            year: input.year,
+            venue: input.venue,
+            abstract: input.abstract,
+            doi,
+            arxivId: input.arxivId,
+            source: input.source ?? "bibtex-import",
+            notes: "",
+          });
+          imported.push(upgraded);
+          continue;
+        }
+        skipped.push({ citekey: entry.citekey, reason: "citekey-exists", existingCitekey: entry.citekey });
+        continue;
+      }
       if (input.doi) {
-        const existing = await findByDoi(input.doi);
-        if (existing) {
+        const existingByDoi = await findByDoi(input.doi);
+        if (existingByDoi) {
+          // Keep the project's citekey as an alias record (no duplicate DOI).
+          try {
+            const stub = await getPaper(entry.citekey);
+            const stubNotes = stub.notes ?? "";
+            const isStub =
+              stub.title === stub.citekey ||
+              /Imported as stub/i.test(stubNotes) ||
+              stub.authors.length === 0;
+            if (isStub) {
+              const { updatePaper } = await import("./index.js");
+              imported.push(
+                await updatePaper(entry.citekey, {
+                  title: existingByDoi.title,
+                  authors: existingByDoi.authors,
+                  year: existingByDoi.year,
+                  venue: existingByDoi.venue,
+                  abstract: existingByDoi.abstract,
+                  doi: null,
+                  arxivId: existingByDoi.arxivId,
+                  source: existingByDoi.source,
+                  notes: `Project citekey alias of ${existingByDoi.citekey}; metadata copied.`,
+                }),
+              );
+              continue;
+            }
+          } catch {
+            try {
+              const alias = await addPaper({
+                citekey: entry.citekey,
+                title: existingByDoi.title,
+                authors: existingByDoi.authors,
+                year: existingByDoi.year,
+                venue: existingByDoi.venue,
+                abstract: existingByDoi.abstract,
+                doi: null,
+                arxivId: existingByDoi.arxivId,
+                source: existingByDoi.source,
+                notes: `Project citekey alias of ${existingByDoi.citekey}; metadata copied.`,
+              });
+              imported.push(alias);
+              continue;
+            } catch {
+              /* fall through to skip */
+            }
+          }
           skipped.push({
             citekey: entry.citekey,
             reason: "doi-exists",
-            existingCitekey: existing.citekey,
+            existingCitekey: existingByDoi.citekey,
           });
           continue;
         }
-      }
-      try {
-        await getPaper(entry.citekey);
-        skipped.push({ citekey: entry.citekey, reason: "citekey-exists", existingCitekey: entry.citekey });
-        continue;
-      } catch {
-        /* not found — ok */
       }
       const paper = await addPaper(input);
       imported.push(paper);

@@ -77,6 +77,27 @@ export async function syncCitekeyToBib(projectId: string, citekey: string): Prom
 }
 
 /**
+ * Rewrite the project's bibliography from library records for the given citekeys only.
+ * Library remains canonical; the .bib is a generated view of cited keys.
+ */
+export async function rewriteProjectBibFromLibrary(
+  projectId: string,
+  citekeys: string[],
+): Promise<{ bibFile: string; count: number }> {
+  const bibFile = findBibFile(projectId);
+  const unique = [...new Set(citekeys.map((k) => k.trim()).filter(Boolean))].sort();
+  const entries: string[] = [];
+  for (const key of unique) {
+    const paper = await getPaper(key);
+    entries.push(paperToBibtex(paper).trimEnd());
+  }
+  const header =
+    "% OpenLeaf library-synced bibliography\n% Generated from cited keys — edit papers in /library\n\n";
+  await writeFile(projectId, bibFile, header + entries.join("\n\n") + (entries.length ? "\n" : ""));
+  return { bibFile, count: entries.length };
+}
+
+/**
  * Ensure citekey is in the project's .bib. Optionally insert \\cite{citekey}
  * at file:line (column end of line by default).
  */
