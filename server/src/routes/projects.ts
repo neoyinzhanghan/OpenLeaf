@@ -54,6 +54,13 @@ import type { Access } from "../services/shareAuth.js";
 import { publicErrorMessage } from "../http/jsonErrors.js";
 import { projectShareRouter } from "./share.js";
 import { projectAiRouter, projectAiShareRouter } from "./ai.js";
+import { citeIntoProject } from "../services/library/cite.js";
+import {
+  checkProjectCitationIntegrity,
+  listCitationInstances,
+  scanProjectCitations,
+  verifyClaimInstance,
+} from "../services/library/citations.js";
 
 export const projectsRouter = Router();
 const filesRouter = Router({ mergeParams: true });
@@ -281,6 +288,110 @@ projectsRouter.put("/:id/identities", async (req, res) => {
 projectsRouter.get("/:id/comments", async (req, res) => {
   try {
     res.json(await listComments(req.params.id));
+  } catch (err) {
+    res.status(statusOf(err)).json({ error: publicErrorMessage(err) });
+  }
+});
+
+/** Sync a library citekey into the project's .bib (and optionally insert \\cite{}). */
+projectsRouter.post("/:id/library/cite", async (req, res) => {
+  const schema = z.object({
+    citekey: z.string().min(1),
+    file: z.string().min(1).optional(),
+    line: z.number().int().positive().optional(),
+  });
+  try {
+    if (req.access?.mode === "guest") {
+      res.status(403).json({ error: "Citation library cite is host-only" });
+      return;
+    }
+    const body = schema.parse(req.body);
+    const result = await citeIntoProject(req.params.id, body);
+    notifyProjectTreeChange(req.params.id, { op: "write", path: result.bibFile });
+    if (result.inserted && body.file) {
+      notifyProjectTreeChange(req.params.id, { op: "write", path: body.file });
+    }
+    res.json(result);
+  } catch (err) {
+    res.status(statusOf(err)).json({ error: publicErrorMessage(err) });
+  }
+});
+
+projectsRouter.get("/:id/citations", async (req, res) => {
+  try {
+    res.json({ instances: await listCitationInstances(req.params.id) });
+  } catch (err) {
+    res.status(statusOf(err)).json({ error: publicErrorMessage(err) });
+  }
+});
+
+projectsRouter.post("/:id/citations/scan", async (req, res) => {
+  try {
+    if (req.access?.mode === "guest") {
+      res.status(403).json({ error: "Host only" });
+      return;
+    }
+    const tree = await getTree(req.params.id);
+    const files: string[] = [];
+    const walk = (nodes: Array<{ type: string; path: string; children?: unknown[] }>) => {
+      for (const n of nodes) {
+        if (n.type === "file" && n.path.endsWith(".tex")) files.push(n.path);
+        if (n.children) walk(n.children as typeof nodes);
+      }
+    };
+    walk(tree as Array<{ type: string; path: string; children?: unknown[] }>);
+    const instances = await scanProjectCitations(req.params.id, files);
+    res.json({ instances });
+  } catch (err) {
+    res.status(statusOf(err)).json({ error: publicErrorMessage(err) });
+  }
+});
+
+projectsRouter.post("/:id/citations/check", async (req, res) => {
+  try {
+    if (req.access?.mode === "guest") {
+      res.status(403).json({ error: "Host only" });
+      return;
+    }
+    const tree = await getTree(req.params.id);
+    const files: string[] = [];
+    const walk = (nodes: Array<{ type: string; path: string; children?: unknown[] }>) => {
+      for (const n of nodes) {
+        if (n.type === "file" && n.path.endsWith(".tex")) files.push(n.path);
+        if (n.children) walk(n.children as typeof nodes);
+      }
+    };
+    walk(tree as Array<{ type: string; path: string; children?: unknown[] }>);
+    const report = await checkProjectCitationIntegrity(req.params.id, {
+      texFiles: files,
+      force: Boolean(req.body?.force),
+    });
+    notifyProjectTreeChange(req.params.id, { op: "write", path: "citations.json" });
+    res.json(report);
+  } catch (err) {
+    res.status(statusOf(err)).json({ error: publicErrorMessage(err) });
+  }
+});
+
+projectsRouter.post("/:id/citations/verify", async (req, res) => {
+  const schema = z.object({
+    file: z.string().min(1),
+    line: z.number().int().positive(),
+    citekey: z.string().optional(),
+    force: z.boolean().optional(),
+  });
+  try {
+    if (req.access?.mode === "guest") {
+      res.status(403).json({ error: "Host only" });
+      return;
+    }
+    const body = schema.parse(req.body);
+    const instance = await verifyClaimInstance(req.params.id, body.file, body.line, {
+      citekey: body.citekey,
+      force: body.force,
+    });
+    notifyProjectTreeChange(req.params.id, { op: "write", path: "citations.json" });
+    res.json({ instance });
   } catch (err) {
     res.status(statusOf(err)).json({ error: publicErrorMessage(err) });
   }

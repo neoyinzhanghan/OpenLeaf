@@ -1,8 +1,18 @@
 import type { languages, Position, editor, IRange } from "monaco-editor";
 import { COMMANDS, ENVIRONMENTS } from "./catalog";
 
+export type LatexCitationHint = {
+  citekey: string;
+  title?: string;
+  detail?: string;
+  /** When true, selecting this key should sync it into the project .bib. */
+  fromLibrary?: boolean;
+};
+
 export type LatexSuggestContext = {
   citations: string[];
+  /** Richer library + bib hints (preferred over bare citations when present). */
+  citationHints?: LatexCitationHint[];
   labels: string[];
 };
 
@@ -31,19 +41,22 @@ function commandRange(model: editor.ITextModel, position: Position): IRange {
   };
 }
 
+const CITE_COMMANDS =
+  "cite|citep|nocite|citet|citepauthor|citeyear|citeyearpar|parencite|autocite|textcite|footcite|fullcite|citeauthor";
+
 function braceArgContext(model: editor.ITextModel, position: Position): {
   command: string;
   range: IRange;
 } | null {
   const line = model.getLineContent(position.lineNumber);
   const before = line.slice(0, position.column - 1);
-  const match = /\\(cite|citep|nocite|ref|eqref|pageref|label|begin|end|includegraphics|input|include)\{([^}]*)$/.exec(
-    before,
-  );
+  const match = new RegExp(
+    `\\\\(${CITE_COMMANDS}|ref|eqref|pageref|label|begin|end|includegraphics|input|include)\\{([^}]*)$`,
+  ).exec(before);
   if (!match) return null;
   const arg = match[2] ?? "";
   return {
-    command: match[1],
+    command: match[1]!,
     range: {
       startLineNumber: position.lineNumber,
       endLineNumber: position.lineNumber,
@@ -51,6 +64,10 @@ function braceArgContext(model: editor.ITextModel, position: Position): {
       endColumn: position.column,
     },
   };
+}
+
+function isCiteCommand(command: string): boolean {
+  return new RegExp(`^(?:${CITE_COMMANDS})$`).test(command);
 }
 
 export function createCompletionProvider(
@@ -65,8 +82,32 @@ export function createCompletionProvider(
 
       const arg = braceArgContext(model, position);
       if (arg) {
-        if (arg.command === "cite" || arg.command === "citep" || arg.command === "nocite") {
+        if (isCiteCommand(arg.command)) {
+          const seen = new Set<string>();
+          for (const hint of ctx.citationHints ?? []) {
+            if (seen.has(hint.citekey)) continue;
+            seen.add(hint.citekey);
+            suggestions.push({
+              label: hint.citekey,
+              kind: monaco.languages.CompletionItemKind.Reference,
+              insertText: hint.citekey,
+              detail: hint.detail ?? (hint.fromLibrary ? "library" : "citation"),
+              documentation: hint.title,
+              range: arg.range,
+              ...(hint.fromLibrary
+                ? {
+                    command: {
+                      id: "openleaf.syncLibraryCite",
+                      title: "Sync library cite into project .bib",
+                      arguments: [hint.citekey],
+                    },
+                  }
+                : {}),
+            });
+          }
           for (const key of ctx.citations) {
+            if (seen.has(key)) continue;
+            seen.add(key);
             suggestions.push({
               label: key,
               kind: monaco.languages.CompletionItemKind.Reference,

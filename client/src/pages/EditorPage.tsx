@@ -27,17 +27,22 @@ import {
   trackChangesDownloadUrl,
   writeProjectFile,
   type MergeSession,
+  listLibraryPapers,
+  citeLibraryIntoProject,
+  listProjectCitations,
+  type CitationInstance,
 } from "../api/client";
-import type { AppConfig, FileChangeDiff, GitCommitInfo, ProjectMeta, TimelineView, TreeNode } from "../api/types";
+import type { AppConfig, FileChangeDiff, GitCommitInfo, PaperRecord, ProjectMeta, TimelineView, TreeNode } from "../api/types";
 import { guestLogout, hostLogout, listProjectAiReview, acceptAiReview, rejectAiReview, type AiReviewCollaborator, type AiReviewHunk } from "../api/share";
 import { flushCollab, useProjectCollab } from "../collab/useProjectCollab";
 import { BinaryPane } from "../components/BinaryPane";
 import { BranchTreePanel } from "../components/BranchTreePanel";
-import { CodeEditor, type EditorChangeMarks, type EditorSuggestionMark } from "../components/CodeEditor";
+import { CodeEditor, type EditorChangeMarks, type EditorSuggestionMark, type CitationGutterMark } from "../components/CodeEditor";
 import { CompareBaselinePicker } from "../components/CompareBaselinePicker";
 import { CompileLog } from "../components/CompileLog";
 import { FileTree } from "../components/FileTree";
 import { CommentsPanel, type CommentDraft } from "../components/CommentsPanel";
+import { LibraryPanel } from "../components/LibraryPanel";
 import { AiReviewPanel } from "../components/AiReviewPanel";
 import { AiLinkPanel } from "../components/AiLinkPanel";
 import { AiSuggestionCard } from "../components/AiSuggestionCard";
@@ -47,7 +52,7 @@ import { PdfViewer, type PdfDiffOverlay, type PdfHighlight } from "../components
 import { SharePanel } from "../components/SharePanel";
 import { SplitPane } from "../components/SplitPane";
 import { ThemePicker } from "../components/ThemeToggle";
-import { extractCitations, extractLabels } from "../latex/completions";
+import { extractCitations, extractLabels, type LatexCitationHint } from "../latex/completions";
 import type { CommentAnchor, CommentThread, TimelineBranch, TimelineNode } from "../api/types";
 import { useGuest, useSession } from "../session/SessionContext";
 import { useMediaQuery } from "../hooks/useMediaQuery";
@@ -332,6 +337,9 @@ export function EditorPage() {
   const [mergeOpen, setMergeOpen] = useState(false);
   const [mergeSession, setMergeSession] = useState<MergeSession | null>(null);
   const [commentsOpen, setCommentsOpen] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [libraryPapers, setLibraryPapers] = useState<PaperRecord[]>([]);
+  const [citationInstances, setCitationInstances] = useState<CitationInstance[]>([]);
   const [aiReviewOpen, setAiReviewOpen] = useState(false);
   const [aiReviewCount, setAiReviewCount] = useState(0);
   const [aiCollabs, setAiCollabs] = useState<AiReviewCollaborator[]>([]);
@@ -349,13 +357,14 @@ export function EditorPage() {
     maxHeight: number;
   } | null>(null);
 
-  const closeOverlappingChrome = useCallback((keep?: "history" | "comments" | "ai" | "share" | "aiLinks") => {
+  const closeOverlappingChrome = useCallback((keep?: "history" | "comments" | "ai" | "share" | "aiLinks" | "library") => {
     setToolbarMoreOpen(false);
     if (keep !== "history") setHistoryOpen(false);
     if (keep !== "comments") setCommentsOpen(false);
     if (keep !== "ai") setAiReviewOpen(false);
     if (keep !== "share") setShareOpen(false);
     if (keep !== "aiLinks") setAiLinksOpen(false);
+    if (keep !== "library") setLibraryOpen(false);
   }, []);
   const [commitBusy, setCommitBusy] = useState(false);
   const [commentDraft, setCommentDraft] = useState<CommentDraft | null>(null);
@@ -490,6 +499,78 @@ export function EditorPage() {
     }
     setExtraLabels([...labelKeys].sort());
   }, []);
+
+  useEffect(() => {
+    if (isGuest || !id) return;
+    let cancelled = false;
+    void listProjectCitations(id)
+      .then((r) => {
+        if (!cancelled) setCitationInstances(r.instances);
+      })
+      .catch(() => {
+        if (!cancelled) setCitationInstances([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isGuest, id, libraryOpen]);
+
+  const citationMarks: CitationGutterMark[] = useMemo(() => {
+    if (!activePath) return [];
+    const libByKey = new Map(libraryPapers.map((p) => [p.citekey, p]));
+    return citationInstances
+      .filter((i) => i.file === activePath)
+      .map((i) => {
+        const paper = libByKey.get(i.citekey);
+        let kind: string = i.verdict;
+        if (paper?.integrity.retraction === "retracted") kind = "retracted";
+        else if (paper?.integrity.existence === "mismatch") kind = "mismatch";
+        return { line: i.line, citekey: i.citekey, kind };
+      });
+  }, [citationInstances, activePath, libraryPapers]);
+
+  useEffect(() => {
+    if (isGuest) return;
+    let cancelled = false;
+    void listLibraryPapers({ limit: 500 })
+      .then((r) => {
+        if (!cancelled) setLibraryPapers(r.papers);
+      })
+      .catch(() => {
+        if (!cancelled) setLibraryPapers([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isGuest, libraryOpen]);
+
+  const citationHints: LatexCitationHint[] = useMemo(() => {
+    const bibSet = new Set(citations);
+    const hints: LatexCitationHint[] = [];
+    for (const p of libraryPapers) {
+      const authors = p.authors
+        .slice(0, 2)
+        .map((a) => a.family)
+        .join(", ");
+      const badge =
+        p.integrity.retraction === "retracted"
+          ? "retracted"
+          : p.integrity.existence === "verified"
+            ? "verified"
+            : "library";
+      hints.push({
+        citekey: p.citekey,
+        title: p.title,
+        detail: `${badge}${authors ? ` · ${authors}` : ""}${p.year != null ? ` · ${p.year}` : ""}`,
+        fromLibrary: !bibSet.has(p.citekey),
+      });
+    }
+    for (const key of citations) {
+      if (hints.some((h) => h.citekey === key)) continue;
+      hints.push({ citekey: key, detail: "project .bib" });
+    }
+    return hints;
+  }, [libraryPapers, citations]);
 
   useEffect(() => {
     if (!id) return;
@@ -1333,6 +1414,24 @@ export function EditorPage() {
     setSyncToast(msg);
     window.setTimeout(() => setSyncToast((cur) => (cur === msg ? null : cur)), 2800);
   }, []);
+
+  const syncLibraryCite = useCallback(
+    async (citekey: string) => {
+      if (!id || isGuest) return;
+      try {
+        await citeLibraryIntoProject(id, { citekey });
+        showSyncToast(`Added ${citekey} to project bibliography`);
+        const t = await getTree(id, viewingGitHash, viewingGitHash ? null : branchId);
+        setTree(t);
+        await loadIndexHints(id, t);
+        const lib = await listLibraryPapers({ limit: 500 });
+        setLibraryPapers(lib.papers);
+      } catch (err) {
+        showSyncToast(err instanceof Error ? err.message : "Could not sync citation");
+      }
+    },
+    [id, isGuest, viewingGitHash, branchId, loadIndexHints, showSyncToast],
+  );
 
   const onPickCompareBaseline = useCallback(
     (node: TimelineNode, _branch: TimelineBranch) => {
@@ -2196,6 +2295,28 @@ export function EditorPage() {
               Timeline
             </button>
           )}
+          {!isGuest && (
+            <>
+              <Link
+                to="/library"
+                className="btn btn-quiet"
+                title="Open the personal citation library (independent of this project)"
+              >
+                Library
+              </Link>
+              <button
+                type="button"
+                className={`btn btn-quiet${libraryOpen ? " is-active" : ""}`}
+                onClick={() => {
+                  closeOverlappingChrome("library");
+                  setLibraryOpen(true);
+                }}
+                title="Cite from library into this project"
+              >
+                Cite
+              </button>
+            </>
+          )}
           {!isGuest && mergeSession && (
             <button
               type="button"
@@ -2580,6 +2701,16 @@ export function EditorPage() {
       />
 
       {!isGuest && (
+        <LibraryPanel
+          open={libraryOpen}
+          onClose={() => setLibraryOpen(false)}
+          projectId={id}
+          onCiteIntoProject={(citekey) => void syncLibraryCite(citekey)}
+          onCitationsChanged={(instances) => setCitationInstances(instances)}
+        />
+      )}
+
+      {!isGuest && (
         <MergePanel
           projectId={id}
           open={mergeOpen}
@@ -2756,12 +2887,15 @@ export function EditorPage() {
                         onSave={() => void save({ compile: true })}
                         jumpTo={jumpTo}
                         citations={citations}
+                        citationHints={citationHints}
                         labels={labels}
+                        onLibraryCite={(citekey) => void syncLibraryCite(citekey)}
                         onForwardSearch={(line, col) => void onForwardSearch(line, col)}
                         yText={collabText ? yText : null}
                         awareness={collabText ? collab.awareness : null}
                         readOnly={readOnly || !timelineCanEdit || viewingDeletedFile}
                         commentMarks={commentMarks}
+                        citationMarks={citationMarks}
                         onRequestComment={onRequestComment}
                         onOpenCommentThread={(threadId) => {
                           setFocusCommentId(threadId);

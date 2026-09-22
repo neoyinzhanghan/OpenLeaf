@@ -4,6 +4,7 @@ export type AppConfig = {
   host: string;
   port: number;
   projectsRoot: string;
+  libraryRoot: string;
   latex: {
     engine: LatexEngine;
     autoCompile: boolean;
@@ -25,6 +26,52 @@ export type AppConfig = {
   git?: {
     enabled: boolean;
   };
+};
+
+export type PaperAuthor = {
+  given: string;
+  family: string;
+};
+
+export type PaperIntegrity = {
+  existence: "verified" | "unresolved" | "mismatch";
+  retraction: "clean" | "retracted" | "corrected";
+  lastChecked: string | null;
+};
+
+export type PaperSource = "doi" | "arxiv" | "pdf-upload" | "bibtex-import" | "manual";
+
+export type ReadingStatus = "unread" | "to-read" | "reading" | "read" | "archived";
+
+export type LibrarySort = "added" | "title" | "year" | "rating" | "starred" | "status";
+
+/** Canonical library paper — mirrors server/services/library record.json. */
+export type PaperRecord = {
+  citekey: string;
+  doi: string | null;
+  arxivId: string | null;
+  url: string | null;
+  title: string;
+  authors: PaperAuthor[];
+  venue: string;
+  year: number | null;
+  abstract: string;
+  tags: string[];
+  collections: string[];
+  notes: string;
+  attachment: string | null;
+  source: PaperSource;
+  starred: boolean;
+  status: ReadingStatus;
+  rating: number;
+  integrity: PaperIntegrity;
+  addedAt: string;
+  updatedAt?: string;
+};
+
+export type LibraryCollections = {
+  version: 1;
+  collections: Record<string, { name: string; createdAt?: string; color?: string }>;
 };
 
 export type ProjectMeta = {
