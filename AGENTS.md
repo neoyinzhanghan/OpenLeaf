@@ -27,7 +27,9 @@ For human setup and usage, see [README.md](README.md).
 | `library/papers/<citekey>/record.json` | Canonical paper metadata (source of truth) |
 | `library/collections.json` | Named collections |
 | `library/.cache/index.sqlite` | Derived FTS5 index — rebuild from `record.json`, never authoritative |
-| `server/src/services/library/` | Library service layer (REST + future MCP share this) |
+| `projects/<id>/citations.json` | Claim-support instances (file:line); git-tracked |
+| `server/src/services/library/` | Library service layer (REST + MCP share this) |
+| `POST /api/library/mcp` | Host-only MCP (8 tools); do not wire into Share without risk-ack |
 
 ## Conventions
 
