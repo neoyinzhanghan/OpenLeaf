@@ -796,3 +796,13 @@ export function checkLibraryPaperIntegrity(
     body: JSON.stringify(body ?? {}),
   });
 }
+
+export function citeLibraryIntoProject(
+  projectId: string,
+  body: { citekey: string; file?: string; line?: number },
+): Promise<{ bibFile: string; inserted: boolean }> {
+  return request(`/api/projects/${encodeURIComponent(projectId)}/library/cite`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}

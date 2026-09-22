@@ -54,6 +54,7 @@ import type { Access } from "../services/shareAuth.js";
 import { publicErrorMessage } from "../http/jsonErrors.js";
 import { projectShareRouter } from "./share.js";
 import { projectAiRouter, projectAiShareRouter } from "./ai.js";
+import { citeIntoProject } from "../services/library/cite.js";
 
 export const projectsRouter = Router();
 const filesRouter = Router({ mergeParams: true });
@@ -281,6 +282,30 @@ projectsRouter.put("/:id/identities", async (req, res) => {
 projectsRouter.get("/:id/comments", async (req, res) => {
   try {
     res.json(await listComments(req.params.id));
+  } catch (err) {
+    res.status(statusOf(err)).json({ error: publicErrorMessage(err) });
+  }
+});
+
+/** Sync a library citekey into the project's .bib (and optionally insert \\cite{}). */
+projectsRouter.post("/:id/library/cite", async (req, res) => {
+  const schema = z.object({
+    citekey: z.string().min(1),
+    file: z.string().min(1).optional(),
+    line: z.number().int().positive().optional(),
+  });
+  try {
+    if (req.access?.mode === "guest") {
+      res.status(403).json({ error: "Citation library cite is host-only" });
+      return;
+    }
+    const body = schema.parse(req.body);
+    const result = await citeIntoProject(req.params.id, body);
+    notifyProjectTreeChange(req.params.id, { op: "write", path: result.bibFile });
+    if (result.inserted && body.file) {
+      notifyProjectTreeChange(req.params.id, { op: "write", path: body.file });
+    }
+    res.json(result);
   } catch (err) {
     res.status(statusOf(err)).json({ error: publicErrorMessage(err) });
   }

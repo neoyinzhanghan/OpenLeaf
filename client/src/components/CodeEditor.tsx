@@ -63,7 +63,10 @@ type Props = {
   onSave: () => void;
   jumpTo?: EditorJumpTarget | null;
   citations?: string[];
+  citationHints?: import("../latex/completions").LatexCitationHint[];
   labels?: string[];
+  /** Called when the user inserts a library citekey that is not yet in the project .bib. */
+  onLibraryCite?: (citekey: string) => void;
   onForwardSearch?: (line: number, column: number) => void;
   /** Collaborative binding */
   yText?: Y.Text | null;
@@ -148,7 +151,9 @@ export function CodeEditor({
   onSave,
   jumpTo,
   citations = [],
+  citationHints = [],
   labels = [],
+  onLibraryCite,
   onForwardSearch,
   yText = null,
   awareness = null,
@@ -191,9 +196,13 @@ export function CodeEditor({
   const readOnlyRef = useRef(readOnly);
   readOnlyRef.current = readOnly;
   const citationsRef = useRef(citations);
+  const citationHintsRef = useRef(citationHints);
   const labelsRef = useRef(labels);
+  const onLibraryCiteRef = useRef(onLibraryCite);
   citationsRef.current = citations;
+  citationHintsRef.current = citationHints;
   labelsRef.current = labels;
+  onLibraryCiteRef.current = onLibraryCite;
   const pathRef = useRef(path);
   pathRef.current = path;
   const bindingRef = useRef<YMonacoBinding | null>(null);
@@ -209,12 +218,16 @@ export function CodeEditor({
     registerLatexLanguage(monaco);
     setLatexSuggestContext(() => ({
       citations: citationsRef.current,
+      citationHints: citationHintsRef.current,
       labels: labelsRef.current,
     }));
     // Every model (including ones @monaco-editor/react creates from `path`) must
     // stay on LF so Yjs offsets match, especially for Windows guests.
     monaco.editor.onDidCreateModel((model) => {
       forceModelLf(model, monaco);
+    });
+    monaco.editor.registerCommand("openleaf.syncLibraryCite", (_accessor, citekey: string) => {
+      if (typeof citekey === "string" && citekey) onLibraryCiteRef.current?.(citekey);
     });
   };
 
