@@ -13,6 +13,7 @@ import {
   writeCollections,
 } from "../services/library/index.js";
 import { importBibtex, importFromLink, importPdf, lookupExternal } from "../services/library/import.js";
+import { checkLibraryIntegrity, checkPaperIntegrity } from "../services/library/integrity.js";
 import { CreatePaperInputSchema, PatchPaperInputSchema } from "../services/library/types.js";
 
 export const libraryRouter = Router();
@@ -167,6 +168,32 @@ libraryRouter.post("/import/pdf", async (req, res) => {
       citekey: typeof req.body?.citekey === "string" ? req.body.citekey : undefined,
     });
     res.status(result.created ? 201 : 200).json(result);
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+libraryRouter.post("/integrity/check", async (req, res) => {
+  try {
+    const citekeys = Array.isArray(req.body?.citekeys)
+      ? (req.body.citekeys as unknown[]).filter((c): c is string => typeof c === "string")
+      : undefined;
+    const results = await checkLibraryIntegrity({
+      force: Boolean(req.body?.force),
+      citekeys,
+    });
+    res.json({ results });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+libraryRouter.post("/:citekey/integrity", async (req, res) => {
+  try {
+    const result = await checkPaperIntegrity(req.params.citekey, {
+      force: Boolean(req.body?.force),
+    });
+    res.json(result);
   } catch (err) {
     sendError(res, err);
   }

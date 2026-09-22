@@ -764,3 +764,35 @@ export function importLibraryPdf(body: {
 }): Promise<{ paper: PaperRecord; created: boolean; resolvedVia: string }> {
   return request("/api/library/import/pdf", { method: "POST", body: JSON.stringify(body) });
 }
+
+export function checkLibraryIntegrity(body?: {
+  force?: boolean;
+  citekeys?: string[];
+}): Promise<{
+  results: Array<{
+    citekey: string;
+    integrity: PaperRecord["integrity"];
+    changed: boolean;
+    detail?: string;
+  }>;
+}> {
+  return request("/api/library/integrity/check", {
+    method: "POST",
+    body: JSON.stringify(body ?? {}),
+  });
+}
+
+export function checkLibraryPaperIntegrity(
+  citekey: string,
+  body?: { force?: boolean },
+): Promise<{
+  citekey: string;
+  integrity: PaperRecord["integrity"];
+  changed: boolean;
+  detail?: string;
+}> {
+  return request(`/api/library/${encodeURIComponent(citekey)}/integrity`, {
+    method: "POST",
+    body: JSON.stringify(body ?? {}),
+  });
+}
