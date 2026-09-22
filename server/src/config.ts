@@ -32,6 +32,8 @@ const AppConfigSchema = z
     host: z.string().default("127.0.0.1"),
     port: z.number().int().positive().default(8787),
     projectsRoot: z.string().default("projects"),
+    /** Sibling of projectsRoot — personal citation library (papers/<citekey>/record.json). */
+    libraryRoot: z.string().default("library"),
     latex: LatexConfigSchema.default({}),
     client: z
       .object({
@@ -112,6 +114,7 @@ function applyEnv(config: AppConfig): AppConfig {
   if (process.env.OPENLEAF_HOST) next.host = process.env.OPENLEAF_HOST;
   if (process.env.OPENLEAF_PORT) next.port = Number(process.env.OPENLEAF_PORT);
   if (process.env.OPENLEAF_PROJECTS_ROOT) next.projectsRoot = process.env.OPENLEAF_PROJECTS_ROOT;
+  if (process.env.OPENLEAF_LIBRARY_ROOT) next.libraryRoot = process.env.OPENLEAF_LIBRARY_ROOT;
   if (process.env.OPENLEAF_ENGINE === "pdflatex" || process.env.OPENLEAF_ENGINE === "xelatex") {
     next.latex.engine = process.env.OPENLEAF_ENGINE;
   }
@@ -137,11 +140,19 @@ export function getProjectsRootAbs(): string {
     : path.resolve(REPO_ROOT, cfg.projectsRoot);
 }
 
+export function getLibraryRootAbs(): string {
+  const cfg = loadConfig();
+  return path.isAbsolute(cfg.libraryRoot)
+    ? cfg.libraryRoot
+    : path.resolve(REPO_ROOT, cfg.libraryRoot);
+}
+
 const PatchSchema = z
   .object({
     host: z.string().optional(),
     port: z.number().int().positive().optional(),
     projectsRoot: z.string().optional(),
+    libraryRoot: z.string().optional(),
     latex: LatexConfigSchema.partial().optional(),
     client: z
       .object({

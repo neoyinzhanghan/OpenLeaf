@@ -7,6 +7,8 @@ import type {
   FilePayload,
   GitCommitInfo,
   GitCommitResult,
+  LibraryCollections,
+  PaperRecord,
   ProjectMeta,
   SynctexForwardHit,
   SynctexHit,
@@ -660,4 +662,68 @@ export function generateTrackChanges(
       })
       .catch(reject);
   });
+}
+
+// --- Citation library (host-only) -------------------------------------------
+
+export function listLibraryPapers(opts?: {
+  q?: string;
+  tag?: string;
+  collection?: string;
+  limit?: number;
+}): Promise<{ papers: PaperRecord[] }> {
+  const params = new URLSearchParams();
+  if (opts?.q) params.set("q", opts.q);
+  if (opts?.tag) params.set("tag", opts.tag);
+  if (opts?.collection) params.set("collection", opts.collection);
+  if (opts?.limit != null) params.set("limit", String(opts.limit));
+  const qs = params.toString();
+  return request(`/api/library${qs ? `?${qs}` : ""}`);
+}
+
+export function getLibraryPaper(citekey: string): Promise<PaperRecord> {
+  return request(`/api/library/${encodeURIComponent(citekey)}`);
+}
+
+export function createLibraryPaper(
+  body: Partial<PaperRecord> & { title: string },
+): Promise<PaperRecord> {
+  return request("/api/library", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function patchLibraryPaper(
+  citekey: string,
+  body: Partial<Omit<PaperRecord, "citekey" | "addedAt" | "integrity">> & { citekey?: string },
+): Promise<PaperRecord> {
+  return request(`/api/library/${encodeURIComponent(citekey)}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export function deleteLibraryPaper(citekey: string): Promise<void> {
+  return request(`/api/library/${encodeURIComponent(citekey)}`, { method: "DELETE" });
+}
+
+export function getLibraryCollections(): Promise<LibraryCollections> {
+  return request("/api/library/collections");
+}
+
+export function putLibraryCollections(body: LibraryCollections): Promise<LibraryCollections> {
+  return request("/api/library/collections", { method: "PUT", body: JSON.stringify(body) });
+}
+
+export function createLibraryCollection(id: string, name: string): Promise<LibraryCollections> {
+  return request("/api/library/collections", {
+    method: "POST",
+    body: JSON.stringify({ id, name }),
+  });
+}
+
+export function deleteLibraryCollection(id: string): Promise<LibraryCollections> {
+  return request(`/api/library/collections/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export function reindexLibrary(): Promise<{ count: number }> {
+  return request("/api/library/reindex", { method: "POST", body: "{}" });
 }

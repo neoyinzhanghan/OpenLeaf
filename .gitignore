@@ -36,3 +36,5 @@ projects/**/.git/
 .vscode/
 *.swp
 *~
+# Personal citation library root (runtime data; not the server/src/services/library/ code)
+/library/

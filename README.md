@@ -141,6 +141,7 @@ Priority: `config/default.json` → `config/local.json` (gitignored) → env var
 | `OPENLEAF_PORT` | API port (default `8787`); Vite proxies `/api` and `/collab` here in dev |
 | `OPENLEAF_CLIENT_PORT` | Vite UI port in `npm run dev` (default `5173`) |
 | `OPENLEAF_PROJECTS_ROOT` | Projects directory (relative to repo root, or absolute) |
+| `OPENLEAF_LIBRARY_ROOT` | Citation library directory (default `./library`; sibling of projects) |
 | `OPENLEAF_ENGINE` | `pdflatex` or `xelatex` |
 
 You can also `GET` / `PATCH /api/config` (PATCH writes `config/local.json`).

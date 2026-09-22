@@ -4,13 +4,15 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { getPublicConfig, loadConfig, REPO_ROOT } from "./config.js";
+import { getLibraryRootAbs, getPublicConfig, loadConfig, REPO_ROOT } from "./config.js";
 import { attachCollabServer } from "./services/collab/server.js";
 import { ensureProjectsRoot } from "./services/projectFs.js";
+import { ensureLibraryBoot } from "./services/library/index.js";
 import { configRouter } from "./routes/config.js";
 import { guestRouter, joinRouter } from "./routes/guest.js";
 import { hostRouter } from "./routes/host.js";
 import { identitiesRouter } from "./routes/identities.js";
+import { libraryRouter } from "./routes/library.js";
 import { projectsRouter } from "./routes/projects.js";
 import { shareRouter } from "./routes/share.js";
 import { aiApiRouter, aiBriefRouter } from "./routes/ai.js";
@@ -32,6 +34,7 @@ async function main() {
   loadConfig(true);
   const hostCreds = ensureHostAuth();
   await ensureProjectsRoot();
+  await ensureLibraryBoot();
 
   const app = express();
   const cfg = getPublicConfig();
@@ -59,6 +62,8 @@ async function main() {
   app.use("/api/share", shareRouter);
   app.use("/api/config", hostOnly, configRouter);
   app.use("/api/identities", hostOnly, identitiesRouter);
+  // Citation library is host-only for now (not wired into Share sessions).
+  app.use("/api/library", hostOnly, libraryRouter);
   app.use("/api/projects", projectsRouter);
 
   // Serve built client only in production (`npm start`). In `npm run dev`, Vite
@@ -106,6 +111,7 @@ async function main() {
     console.log(`OpenLeaf API http://${ip}:${cfg.port}`);
     console.log(`Collab WS  ws://${ip}:${cfg.port}/collab/<project>?identity=<id>`);
     console.log(`Projects root: ${path.resolve(REPO_ROOT, cfg.projectsRoot)}`);
+    console.log(`Library root:  ${getLibraryRootAbs()}`);
     if (serveBuiltClient) {
       console.log(`UI         http://${ip}:${cfg.port}`);
     } else {

@@ -23,6 +23,11 @@ For human setup and usage, see [README.md](README.md).
 | `projects/<id>/misc/` | Notes, drafts, and other non-compiled material |
 | `projects/<id>/openleaf.json` | `mainFile`, `engine`, `identities[]` |
 | `projects/<id>/comments.json` | Review threads (author, file:line, replies); git-tracked |
+| `library/` | Personal citation library (sibling of `projects/`; gitignored) |
+| `library/papers/<citekey>/record.json` | Canonical paper metadata (source of truth) |
+| `library/collections.json` | Named collections |
+| `library/.cache/index.sqlite` | Derived FTS5 index — rebuild from `record.json`, never authoritative |
+| `server/src/services/library/` | Library service layer (REST + future MCP share this) |
 
 ## Conventions
 
@@ -38,7 +43,7 @@ For human setup and usage, see [README.md](README.md).
 ## Config knobs
 
 - File: `config/default.json` / `config/local.json`
-- Env: `OPENLEAF_HOST`, `OPENLEAF_PORT`, `OPENLEAF_CLIENT_PORT` (Vite UI in dev), `OPENLEAF_PROJECTS_ROOT` (relative or absolute), `OPENLEAF_ENGINE`
+- Env: `OPENLEAF_HOST`, `OPENLEAF_PORT`, `OPENLEAF_CLIENT_PORT` (Vite UI in dev), `OPENLEAF_PROJECTS_ROOT` (relative or absolute), `OPENLEAF_LIBRARY_ROOT` (citation library; default `./library`), `OPENLEAF_ENGINE`
 - HTTP: `GET/PATCH /api/config`
 - Dev proxy: `client/vite.config.ts` reads `OPENLEAF_PORT` / `OPENLEAF_CLIENT_PORT` (no manual proxy edit needed)
 - Identities (collab): **per project** in `projects/<id>/openleaf.json` → `identities[]`. Seeded from `defaultIdentities` in app config on create. `GET/PUT /api/projects/:id/identities`. UI toggles among that project's presets (stored per-project in localStorage).
