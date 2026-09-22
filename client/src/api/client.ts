@@ -669,13 +669,22 @@ export function generateTrackChanges(
 export function listLibraryPapers(opts?: {
   q?: string;
   tag?: string;
+  tags?: string[];
   collection?: string;
+  starred?: boolean;
+  status?: import("./types").ReadingStatus;
+  sort?: import("./types").LibrarySort;
   limit?: number;
 }): Promise<{ papers: PaperRecord[] }> {
   const params = new URLSearchParams();
   if (opts?.q) params.set("q", opts.q);
   if (opts?.tag) params.set("tag", opts.tag);
+  if (opts?.tags?.length) params.set("tags", opts.tags.join(","));
   if (opts?.collection) params.set("collection", opts.collection);
+  if (opts?.starred === true) params.set("starred", "1");
+  if (opts?.starred === false) params.set("starred", "0");
+  if (opts?.status) params.set("status", opts.status);
+  if (opts?.sort) params.set("sort", opts.sort);
   if (opts?.limit != null) params.set("limit", String(opts.limit));
   const qs = params.toString();
   return request(`/api/library${qs ? `?${qs}` : ""}`);
@@ -697,6 +706,24 @@ export function patchLibraryPaper(
 ): Promise<PaperRecord> {
   return request(`/api/library/${encodeURIComponent(citekey)}`, {
     method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export function bulkPatchLibraryPapers(body: {
+  citekeys: string[];
+  starred?: boolean;
+  status?: import("./types").ReadingStatus;
+  rating?: number;
+  tags?: string[];
+  tagsAdd?: string[];
+  tagsRemove?: string[];
+  collections?: string[];
+  collectionsAdd?: string[];
+  collectionsRemove?: string[];
+}): Promise<{ papers: PaperRecord[]; count: number }> {
+  return request("/api/library/bulk", {
+    method: "POST",
     body: JSON.stringify(body),
   });
 }

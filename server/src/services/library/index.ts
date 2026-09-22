@@ -17,10 +17,12 @@ import {
 } from "./paths.js";
 import { derivePaperUrl } from "./paperUrl.js";
 import {
+  BulkLibraryPatchSchema,
   CollectionsFileSchema,
   CreatePaperInputSchema,
   PaperRecordSchema,
   PatchPaperInputSchema,
+  type BulkLibraryPatch,
   type CollectionsFile,
   type CreatePaperInput,
   type LibrarySearchOpts,
@@ -153,12 +155,49 @@ export async function searchPapers(opts: LibrarySearchOpts = {}): Promise<PaperR
     const tag = opts.tag.toLowerCase();
     candidates = candidates.filter((r) => r.tags.some((t) => t.toLowerCase() === tag));
   }
+  if (opts.tags?.length) {
+    const need = opts.tags.map((t) => t.toLowerCase());
+    candidates = candidates.filter((r) => {
+      const have = new Set(r.tags.map((t) => t.toLowerCase()));
+      return need.every((t) => have.has(t));
+    });
+  }
   if (opts.collection) {
     const coll = opts.collection.toLowerCase();
     candidates = candidates.filter((r) =>
       r.collections.some((c) => c.toLowerCase() === coll),
     );
   }
+  if (opts.starred === true) {
+    candidates = candidates.filter((r) => r.starred);
+  }
+  if (opts.status) {
+    candidates = candidates.filter((r) => r.status === opts.status);
+  }
+
+  const sort = opts.sort ?? "added";
+  candidates = [...candidates].sort((a, b) => {
+    switch (sort) {
+      case "title":
+        return a.title.localeCompare(b.title);
+      case "year":
+        return (b.year ?? 0) - (a.year ?? 0) || a.title.localeCompare(b.title);
+      case "rating":
+        return b.rating - a.rating || a.title.localeCompare(b.title);
+      case "starred":
+        return Number(b.starred) - Number(a.starred) || a.title.localeCompare(b.title);
+      case "status": {
+        const order = ["to-read", "reading", "unread", "read", "archived"];
+        return (
+          order.indexOf(a.status) - order.indexOf(b.status) || a.title.localeCompare(b.title)
+        );
+      }
+      case "added":
+      default:
+        return (b.updatedAt ?? b.addedAt).localeCompare(a.updatedAt ?? a.addedAt);
+    }
+  });
+
   return candidates.slice(0, limit);
 }
 
@@ -200,8 +239,12 @@ export async function addPaper(input: CreatePaperInput): Promise<PaperRecord> {
     notes: parsed.notes ?? "",
     attachment: parsed.attachment ?? null,
     source: parsed.source ?? "manual",
+    starred: parsed.starred ?? false,
+    status: parsed.status ?? "unread",
+    rating: parsed.rating ?? 0,
     integrity: { existence: "unresolved", retraction: "clean", lastChecked: null },
     addedAt: now,
+    updatedAt: now,
   };
   draft.url = derivePaperUrl(draft);
   const record = PaperRecordSchema.parse(draft);
@@ -246,8 +289,12 @@ export async function updatePaper(citekey: string, patch: PatchPaperInput): Prom
     notes: parsed.notes ?? existing.notes,
     attachment: parsed.attachment !== undefined ? parsed.attachment : existing.attachment,
     source: parsed.source ?? existing.source,
+    starred: parsed.starred !== undefined ? parsed.starred : existing.starred,
+    status: parsed.status ?? existing.status,
+    rating: parsed.rating !== undefined ? parsed.rating : existing.rating,
     integrity: existing.integrity,
     addedAt: existing.addedAt,
+    updatedAt: new Date().toISOString(),
   };
   if (!draft.url || !/^https?:\/\//i.test(draft.url)) {
     draft.url = derivePaperUrl(draft);
@@ -264,6 +311,46 @@ export async function updatePaper(citekey: string, patch: PatchPaperInput): Prom
   await writeRecordFile(updated);
   upsertPaperInIndex(updated);
   return updated;
+}
+
+export async function bulkPatchPapers(input: BulkLibraryPatch): Promise<PaperRecord[]> {
+  const parsed = BulkLibraryPatchSchema.parse(input);
+  const out: PaperRecord[] = [];
+  for (const key of parsed.citekeys) {
+    const existing = await getPaper(key);
+    let tags = existing.tags;
+    if (parsed.tags) tags = [...parsed.tags];
+    if (parsed.tagsAdd?.length) {
+      const set = new Set(tags);
+      for (const t of parsed.tagsAdd) if (t.trim()) set.add(t.trim());
+      tags = [...set];
+    }
+    if (parsed.tagsRemove?.length) {
+      const drop = new Set(parsed.tagsRemove.map((t) => t.toLowerCase()));
+      tags = tags.filter((t) => !drop.has(t.toLowerCase()));
+    }
+    let collections = existing.collections;
+    if (parsed.collections) collections = [...parsed.collections];
+    if (parsed.collectionsAdd?.length) {
+      const set = new Set(collections);
+      for (const c of parsed.collectionsAdd) if (c.trim()) set.add(c.trim());
+      collections = [...set];
+    }
+    if (parsed.collectionsRemove?.length) {
+      const drop = new Set(parsed.collectionsRemove.map((c) => c.toLowerCase()));
+      collections = collections.filter((c) => !drop.has(c.toLowerCase()));
+    }
+    out.push(
+      await updatePaper(key, {
+        starred: parsed.starred,
+        status: parsed.status,
+        rating: parsed.rating,
+        tags,
+        collections,
+      }),
+    );
+  }
+  return out;
 }
 
 export async function deletePaper(citekey: string): Promise<void> {

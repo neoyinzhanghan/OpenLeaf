@@ -2,6 +2,7 @@ import { Router } from "express";
 import { ZodError } from "zod";
 import {
   addPaper,
+  bulkPatchPapers,
   deleteCollection,
   deletePaper,
   getPaper,
@@ -15,7 +16,11 @@ import {
 import { importBibtex, importFromLink, importPdf, lookupExternal } from "../services/library/import.js";
 import { enrichLibrary, enrichPaper } from "../services/library/enrich.js";
 import { checkLibraryIntegrity, checkPaperIntegrity } from "../services/library/integrity.js";
-import { CreatePaperInputSchema, PatchPaperInputSchema } from "../services/library/types.js";
+import {
+  BulkLibraryPatchSchema,
+  CreatePaperInputSchema,
+  PatchPaperInputSchema,
+} from "../services/library/types.js";
 
 export const libraryRouter = Router();
 
@@ -36,9 +41,32 @@ libraryRouter.get("/", async (req, res) => {
   try {
     const q = typeof req.query.q === "string" ? req.query.q : undefined;
     const tag = typeof req.query.tag === "string" ? req.query.tag : undefined;
+    const tagsRaw = typeof req.query.tags === "string" ? req.query.tags : undefined;
+    const tags = tagsRaw
+      ? tagsRaw
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean)
+      : undefined;
     const collection = typeof req.query.collection === "string" ? req.query.collection : undefined;
+    const starred =
+      req.query.starred === "1" || req.query.starred === "true"
+        ? true
+        : req.query.starred === "0" || req.query.starred === "false"
+          ? false
+          : undefined;
+    const status =
+      typeof req.query.status === "string" &&
+      ["unread", "to-read", "reading", "read", "archived"].includes(req.query.status)
+        ? (req.query.status as "unread" | "to-read" | "reading" | "read" | "archived")
+        : undefined;
+    const sort =
+      typeof req.query.sort === "string" &&
+      ["added", "title", "year", "rating", "starred", "status"].includes(req.query.sort)
+        ? (req.query.sort as "added" | "title" | "year" | "rating" | "starred" | "status")
+        : undefined;
     const limit = typeof req.query.limit === "string" ? Number(req.query.limit) : undefined;
-    const papers = await searchPapers({ q, tag, collection, limit });
+    const papers = await searchPapers({ q, tag, tags, collection, starred, status, sort, limit });
     res.json({ papers });
   } catch (err) {
     sendError(res, err);
@@ -86,6 +114,17 @@ libraryRouter.delete("/collections/:id", async (req, res) => {
 libraryRouter.post("/reindex", async (_req, res) => {
   try {
     res.json(await reindexLibrary());
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+/** Bulk organizational edits (star, status, tags, collections). */
+libraryRouter.post("/bulk", async (req, res) => {
+  try {
+    const body = BulkLibraryPatchSchema.parse(req.body);
+    const papers = await bulkPatchPapers(body);
+    res.json({ papers, count: papers.length });
   } catch (err) {
     sendError(res, err);
   }

@@ -26,6 +26,20 @@ export const PaperSourceSchema = z.enum([
   "manual",
 ]);
 
+/** Reading / triage workflow — Paperpile folders + ReadCube read state. */
+export const ReadingStatusSchema = z.enum(["unread", "to-read", "reading", "read", "archived"]);
+export type ReadingStatus = z.infer<typeof ReadingStatusSchema>;
+
+export const LibrarySortSchema = z.enum([
+  "added",
+  "title",
+  "year",
+  "rating",
+  "starred",
+  "status",
+]);
+export type LibrarySort = z.infer<typeof LibrarySortSchema>;
+
 /**
  * Canonical paper record — source of truth on disk as papers/<citekey>/record.json.
  * index.sqlite is derived and must never be treated as authoritative.
@@ -46,8 +60,16 @@ export const PaperRecordSchema = z.object({
   notes: z.string().default(""),
   attachment: z.string().nullable().default(null),
   source: PaperSourceSchema.default("manual"),
+  /** One-click bookmark (Paperpile Starred). */
+  starred: z.boolean().default(false),
+  /** ReadCube-style triage status. */
+  status: ReadingStatusSchema.default("unread"),
+  /** 0 = unrated; 1–5 stars (ReadCube rating). */
+  rating: z.number().int().min(0).max(5).default(0),
   integrity: IntegritySchema.default({}),
   addedAt: z.string().min(1),
+  /** Bumped on organizational edits (star/status/tags/notes). */
+  updatedAt: z.string().optional(),
 });
 
 export type PaperRecord = z.infer<typeof PaperRecordSchema>;
@@ -64,6 +86,7 @@ export const CollectionsFileSchema = z.object({
       z.object({
         name: z.string().min(1),
         createdAt: z.string().optional(),
+        color: z.string().optional(),
       }),
     )
     .default({}),
@@ -86,6 +109,9 @@ export const CreatePaperInputSchema = z.object({
   notes: z.string().optional(),
   attachment: z.string().nullable().optional(),
   source: PaperSourceSchema.optional(),
+  starred: z.boolean().optional(),
+  status: ReadingStatusSchema.optional(),
+  rating: z.number().int().min(0).max(5).optional(),
 });
 
 export type CreatePaperInput = z.infer<typeof CreatePaperInputSchema>;
@@ -98,9 +124,30 @@ export const PatchPaperInputSchema = CreatePaperInputSchema.partial()
 
 export type PatchPaperInput = z.infer<typeof PatchPaperInputSchema>;
 
+export const BulkLibraryPatchSchema = z.object({
+  citekeys: z.array(CitekeySchema).min(1),
+  starred: z.boolean().optional(),
+  status: ReadingStatusSchema.optional(),
+  rating: z.number().int().min(0).max(5).optional(),
+  /** Replace tags entirely when set. */
+  tags: z.array(z.string()).optional(),
+  tagsAdd: z.array(z.string()).optional(),
+  tagsRemove: z.array(z.string()).optional(),
+  collections: z.array(z.string()).optional(),
+  collectionsAdd: z.array(z.string()).optional(),
+  collectionsRemove: z.array(z.string()).optional(),
+});
+
+export type BulkLibraryPatch = z.infer<typeof BulkLibraryPatchSchema>;
+
 export type LibrarySearchOpts = {
   q?: string;
   tag?: string;
+  /** AND-filter: paper must have every listed tag. */
+  tags?: string[];
   collection?: string;
+  starred?: boolean;
+  status?: ReadingStatus;
+  sort?: LibrarySort;
   limit?: number;
 };

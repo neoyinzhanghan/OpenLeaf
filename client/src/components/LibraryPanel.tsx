@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  bulkPatchLibraryPapers,
   checkLibraryIntegrity,
   checkLibraryPaperIntegrity,
   checkProjectCitations,
+  createLibraryCollection,
   createLibraryPaper,
   deleteLibraryPaper,
   enrichLibrary,
@@ -15,7 +17,17 @@ import {
   patchLibraryPaper,
   type CitationInstance,
 } from "../api/client";
-import type { LibraryCollections, PaperRecord } from "../api/types";
+import type { LibraryCollections, LibrarySort, PaperRecord, ReadingStatus } from "../api/types";
+import {
+  QUICK_TAGS,
+  READING_STATUSES,
+  SORT_OPTIONS,
+  STATUS_LABEL,
+  normalizePaper,
+  ratingStars,
+  slugCollectionId,
+  statusClass,
+} from "./LibraryOrganize";
 
 type Props = {
   open: boolean;
@@ -74,7 +86,11 @@ export function LibraryPanel({
   const [query, setQuery] = useState("");
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [collectionFilter, setCollectionFilter] = useState<string | null>(null);
+  const [starredOnly, setStarredOnly] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<ReadingStatus | null>(null);
+  const [sort, setSort] = useState<LibrarySort>("added");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [checkedKeys, setCheckedKeys] = useState<Set<string>>(new Set());
   const [density, setDensity] = useState<Density>("comfortable");
   const [importOpen, setImportOpen] = useState(false);
   const [viewMode, setViewMode] = useState<"browse" | "litreview">("browse");
@@ -85,14 +101,22 @@ export function LibraryPanel({
   const [importBib, setImportBib] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [tagDraft, setTagDraft] = useState("");
+  const [newCollectionName, setNewCollectionName] = useState("");
   const [sectionOpen, setSectionOpen] = useState({
     info: true,
+    organize: true,
     notes: true,
     tags: true,
     integrity: true,
   });
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
+
+  const upsertLocal = useCallback((updated: PaperRecord) => {
+    const norm = normalizePaper(updated);
+    setPapers((prev) => prev.map((p) => (p.citekey === norm.citekey ? norm : p)));
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -101,17 +125,20 @@ export function LibraryPanel({
           q: query || undefined,
           tag: tagFilter ?? undefined,
           collection: collectionFilter ?? undefined,
+          starred: starredOnly ? true : undefined,
+          status: statusFilter ?? undefined,
+          sort,
           limit: 2000,
         }),
         getLibraryCollections(),
       ]);
-      setPapers(list);
+      setPapers(list.map(normalizePaper));
       setCollections(coll);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load library");
     }
-  }, [query, tagFilter, collectionFilter]);
+  }, [query, tagFilter, collectionFilter, starredOnly, statusFilter, sort]);
 
   useEffect(() => {
     if (!open) return;
@@ -128,11 +155,125 @@ export function LibraryPanel({
   const allTags = useMemo(() => {
     const tags = new Set<string>();
     for (const p of papers) for (const t of p.tags) tags.add(t);
+    for (const t of QUICK_TAGS) tags.add(t);
     return [...tags].sort();
   }, [papers]);
 
+  const clearSmartFilters = () => {
+    setCollectionFilter(null);
+    setTagFilter(null);
+    setStarredOnly(false);
+    setStatusFilter(null);
+  };
+
+  const toggleChecked = (citekey: string) => {
+    setCheckedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(citekey)) next.delete(citekey);
+      else next.add(citekey);
+      return next;
+    });
+  };
+
+  const patchOne = async (citekey: string, body: Parameters<typeof patchLibraryPaper>[1]) => {
+    const updated = await patchLibraryPaper(citekey, body);
+    upsertLocal(updated);
+    return updated;
+  };
+
+  const toggleStar = async (paper: PaperRecord, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    try {
+      await patchOne(paper.citekey, { starred: !paper.starred });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update star");
+    }
+  };
+
+  const setStatus = async (paper: PaperRecord, status: ReadingStatus) => {
+    try {
+      await patchOne(paper.citekey, { status });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update status");
+    }
+  };
+
+  const setRating = async (paper: PaperRecord, rating: number) => {
+    try {
+      await patchOne(paper.citekey, { rating });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update rating");
+    }
+  };
+
+  const addTag = async (paper: PaperRecord, tag: string) => {
+    const t = tag.trim();
+    if (!t || paper.tags.includes(t)) return;
+    try {
+      await patchOne(paper.citekey, { tags: [...paper.tags, t] });
+      setTagDraft("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not add tag");
+    }
+  };
+
+  const removeTag = async (paper: PaperRecord, tag: string) => {
+    try {
+      await patchOne(paper.citekey, { tags: paper.tags.filter((x) => x !== tag) });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not remove tag");
+    }
+  };
+
+  const toggleCollectionMembership = async (paper: PaperRecord, collectionId: string) => {
+    const has = paper.collections.includes(collectionId);
+    const collections = has
+      ? paper.collections.filter((c) => c !== collectionId)
+      : [...paper.collections, collectionId];
+    try {
+      await patchOne(paper.citekey, { collections });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update collections");
+    }
+  };
+
+  const createCollection = async () => {
+    const name = newCollectionName.trim();
+    if (!name) return;
+    const id = slugCollectionId(name);
+    try {
+      const coll = await createLibraryCollection(id, name);
+      setCollections(coll);
+      setNewCollectionName("");
+      if (selected) await toggleCollectionMembership(selected, id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not create collection");
+    }
+  };
+
+  const runBulk = async (body: Omit<Parameters<typeof bulkPatchLibraryPapers>[0], "citekeys">) => {
+    const citekeys = [...checkedKeys];
+    if (!citekeys.length) return;
+    setBusy(true);
+    try {
+      const { papers: updated } = await bulkPatchLibraryPapers({ citekeys, ...body });
+      const map = new Map(updated.map((p) => [p.citekey, normalizePaper(p)]));
+      setPapers((prev) => prev.map((p) => map.get(p.citekey) ?? p));
+      setCheckedKeys(new Set());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Bulk update failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") {
+      if (checkedKeys.size) {
+        setCheckedKeys(new Set());
+        e.preventDefault();
+        return;
+      }
       if (query) {
         setQuery("");
         e.preventDefault();
@@ -168,8 +309,7 @@ export function LibraryPanel({
   const saveNotes = async (notes: string) => {
     if (!selected) return;
     try {
-      const updated = await patchLibraryPaper(selected.citekey, { notes });
-      setPapers((prev) => prev.map((p) => (p.citekey === updated.citekey ? updated : p)));
+      await patchOne(selected.citekey, { notes });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Save failed");
     }
@@ -382,6 +522,59 @@ export function LibraryPanel({
 
       {error ? <div className="library-error">{error}</div> : null}
 
+      {checkedKeys.size > 0 && viewMode === "browse" ? (
+        <div className="library-bulk-bar" role="toolbar" aria-label="Bulk actions">
+          <span className="library-bulk-count">{checkedKeys.size} selected</span>
+          <button type="button" className="btn btn-quiet" disabled={busy} onClick={() => void runBulk({ starred: true })}>
+            Star
+          </button>
+          <button type="button" className="btn btn-quiet" disabled={busy} onClick={() => void runBulk({ starred: false })}>
+            Unstar
+          </button>
+          <select
+            className="library-inline-select"
+            disabled={busy}
+            defaultValue=""
+            onChange={(e) => {
+              const v = e.target.value as ReadingStatus | "";
+              if (v) void runBulk({ status: v });
+              e.target.value = "";
+            }}
+            aria-label="Set status for selected"
+          >
+            <option value="">Status…</option>
+            {READING_STATUSES.map((s) => (
+              <option key={s} value={s}>
+                {STATUS_LABEL[s]}
+              </option>
+            ))}
+          </select>
+          <select
+            className="library-inline-select"
+            disabled={busy || !collections}
+            defaultValue=""
+            onChange={(e) => {
+              const id = e.target.value;
+              if (id) void runBulk({ collectionsAdd: [id] });
+              e.target.value = "";
+            }}
+            aria-label="Add selected to collection"
+          >
+            <option value="">Add to collection…</option>
+            {collections
+              ? Object.entries(collections.collections).map(([id, c]) => (
+                  <option key={id} value={id}>
+                    {c.name}
+                  </option>
+                ))
+              : null}
+          </select>
+          <button type="button" className="btn btn-ghost" onClick={() => setCheckedKeys(new Set())}>
+            Clear
+          </button>
+        </div>
+      ) : null}
+
       {importOpen ? (
         <div className="library-import">
           <label className="library-field">
@@ -499,86 +692,174 @@ export function LibraryPanel({
             className="library-search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Filter… (Esc clears)"
+            placeholder="Search title, authors, tags…"
             aria-label="Filter library"
           />
-          <div className="library-filters" role="toolbar" aria-label="Collections and tags">
-            <button
-              type="button"
-              className={`btn btn-ghost${!collectionFilter && !tagFilter ? " is-active" : ""}`}
-              onClick={() => {
-                setCollectionFilter(null);
-                setTagFilter(null);
-              }}
+          <label className="library-field library-sort-field">
+            Sort
+            <select
+              className="library-inline-select"
+              value={sort}
+              onChange={(e) => setSort(e.target.value as LibrarySort)}
             >
-              All
-            </button>
-            {collections
-              ? Object.entries(collections.collections).map(([id, c]) => (
-                  <button
-                    key={id}
-                    type="button"
-                    className={`btn btn-ghost${collectionFilter === id ? " is-active" : ""}`}
-                    onClick={() => setCollectionFilter(id)}
-                  >
-                    {c.name}
-                  </button>
-                ))
-              : null}
-            {allTags.map((t) => (
+              {SORT_OPTIONS.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="library-filter-group">
+            <div className="library-filter-heading">Smart views</div>
+            <div className="library-filters" role="toolbar" aria-label="Smart views">
               <button
-                key={t}
                 type="button"
-                className={`btn btn-ghost${tagFilter === t ? " is-active" : ""}`}
-                onClick={() => setTagFilter(t)}
+                className={`btn btn-ghost${!collectionFilter && !tagFilter && !starredOnly && !statusFilter ? " is-active" : ""}`}
+                onClick={clearSmartFilters}
               >
-                #{t}
+                All
               </button>
-            ))}
+              <button
+                type="button"
+                className={`btn btn-ghost${starredOnly ? " is-active" : ""}`}
+                onClick={() => {
+                  setStarredOnly((v) => !v);
+                  setStatusFilter(null);
+                }}
+              >
+                ★ Starred
+              </button>
+              {READING_STATUSES.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  className={`btn btn-ghost${statusFilter === s ? " is-active" : ""}`}
+                  onClick={() => {
+                    setStatusFilter((cur) => (cur === s ? null : s));
+                    setStarredOnly(false);
+                  }}
+                >
+                  {STATUS_LABEL[s]}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="library-filter-group">
+            <div className="library-filter-heading">Collections</div>
+            <div className="library-filters" role="toolbar" aria-label="Collections">
+              {collections
+                ? Object.entries(collections.collections).map(([id, c]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      className={`btn btn-ghost${collectionFilter === id ? " is-active" : ""}`}
+                      onClick={() => setCollectionFilter((cur) => (cur === id ? null : id))}
+                    >
+                      {c.name}
+                    </button>
+                  ))
+                : null}
+            </div>
+            <div className="library-new-collection">
+              <input
+                value={newCollectionName}
+                onChange={(e) => setNewCollectionName(e.target.value)}
+                placeholder="New collection…"
+                aria-label="New collection name"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void createCollection();
+                  }
+                }}
+              />
+              <button type="button" className="btn btn-quiet" onClick={() => void createCollection()}>
+                Add
+              </button>
+            </div>
+          </div>
+
+          <div className="library-filter-group">
+            <div className="library-filter-heading">Tags</div>
+            <div className="library-filters" role="toolbar" aria-label="Tags">
+              {allTags.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  className={`btn btn-ghost${tagFilter === t ? " is-active" : ""}`}
+                  onClick={() => setTagFilter((cur) => (cur === t ? null : t))}
+                >
+                  #{t}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
         <ul className="library-list" ref={listRef}>
           {papers.map((p) => {
             const badge = integrityBadge(p);
+            const checked = checkedKeys.has(p.citekey);
             return (
               <li key={p.citekey}>
-                <button
-                  type="button"
+                <div
+                  className={`library-item${selectedKey === p.citekey ? " is-selected" : ""}${checked ? " is-checked" : ""}`}
                   data-citekey={p.citekey}
-                  className={`library-item${selectedKey === p.citekey ? " is-selected" : ""}`}
-                  onClick={() => setSelectedKey(p.citekey)}
                 >
-                  <div className="library-item-title">{p.title}</div>
-                  <div className="library-item-meta">
-                    <span className="library-authors">{authorsLabel(p, { compact: true })}</span>
-                    {p.year != null ? <span>· {p.year}</span> : null}
-                    <span className={badge.className}>{badge.label}</span>
+                  <div className="library-item-rail">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      aria-label={`Select ${p.citekey}`}
+                      onChange={() => toggleChecked(p.citekey)}
+                    />
+                    <button
+                      type="button"
+                      className={`library-star${p.starred ? " is-on" : ""}`}
+                      title={p.starred ? "Unstar" : "Star"}
+                      aria-pressed={p.starred}
+                      onClick={(e) => void toggleStar(p, e)}
+                    >
+                      {p.starred ? "★" : "☆"}
+                    </button>
                   </div>
-                  {p.url ? (
-                    <div className="library-item-url">
-                      <a
-                        href={p.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {p.url.replace(/^https?:\/\//i, "").slice(0, 72)}
-                        {p.url.replace(/^https?:\/\//i, "").length > 72 ? "…" : ""}
-                      </a>
+                  <button
+                    type="button"
+                    className="library-item-body"
+                    onClick={() => setSelectedKey(p.citekey)}
+                  >
+                    <div className="library-item-title">{p.title}</div>
+                    <div className="library-item-meta">
+                      <span className="library-authors">{authorsLabel(p, { compact: true })}</span>
+                      {p.year != null ? <span>· {p.year}</span> : null}
+                      <span className={statusClass(p.status)}>{STATUS_LABEL[p.status]}</span>
+                      {p.rating > 0 ? <span className="library-rating-mini">{ratingStars(p.rating)}</span> : null}
+                      <span className={badge.className}>{badge.label}</span>
                     </div>
-                  ) : null}
-                  {p.collections.length ? (
-                    <div className="library-item-collections">
-                      {collectionNames(p, collections).map((name) => (
-                        <span key={name} className="lib-badge lib-badge-collection">
-                          {name}
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
-                  <div className="library-item-key">{p.citekey}</div>
-                </button>
+                    {p.tags.length ? (
+                      <div className="library-item-collections">
+                        {p.tags.slice(0, 4).map((t) => (
+                          <span key={t} className="lib-badge">
+                            #{t}
+                          </span>
+                        ))}
+                        {p.tags.length > 4 ? <span className="muted">+{p.tags.length - 4}</span> : null}
+                      </div>
+                    ) : null}
+                    {p.collections.length ? (
+                      <div className="library-item-collections">
+                        {collectionNames(p, collections).map((name) => (
+                          <span key={name} className="lib-badge lib-badge-collection">
+                            {name}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                    <div className="library-item-key">{p.citekey}</div>
+                  </button>
+                </div>
               </li>
             );
           })}
@@ -596,9 +877,74 @@ export function LibraryPanel({
                 ← Back to list
               </button>
               <div className="library-detail-head">
-                <h3>{selected.title}</h3>
+                <div className="library-detail-title-row">
+                  <button
+                    type="button"
+                    className={`library-star library-star-lg${selected.starred ? " is-on" : ""}`}
+                    title={selected.starred ? "Unstar" : "Star"}
+                    aria-pressed={selected.starred}
+                    onClick={() => void toggleStar(selected)}
+                  >
+                    {selected.starred ? "★" : "☆"}
+                  </button>
+                  <h3>{selected.title}</h3>
+                </div>
                 <code>{selected.citekey}</code>
               </div>
+              <Collapsible
+                title="Organize"
+                open={sectionOpen.organize}
+                onToggle={() => setSectionOpen((s) => ({ ...s, organize: !s.organize }))}
+              >
+                <label className="library-field">
+                  Reading status
+                  <select
+                    className="library-inline-select"
+                    value={selected.status}
+                    onChange={(e) => void setStatus(selected, e.target.value as ReadingStatus)}
+                  >
+                    {READING_STATUSES.map((s) => (
+                      <option key={s} value={s}>
+                        {STATUS_LABEL[s]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="library-rating" role="group" aria-label="Rating">
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      className={`library-star${selected.rating >= n ? " is-on" : ""}`}
+                      onClick={() => void setRating(selected, selected.rating === n ? 0 : n)}
+                      title={`${n} star${n === 1 ? "" : "s"}`}
+                    >
+                      {selected.rating >= n ? "★" : "☆"}
+                    </button>
+                  ))}
+                </div>
+                <div className="library-field">
+                  <span>Collections</span>
+                  <div className="library-tags">
+                    {collections
+                      ? Object.entries(collections.collections).map(([id, c]) => {
+                          const on = selected.collections.includes(id);
+                          return (
+                            <button
+                              key={id}
+                              type="button"
+                              className={`lib-badge lib-badge-collection${on ? " is-on" : ""}`}
+                              onClick={() => void toggleCollectionMembership(selected, id)}
+                            >
+                              {on ? "✓ " : ""}
+                              {c.name}
+                            </button>
+                          );
+                        })
+                      : null}
+                  </div>
+                </div>
+              </Collapsible>
               <Collapsible
                 title="Info"
                 open={sectionOpen.info}
@@ -618,12 +964,6 @@ export function LibraryPanel({
                 ) : null}
                 {selected.doi ? <p>DOI: {selected.doi}</p> : null}
                 {selected.arxivId ? <p>arXiv: {selected.arxivId}</p> : null}
-                {selected.collections.length ? (
-                  <p className="library-detail-collections">
-                    Projects:{" "}
-                    {collectionNames(selected, collections).join(" · ") || selected.collections.join(" · ")}
-                  </p>
-                ) : null}
                 {selected.abstract ? <p className="library-abstract">{selected.abstract}</p> : null}
               </Collapsible>
               <Collapsible
@@ -646,11 +986,45 @@ export function LibraryPanel({
               >
                 <div className="library-tags">
                   {selected.tags.map((t) => (
-                    <span key={t} className="lib-badge">
-                      {t}
-                    </span>
+                    <button
+                      key={t}
+                      type="button"
+                      className="lib-badge is-on"
+                      title="Remove tag"
+                      onClick={() => void removeTag(selected, t)}
+                    >
+                      #{t} ×
+                    </button>
                   ))}
-                  {!selected.tags.length ? <span className="muted">No tags</span> : null}
+                  {!selected.tags.length ? <span className="muted">No tags yet</span> : null}
+                </div>
+                <div className="library-tag-add">
+                  <input
+                    value={tagDraft}
+                    onChange={(e) => setTagDraft(e.target.value)}
+                    placeholder="Add tag…"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        void addTag(selected, tagDraft);
+                      }
+                    }}
+                  />
+                  <button type="button" className="btn btn-quiet" onClick={() => void addTag(selected, tagDraft)}>
+                    Add
+                  </button>
+                </div>
+                <div className="library-tags library-quick-tags">
+                  {QUICK_TAGS.filter((t) => !selected.tags.includes(t)).map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      className="lib-badge"
+                      onClick={() => void addTag(selected, t)}
+                    >
+                      + {t}
+                    </button>
+                  ))}
                 </div>
               </Collapsible>
               <Collapsible

@@ -41,6 +41,10 @@ export type PaperIntegrity = {
 
 export type PaperSource = "doi" | "arxiv" | "pdf-upload" | "bibtex-import" | "manual";
 
+export type ReadingStatus = "unread" | "to-read" | "reading" | "read" | "archived";
+
+export type LibrarySort = "added" | "title" | "year" | "rating" | "starred" | "status";
+
 /** Canonical library paper — mirrors server/services/library record.json. */
 export type PaperRecord = {
   citekey: string;
@@ -57,13 +61,17 @@ export type PaperRecord = {
   notes: string;
   attachment: string | null;
   source: PaperSource;
+  starred: boolean;
+  status: ReadingStatus;
+  rating: number;
   integrity: PaperIntegrity;
   addedAt: string;
+  updatedAt?: string;
 };
 
 export type LibraryCollections = {
   version: 1;
-  collections: Record<string, { name: string; createdAt?: string }>;
+  collections: Record<string, { name: string; createdAt?: string; color?: string }>;
 };
 
 export type ProjectMeta = {

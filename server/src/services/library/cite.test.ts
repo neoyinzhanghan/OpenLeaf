@@ -54,6 +54,9 @@ describe("cite into project", () => {
       notes: "",
       attachment: null,
       source: "manual",
+      starred: false,
+      status: "unread",
+      rating: 0,
       integrity: { existence: "unresolved", retraction: "clean", lastChecked: null },
       addedAt: new Date().toISOString(),
     });
