@@ -17,6 +17,8 @@ import type { LibraryCollections, PaperRecord } from "../api/types";
 type Props = {
   open: boolean;
   onClose: () => void;
+  /** drawer = editor overlay; page = full-screen route (no project required). */
+  variant?: "drawer" | "page";
   projectId?: string;
   onCiteIntoProject?: (citekey: string) => void;
   onCitationsChanged?: (instances: CitationInstance[]) => void;
@@ -48,7 +50,14 @@ function integrityBadge(paper: PaperRecord): { label: string; className: string 
   return { label: "Unchecked", className: "lib-badge" };
 }
 
-export function LibraryPanel({ open, onClose, projectId, onCiteIntoProject, onCitationsChanged }: Props) {
+export function LibraryPanel({
+  open,
+  onClose,
+  variant = "drawer",
+  projectId,
+  onCiteIntoProject,
+  onCitationsChanged,
+}: Props) {
   const [papers, setPapers] = useState<PaperRecord[]>([]);
   const [collections, setCollections] = useState<LibraryCollections | null>(null);
   const [query, setQuery] = useState("");
@@ -253,15 +262,17 @@ export function LibraryPanel({ open, onClose, projectId, onCiteIntoProject, onCi
 
   if (!open) return null;
 
+  const isPage = variant === "page";
+
   return (
     <aside
-      className={`history-drawer library-drawer density-${density}`}
-      role="dialog"
+      className={`${isPage ? "library-page" : "history-drawer library-drawer"} density-${density}`}
+      role={isPage ? "main" : "dialog"}
       aria-label="Citation library"
       onKeyDown={onKeyDown}
     >
       <div className="history-drawer-head">
-        <strong>Library</strong>
+        <strong>{isPage ? "Citation library" : "Library"}</strong>
         <div className="history-drawer-actions">
           <button
             type="button"
@@ -293,9 +304,11 @@ export function LibraryPanel({ open, onClose, projectId, onCiteIntoProject, onCi
           <button type="button" className="btn btn-ghost btn-icon" title="Import" onClick={() => setImportOpen((v) => !v)}>
             +
           </button>
-          <button type="button" className="btn btn-ghost btn-icon" title="Close" onClick={onClose}>
-            ✕
-          </button>
+          {!isPage ? (
+            <button type="button" className="btn btn-ghost btn-icon" title="Close" onClick={onClose}>
+              ✕
+            </button>
+          ) : null}
         </div>
       </div>
 

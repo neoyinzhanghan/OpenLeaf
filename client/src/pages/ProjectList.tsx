@@ -83,6 +83,14 @@ export function ProjectList() {
           <span className="brand-mark">OpenLeaf</span>
           <span className="brand-sub">local LaTeX</span>
         </div>
+        <nav className="topbar-nav" aria-label="Primary">
+          <Link to="/" className="btn btn-quiet is-active" aria-current="page">
+            Projects
+          </Link>
+          <Link to="/library" className="btn btn-quiet">
+            Library
+          </Link>
+        </nav>
         <div className="topbar-end">
           {remoteHost && (
             <button
@@ -102,6 +110,8 @@ export function ProjectList() {
         <h1>Projects</h1>
         <p className="home-lead">
           Local folders with a main <code>.tex</code>, bibliography, and figures — edit and compile side by side.
+          Your personal reference collection lives separately in{" "}
+          <Link to="/library">Library</Link>.
         </p>
 
         {remoteHost && (

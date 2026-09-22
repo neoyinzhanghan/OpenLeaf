@@ -2296,17 +2296,26 @@ export function EditorPage() {
             </button>
           )}
           {!isGuest && (
-            <button
-              type="button"
-              className={`btn btn-quiet${libraryOpen ? " is-active" : ""}`}
-              onClick={() => {
-                closeOverlappingChrome("library");
-                setLibraryOpen(true);
-              }}
-              title="Citation library"
-            >
-              Library
-            </button>
+            <>
+              <Link
+                to="/library"
+                className="btn btn-quiet"
+                title="Open the personal citation library (independent of this project)"
+              >
+                Library
+              </Link>
+              <button
+                type="button"
+                className={`btn btn-quiet${libraryOpen ? " is-active" : ""}`}
+                onClick={() => {
+                  closeOverlappingChrome("library");
+                  setLibraryOpen(true);
+                }}
+                title="Cite from library into this project"
+              >
+                Cite
+              </button>
+            </>
           )}
           {!isGuest && mergeSession && (
             <button
