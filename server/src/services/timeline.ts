@@ -7,9 +7,14 @@ import { promisify } from "node:util";
 import {
   autoCommitProject,
   ensureProjectGit,
+  getProjectHeadBranch,
   isGitEnabled,
+  listLocalGitBranches,
   listProjectCommits,
+  listProjectCommitsAfter,
+  mergeBase,
   type GitAuthor,
+  type GitCommitInfo,
 } from "./projectGit.js";
 import { projectDir, isTextPath, MAX_INLINE_FILE_BYTES, type TreeNode } from "./projectFs.js";
 
@@ -46,6 +51,8 @@ export type TimelineBranch = {
    * ISO timestamp when pruned; null/undefined = live.
    */
   prunedAt?: string | null;
+  /** Native git branch imported for exploration (not an OpenLeaf `ol/…` fork). */
+  importedGit?: boolean;
 };
 
 export type TimelineState = {
@@ -69,6 +76,8 @@ export type TimelineView = TimelineState & {
   viewingNode: TimelineNode | null;
   /** When set, editor should load files from this commit (read-only snapshot). */
   viewingGitHash: string | null;
+  /** `git rev-parse --abbrev-ref HEAD` in the project dir, if on a named branch. */
+  gitHeadBranch: string | null;
 };
 
 function timelinePath(projectId: string): string {
@@ -123,7 +132,9 @@ async function runGit(
 async function saveTimeline(projectId: string, state: TimelineState): Promise<void> {
   const dest = timelinePath(projectId);
   await fs.mkdir(path.dirname(dest), { recursive: true });
-  await fs.writeFile(dest, JSON.stringify(state, null, 2) + "\n", "utf8");
+  const tmp = `${dest}.${process.pid}.tmp`;
+  await fs.writeFile(tmp, JSON.stringify(state, null, 2) + "\n", "utf8");
+  await fs.rename(tmp, dest);
 }
 
 function emptyMain(): TimelineState {
@@ -146,6 +157,104 @@ function emptyMain(): TimelineState {
   };
 }
 
+function isOpenLeafManagedGitRef(gitRef: string): boolean {
+  const ref = gitRef.trim();
+  return ref === "main" || ref.startsWith("ol/");
+}
+
+function importedGitBranchId(name: string): string {
+  const safe = name.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "branch";
+  return `git-${safe}`.slice(0, 72);
+}
+
+function findNodeByGitHash(nodes: TimelineNode[], hash: string, branchId?: string): TimelineNode | null {
+  const full = hash.trim();
+  const short = full.slice(0, 7);
+  const match = (n: TimelineNode) =>
+    n.gitHash === full ||
+    (n.gitHash.length >= 7 && (n.gitHash.startsWith(short) || full.startsWith(n.gitHash.slice(0, 7))));
+  const scoped = branchId ? nodes.filter((n) => n.branchId === branchId) : nodes;
+  return scoped.find(match) ?? (!branchId ? null : nodes.find(match) ?? null);
+}
+
+function rebuildLinearChain(opts: {
+  existing: TimelineNode[];
+  commitsChrono: GitCommitInfo[];
+  branchId: string;
+  firstParentId: string | null;
+  newIdPrefix: string;
+}): TimelineNode[] {
+  const byHash = new Map<string, TimelineNode>();
+  for (const n of opts.existing) {
+    if (!n.gitHash) continue;
+    byHash.set(n.gitHash, n);
+    if (n.gitHash.length >= 7) byHash.set(n.gitHash.slice(0, 7), n);
+  }
+
+  let parentId = opts.firstParentId;
+  const out: TimelineNode[] = [];
+  for (const c of opts.commitsChrono) {
+    const prev = byHash.get(c.hash) ?? (c.shortHash ? byHash.get(c.shortHash) : undefined);
+    const node: TimelineNode = prev
+      ? {
+          ...prev,
+          branchId: opts.branchId,
+          parentId,
+          gitHash: c.hash,
+          message: c.message,
+          author: c.author,
+          createdAt: c.date,
+        }
+      : {
+          id: `${opts.newIdPrefix}${c.shortHash}`,
+          branchId: opts.branchId,
+          parentId,
+          gitHash: c.hash,
+          message: c.message,
+          author: c.author,
+          createdAt: c.date,
+          legacy: true,
+        };
+    out.push(node);
+    parentId = node.id;
+  }
+  return out;
+}
+
+function chainSignature(nodes: TimelineNode[], head: string | null): string {
+  return JSON.stringify({
+    head,
+    chain: nodes.map((n) => ({
+      id: n.id,
+      parentId: n.parentId,
+      gitHash: n.gitHash,
+      message: n.message,
+      author: n.author,
+      createdAt: n.createdAt,
+      mergeParentId: n.mergeParentId ?? null,
+      legacy: Boolean(n.legacy),
+    })),
+  });
+}
+
+function replaceBranchNodes(
+  state: TimelineState,
+  branchId: string,
+  nextBranch: TimelineBranch,
+  nextNodes: TimelineNode[],
+): TimelineState {
+  const others = state.nodes.filter((n) => n.branchId !== branchId);
+  const nodes = [...others, ...nextNodes];
+  let viewingNodeId = state.viewingNodeId;
+  if (viewingNodeId && !nodes.some((n) => n.id === viewingNodeId)) viewingNodeId = null;
+  return {
+    ...state,
+    viewingNodeId,
+    nodes,
+    branches: state.branches.map((b) => (b.id === branchId ? nextBranch : b)),
+  };
+}
+
 /** Reconcile main-branch timeline nodes with git log on main (by gitHash). */
 async function syncMainFromGit(
   projectId: string,
@@ -161,80 +270,102 @@ async function syncMainFromGit(
   const commits = await listProjectCommits(projectId, 200, ref);
   if (commits.length === 0) return { state, changed: false };
 
-  // listProjectCommits is newest-first; build oldest → newest chain
   const chrono = [...commits].reverse();
   const existingMain = state.nodes.filter((n) => n.branchId === "main");
-  const byHash = new Map<string, TimelineNode>();
-  for (const n of existingMain) {
-    if (!n.gitHash) continue;
-    byHash.set(n.gitHash, n);
-    if (n.gitHash.length >= 7) byHash.set(n.gitHash.slice(0, 7), n);
-  }
-
-  let parentId: string | null = null;
-  const mainNodes: TimelineNode[] = [];
-  for (const c of chrono) {
-    const prev =
-      byHash.get(c.hash) ?? (c.shortHash ? byHash.get(c.shortHash) : undefined);
-    const node: TimelineNode = prev
-      ? {
-          ...prev,
-          branchId: "main",
-          parentId,
-          gitHash: c.hash,
-          message: c.message,
-          author: c.author,
-          createdAt: c.date,
-        }
-      : {
-          id: `legacy-${c.shortHash}`,
-          branchId: "main",
-          parentId,
-          gitHash: c.hash,
-          message: c.message,
-          author: c.author,
-          createdAt: c.date,
-          legacy: true,
-        };
-    mainNodes.push(node);
-    parentId = node.id;
-  }
-
-  const nonMainNodes = state.nodes.filter((n) => n.branchId !== "main");
-  const nextNodes = [...nonMainNodes, ...mainNodes];
-  const nextMain = { ...main, headNodeId: parentId };
-
-  let viewingNodeId = state.viewingNodeId;
-  if (viewingNodeId && !nextNodes.some((n) => n.id === viewingNodeId)) {
-    viewingNodeId = null;
-  }
-
-  const next: TimelineState = {
-    ...state,
-    viewingNodeId,
-    nodes: nextNodes,
-    branches: state.branches.map((b) => (b.id === "main" ? nextMain : b)),
-  };
-
-  const sig = (nodes: TimelineNode[], head: string | null, viewing: string | null) =>
-    JSON.stringify({
-      head,
-      viewing,
-      chain: nodes.map((n) => ({
-        id: n.id,
-        parentId: n.parentId,
-        gitHash: n.gitHash,
-        message: n.message,
-        author: n.author,
-        createdAt: n.createdAt,
-        mergeParentId: n.mergeParentId ?? null,
-        legacy: Boolean(n.legacy),
-      })),
-    });
-
+  const mainNodes = rebuildLinearChain({
+    existing: existingMain,
+    commitsChrono: chrono,
+    branchId: "main",
+    firstParentId: null,
+    newIdPrefix: "legacy-",
+  });
+  const nextMain = { ...main, headNodeId: mainNodes[mainNodes.length - 1]?.id ?? null };
+  const next = replaceBranchNodes(state, "main", nextMain, mainNodes);
   const changed =
-    sig(mainNodes, nextMain.headNodeId, viewingNodeId) !==
-    sig(existingMain, main.headNodeId, state.viewingNodeId);
+    chainSignature(mainNodes, nextMain.headNodeId) !== chainSignature(existingMain, main.headNodeId) ||
+    next.viewingNodeId !== state.viewingNodeId;
+
+  return { state: next, changed };
+}
+
+/** Import local git branches (other than main / `ol/…`) as explore-only timeline threads. */
+async function syncImportedGitBranches(
+  projectId: string,
+  state: TimelineState,
+): Promise<{ state: TimelineState; changed: boolean }> {
+  if (!isGitEnabled()) return { state, changed: false };
+
+  const locals = await listLocalGitBranches(projectId);
+  const knownRefs = new Set(state.branches.map((b) => b.gitRef));
+  let next = state;
+  let changed = false;
+
+  for (const gb of locals) {
+    if (isOpenLeafManagedGitRef(gb.name)) continue;
+
+    let branch = next.branches.find((b) => b.gitRef === gb.name || (b.importedGit && b.name === gb.name));
+    if (branch?.prunedAt) continue;
+
+    const base = (await mergeBase(projectId, "main", gb.name)) ?? "";
+    let unique = base
+      ? await listProjectCommitsAfter(projectId, base, gb.name, 200)
+      : [];
+    if (unique.length === 0) {
+      // Fully merged (or git could not list unique commits). Keep an existing
+      // thread as-is so a live worktree remains explorable; otherwise add a
+      // single node at the branch tip.
+      const keepId = branch?.id;
+      if (keepId && next.nodes.some((n) => n.branchId === keepId)) continue;
+      const tip = (await listProjectCommits(projectId, 1, gb.name))[0];
+      if (!tip) continue;
+      unique = [tip];
+    }
+
+    if (!branch) {
+      if (knownRefs.has(gb.name)) continue;
+      const now = new Date().toISOString();
+      const id = importedGitBranchId(gb.name);
+      if (next.branches.some((b) => b.id === id)) continue;
+      branch = {
+        id,
+        name: gb.name,
+        sacred: false,
+        headNodeId: null,
+        createdAt: now,
+        gitRef: gb.name,
+        importedGit: true,
+      };
+      next = { ...next, branches: [...next.branches, branch] };
+      knownRefs.add(gb.name);
+      changed = true;
+    } else if (!branch.importedGit) {
+      branch = { ...branch, importedGit: true };
+      next = {
+        ...next,
+        branches: next.branches.map((b) => (b.id === branch!.id ? branch! : b)),
+      };
+      changed = true;
+    }
+
+    const forkParent = findNodeByGitHash(next.nodes, base, "main");
+    const existing = next.nodes.filter((n) => n.branchId === branch.id);
+    const chain = rebuildLinearChain({
+      existing,
+      commitsChrono: unique,
+      branchId: branch.id,
+      firstParentId: forkParent?.id ?? null,
+      newIdPrefix: `legacy-${branch.id}-`,
+    });
+    const nextBranch = { ...branch, headNodeId: chain[chain.length - 1]?.id ?? null };
+    const replaced = replaceBranchNodes(next, branch.id, nextBranch, chain);
+    if (
+      chainSignature(chain, nextBranch.headNodeId) !== chainSignature(existing, branch.headNodeId) ||
+      replaced.viewingNodeId !== next.viewingNodeId
+    ) {
+      changed = true;
+    }
+    next = replaced;
+  }
 
   return { state: next, changed };
 }
@@ -262,9 +393,11 @@ export async function loadTimeline(projectId: string): Promise<TimelineState> {
     state = emptyMain();
   }
 
-  const synced = await syncMainFromGit(projectId, state);
-  state = synced.state;
-  if (synced.changed || !fsSync.existsSync(dest)) {
+  const syncedMain = await syncMainFromGit(projectId, state);
+  state = syncedMain.state;
+  const syncedGit = await syncImportedGitBranches(projectId, state);
+  state = syncedGit.state;
+  if (syncedMain.changed || syncedGit.changed || !fsSync.existsSync(dest)) {
     await saveTimeline(projectId, state);
   }
   return state;
@@ -479,6 +612,7 @@ export async function getTimelineView(
   const canEdit = atTip;
   const dirty = canEdit ? await isWorkingTreeDirty(projectId, branchId) : false;
   const viewingGitHash = canEdit ? null : viewingNode?.gitHash ?? null;
+  const gitHeadBranch = await getProjectHeadBranch(projectId);
 
   return {
     ...state,
@@ -490,6 +624,7 @@ export async function getTimelineView(
     headNode,
     viewingNode,
     viewingGitHash,
+    gitHeadBranch,
   };
 }
 
@@ -499,13 +634,19 @@ export function getBranch(state: TimelineState, branchId: string): TimelineBranc
   return b;
 }
 
+async function branchUsesProjectDir(projectId: string, branch: TimelineBranch): Promise<boolean> {
+  if (branch.id === "main" || branch.sacred) return true;
+  const head = await getProjectHeadBranch(projectId);
+  return Boolean(head && (head === branch.gitRef || head === branch.name));
+}
+
 /** Filesystem root for a branch’s working copy. Refuses pruned tips. */
 export async function ensureBranchRoot(projectId: string, branchId: string): Promise<string> {
   const state = await loadTimeline(projectId);
   const branch = getBranch(state, branchId);
   assertBranchAccessible(branch, "opened");
 
-  if (branchId === "main" || branch.sacred) {
+  if (await branchUsesProjectDir(projectId, branch)) {
     return projectDir(projectId);
   }
 
@@ -544,10 +685,9 @@ export async function isWorkingTreeDirty(projectId: string, branchId: string): P
   try {
     const state = await loadTimeline(projectId);
     const branch = getBranch(state, branchId);
-    const root =
-      branchId === "main" || branch.sacred
-        ? projectDir(projectId)
-        : worktreePath(projectId, branchId);
+    const root = (await branchUsesProjectDir(projectId, branch))
+      ? projectDir(projectId)
+      : worktreePath(projectId, branchId);
     if (!fsSync.existsSync(root)) return false;
     const st = await runGit(projectId, ["status", "--porcelain"], { cwd: root, allowFailure: true });
     return Boolean(st.stdout.trim());
@@ -868,7 +1008,8 @@ export async function deletePrunedBranchForever(
         }
       }
 
-      if (branch.gitRef && branch.gitRef !== "main") {
+      // Only delete OpenLeaf-managed `ol/…` refs. Native git branches stay on disk.
+      if (branch.gitRef.startsWith("ol/")) {
         await runGit(projectId, ["branch", "-D", branch.gitRef], { allowFailure: true });
       }
 

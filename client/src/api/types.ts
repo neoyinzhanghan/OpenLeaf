@@ -125,6 +125,8 @@ export type TimelineBranch = {
   gitRef: string;
   /** Soft-pruned tips are omitted from the timeline view. */
   prunedAt?: string | null;
+  /** Native git branch imported for exploration (not an OpenLeaf `ol/…` fork). */
+  importedGit?: boolean;
 };
 
 export type TimelineView = {
@@ -140,6 +142,8 @@ export type TimelineView = {
   viewingNode: TimelineNode | null;
   /** Historical commit hash when viewing a non-tip leaf; null at tip. */
   viewingGitHash: string | null;
+  /** Named git branch checked out in the project folder, if any. */
+  gitHeadBranch?: string | null;
 };
 
 export type DiffHighlightBox = {

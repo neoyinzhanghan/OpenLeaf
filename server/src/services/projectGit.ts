@@ -216,33 +216,16 @@ export async function autoCommitProject(
   }
 }
 
-export async function listProjectCommits(
-  id: string,
-  limit = 50,
-  ref?: string,
-): Promise<GitCommitInfo[]> {
-  if (!isGitEnabled()) return [];
-  await ensureProjectGit(id);
+function isSafeGitName(value: string): boolean {
+  return /^[0-9a-zA-Z._/-]+$/.test(value) && !value.includes("..");
+}
 
-  const n = Math.min(200, Math.max(1, limit));
-  const args = [
-    "log",
-    `-n${n}`,
-    "--pretty=format:%H%x09%h%x09%an%x09%ae%x09%aI%x09%s",
-  ];
-  // Optional ref (e.g. "main") — reject path-like values to avoid treating them as pathspecs.
-  if (ref?.trim()) {
-    const r = ref.trim();
-    if (!/^[0-9a-zA-Z._/-]+$/.test(r) || r.includes("..")) {
-      return [];
-    }
-    args.push(r);
-  }
-  const log = await runGit(id, args, { allowFailure: true });
+function isSafeGitHash(value: string): boolean {
+  return /^[0-9a-f]{7,40}$/i.test(value);
+}
 
-  if (log.code !== 0 || !log.stdout.trim()) return [];
-
-  return log.stdout
+function parseCommitLog(stdout: string): GitCommitInfo[] {
+  return stdout
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean)
@@ -257,6 +240,94 @@ export async function listProjectCommits(
         message: rest.join("\t"),
       };
     });
+}
+
+const COMMIT_LOG_FORMAT = "--pretty=format:%H%x09%h%x09%an%x09%ae%x09%aI%x09%s";
+
+export type GitBranchInfo = {
+  name: string;
+  hash: string;
+  current: boolean;
+};
+
+/** Local `refs/heads/*` only — remotes and OpenLeaf `ol/…` worktree refs are the caller’s to filter. */
+export async function listLocalGitBranches(id: string): Promise<GitBranchInfo[]> {
+  if (!isGitEnabled()) return [];
+  await ensureProjectGit(id);
+  const listed = await runGit(
+    id,
+    ["for-each-ref", "--format=%(refname:short)%09%(objectname)%09%(HEAD)", "refs/heads"],
+    { allowFailure: true },
+  );
+  if (listed.code !== 0 || !listed.stdout.trim()) return [];
+  return listed.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [name, hash, head] = line.split("\t");
+      return { name: name ?? "", hash: hash ?? "", current: head === "*" };
+    })
+    .filter((b) => b.name && isSafeGitName(b.name) && isSafeGitHash(b.hash));
+}
+
+export async function getProjectHeadBranch(id: string): Promise<string | null> {
+  if (!isGitEnabled()) return null;
+  const r = await runGit(id, ["rev-parse", "--abbrev-ref", "HEAD"], { allowFailure: true });
+  const name = r.stdout.trim();
+  if (!name || name === "HEAD" || !isSafeGitName(name)) return null;
+  return name;
+}
+
+export async function mergeBase(id: string, a: string, b: string): Promise<string | null> {
+  if (!isSafeGitName(a) && !isSafeGitHash(a)) return null;
+  if (!isSafeGitName(b) && !isSafeGitHash(b)) return null;
+  const r = await runGit(id, ["merge-base", a, b], { allowFailure: true });
+  const hash = r.stdout.trim();
+  return r.code === 0 && isSafeGitHash(hash) ? hash : null;
+}
+
+export async function listProjectCommits(
+  id: string,
+  limit = 50,
+  ref?: string,
+): Promise<GitCommitInfo[]> {
+  if (!isGitEnabled()) return [];
+  await ensureProjectGit(id);
+
+  const n = Math.min(200, Math.max(1, limit));
+  const args = ["log", `-n${n}`, COMMIT_LOG_FORMAT];
+  // Optional ref (e.g. "main") — reject path-like values to avoid treating them as pathspecs.
+  if (ref?.trim()) {
+    const r = ref.trim();
+    if (!isSafeGitName(r)) return [];
+    args.push(r);
+  }
+  const log = await runGit(id, args, { allowFailure: true });
+  if (log.code !== 0 || !log.stdout.trim()) return [];
+  return parseCommitLog(log.stdout);
+}
+
+/** Oldest-first commits on `ref` after `afterHash` (exclusive), e.g. main..feature. */
+export async function listProjectCommitsAfter(
+  id: string,
+  afterHash: string,
+  ref: string,
+  limit = 200,
+): Promise<GitCommitInfo[]> {
+  if (!isGitEnabled()) return [];
+  const after = afterHash.trim();
+  const r = ref.trim();
+  if (!isSafeGitHash(after) || !isSafeGitName(r)) return [];
+  await ensureProjectGit(id);
+  const n = Math.min(200, Math.max(1, limit));
+  const log = await runGit(
+    id,
+    ["log", `-n${n}`, "--reverse", COMMIT_LOG_FORMAT, `${after}..${r}`],
+    { allowFailure: true },
+  );
+  if (log.code !== 0 || !log.stdout.trim()) return [];
+  return parseCommitLog(log.stdout);
 }
 
 /**

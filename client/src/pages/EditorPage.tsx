@@ -300,6 +300,9 @@ export function EditorPage() {
   );
   const [status, setStatus] = useState<Status>("idle");
   const [pdfBust, setPdfBust] = useState<number | null>(null);
+  const [pdfSwitching, setPdfSwitching] = useState(false);
+  const previewEpochRef = useRef(0);
+  const [pdfNav, setPdfNav] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [citations, setCitations] = useState<string[]>([]);
   const [extraLabels, setExtraLabels] = useState<string[]>([]);
@@ -989,12 +992,21 @@ export function EditorPage() {
   }, []);
 
   const runCompile = useCallback(async (opts?: { auto?: boolean }) => {
-    if (!id || compileLock.current || !canCompile) return false;
-    compileLock.current = true;
+    if (!id || !canCompile) return false;
+    const epoch = previewEpochRef.current;
     const startedOn = branchIdRef.current;
     const startedAt = viewingGitHashRef.current;
     const stillHere = () =>
-      branchIdRef.current === startedOn && viewingGitHashRef.current === startedAt;
+      previewEpochRef.current === epoch &&
+      branchIdRef.current === startedOn &&
+      viewingGitHashRef.current === startedAt;
+
+    while (compileLock.current) {
+      await new Promise((r) => window.setTimeout(r, 50));
+      if (!stillHere()) return false;
+    }
+    if (!stillHere()) return false;
+    compileLock.current = true;
     setStatus("compiling");
     const checkpointLabel = startedAt
       ? `checkpoint ${startedAt.slice(0, 7)}`
@@ -1025,60 +1037,78 @@ export function EditorPage() {
       if (result.ok) {
         setStatus("ok");
         setPdfBust(Date.now());
+        setPdfSwitching(false);
         await refreshTree();
         return true;
       }
       setStatus("err");
+      setPdfSwitching(false);
       if (opts?.auto) setLogOpen(true);
       return false;
     } catch (err) {
       if (!stillHere()) return false;
       setStatus("err");
+      setPdfSwitching(false);
       setLog((prev) => `${prev}\n${err instanceof Error ? err.message : "Compile failed"}`);
       if (opts?.auto) setLogOpen(true);
       return false;
     } finally {
       compileLock.current = false;
-      if (!stillHere()) {
-        void runCompileRef.current({ auto: true });
-      }
     }
   }, [id, refreshTree, canCompile, branchLabel]);
 
   const runCompileRef = useRef(runCompile);
   runCompileRef.current = runCompile;
 
-  // Each tip (and each historical checkpoint) has its own build artifacts. When you land
-  // on one with no PDF yet, compile automatically.
+  // Each tip (and each historical checkpoint) has its own build artifacts.
+  // Live tips always rebuild so uncommitted (and just-flushed CRDT) edits show up.
+  // Checkpoints are immutable — reuse a snapshot PDF if one already exists.
   useEffect(() => {
     if (!id || project?.id !== id) return;
     setPdfBust(null);
-    if (!canCompile) return;
+    if (!canCompile) {
+      setPdfSwitching(false);
+      return;
+    }
 
     let cancelled = false;
+    const ac = new AbortController();
+    const epoch = previewEpochRef.current;
     const branchAtStart = branchId;
     const atAtStart = viewingGitHash;
+    const still = () =>
+      !cancelled &&
+      previewEpochRef.current === epoch &&
+      branchIdRef.current === branchAtStart &&
+      viewingGitHashRef.current === atAtStart;
+
     (async () => {
       try {
-        const probe = await fetch(pdfUrl(id, Date.now(), branchId, viewingGitHash), {
-          method: "GET",
-        });
-        if (cancelled || branchAtStart !== branchId || atAtStart !== viewingGitHash) return;
-        if (probe.ok) {
-          setPdfBust(Date.now());
-          return;
+        if (atAtStart) {
+          const probe = await fetch(pdfUrl(id, Date.now(), branchAtStart, atAtStart), {
+            method: "GET",
+            signal: ac.signal,
+            cache: "no-store",
+          });
+          if (!still()) return;
+          if (probe.ok) {
+            setPdfBust(Date.now());
+            setPdfSwitching(false);
+            return;
+          }
         }
+        if (!still()) return;
         await runCompileRef.current({ auto: true });
       } catch {
-        if (!cancelled && branchAtStart === branchId && atAtStart === viewingGitHash) {
-          await runCompileRef.current({ auto: true });
-        }
+        if (ac.signal.aborted || !still()) return;
+        await runCompileRef.current({ auto: true });
       }
     })();
     return () => {
       cancelled = true;
+      ac.abort();
     };
-  }, [id, project?.id, branchId, viewingGitHash, canCompile]);
+  }, [id, project?.id, branchId, viewingGitHash, canCompile, pdfNav]);
 
   const save = useCallback(
     async (opts?: { compile?: boolean; silent?: boolean }) => {
@@ -1497,8 +1527,25 @@ export function EditorPage() {
     [id, showSyncToast, trackChangesPreviewOn],
   );
 
+  const dropPdfPreview = useCallback(() => {
+    previewEpochRef.current += 1;
+    setPdfBust(null);
+    setPdfSwitching(true);
+  }, []);
+
+  const beginLeafPreview = useCallback(() => {
+    dropPdfPreview();
+  }, [dropPdfPreview]);
+
+  const abortLeafPreview = useCallback(() => {
+    dropPdfPreview();
+    setPdfNav((n) => n + 1);
+  }, [dropPdfPreview]);
+
   const onTimelineChange = useCallback(
     (view: TimelineView) => {
+      dropPdfPreview();
+      setPdfNav((n) => n + 1);
       setBranchId(view.activeBranchId);
       setBranchLabel(view.activeBranch.name);
       setTimelineCanEdit(
@@ -1532,7 +1579,7 @@ export function EditorPage() {
       }, 0);
       void refreshTree();
     },
-    [showSyncToast, refreshTree, guestBranchId],
+    [showSyncToast, refreshTree, guestBranchId, dropPdfPreview],
   );
 
   const onIntentionalCommit = useCallback(async () => {
@@ -1646,6 +1693,7 @@ export function EditorPage() {
       if (!id) return;
       try {
         if (entry.collab.branchId !== branchId) {
+          beginLeafPreview();
           const view = await checkoutProjectTimeline(id, { branchId: entry.collab.branchId, nodeId: null });
           onTimelineChange(view);
         }
@@ -1655,7 +1703,7 @@ export function EditorPage() {
         setError(err instanceof Error ? err.message : "Could not open AI suggestion");
       }
     },
-    [id, branchId, onTimelineChange, jumpToAnchor],
+    [id, branchId, onTimelineChange, jumpToAnchor, beginLeafPreview],
   );
 
   useEffect(() => {
@@ -2015,8 +2063,9 @@ export function EditorPage() {
   }
 
   const markupPreviewActive = Boolean(diffOn && trackChangesPreviewOn && canCompile);
-  const pdfViewerUrl =
-    markupPreviewActive && trackChangesPreviewPair
+  const pdfViewerUrl = pdfSwitching
+    ? null
+    : markupPreviewActive && trackChangesPreviewPair
       ? trackChangesPdfUrl(
           id,
           trackChangesPreviewPair.from,
@@ -2026,7 +2075,10 @@ export function EditorPage() {
       : !markupPreviewActive && pdfBust != null
         ? pdfUrl(id, pdfBust, branchId, viewingGitHash)
         : null;
-  const pdfEmptyHint = markupPreviewActive
+  const pdfEmptyHint =
+    pdfSwitching && status !== "compiling" && status !== "err"
+      ? "Opening that leaf…"
+      : markupPreviewActive
     ? trackChangesBusy
       ? "Building latexdiff track-changes PDF of the compare baseline vs this checkpoint…"
       : trackChangesPreviewError
@@ -2557,6 +2609,8 @@ export function EditorPage() {
         guestBranchId={guestBranchId}
         leavesVersion={collab.leavesVersion}
         onHighlightSince={config?.git?.enabled === false ? undefined : (hash) => onHighlightSinceCommit(hash)}
+        onNavigateStart={beginLeafPreview}
+        onNavigateAbort={abortLeafPreview}
         onOpenNode={(node, branch) => {
           if (branch.headNodeId !== node.id) return;
           reopenAiLeafNotifications(branch);
@@ -2809,6 +2863,7 @@ export function EditorPage() {
               }
               right={
                 <PdfViewer
+                  key={`${id}:${branchId}:${viewingGitHash ?? "tip"}`}
                   url={pdfViewerUrl}
                   emptyHint={pdfEmptyHint}
                   onReverseSearch={onReverseSearch}

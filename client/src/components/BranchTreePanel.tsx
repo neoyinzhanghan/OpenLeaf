@@ -14,7 +14,7 @@ import {
 } from "../api/client";
 import type { TimelineBranch, TimelineNode, TimelineView } from "../api/types";
 import { TimelineGraph } from "./TimelineGraph";
-import { formatWhen, isAiBranch } from "./timelineLayout";
+import { formatWhen, isAiBranch, isImportedGitBranch } from "./timelineLayout";
 import { applyMergeTipPick, DEFAULT_PRE_MERGE_MESSAGE, mergeStartAllowed } from "./mergeCompose";
 import { nextTimelineEscape } from "./timelineEscape";
 
@@ -36,6 +36,10 @@ type Props = {
   onHighlightSince?: (gitHash: string) => void;
   /** Fired after a leaf is successfully opened (checkout / observe). */
   onOpenNode?: (node: TimelineNode, branch: TimelineBranch) => void;
+  /** Fired as soon as the user picks a leaf, before checkout finishes — drop the previous PDF. */
+  onNavigateStart?: () => void;
+  /** Fired if that pick never completes, so the current leaf can show a PDF again. */
+  onNavigateAbort?: () => void;
 };
 
 export function BranchTreePanel({
@@ -53,6 +57,8 @@ export function BranchTreePanel({
   leavesVersion = 0,
   onHighlightSince,
   onOpenNode,
+  onNavigateStart,
+  onNavigateAbort,
 }: Props) {
   const [view, setView] = useState<TimelineView | null>(null);
   const [leafStats, setLeafStats] = useState<BranchLeafStat[]>([]);
@@ -191,11 +197,13 @@ export function BranchTreePanel({
     setBusy(true);
     setError(null);
     setPinnedId(node.id);
+    onNavigateStart?.();
     try {
       const isTip = branch.headNodeId === node.id;
       if (guestBranchId) {
         if (!isTip) {
           setError("Share-link guests can open live tips only — ask the host to travel history");
+          onNavigateAbort?.();
           return;
         }
         const next = await getProjectTimeline(projectId, branch.id);
@@ -204,7 +212,10 @@ export function BranchTreePanel({
         onOpenNode?.(node, branch);
         return;
       }
-      if (!canCheckout) return;
+      if (!canCheckout) {
+        onNavigateAbort?.();
+        return;
+      }
       const next = await checkoutProjectTimeline(projectId, {
         branchId: branch.id,
         nodeId: isTip ? null : node.id,
@@ -214,6 +225,7 @@ export function BranchTreePanel({
       onOpenNode?.(node, branch);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not open that leaf");
+      onNavigateAbort?.();
     } finally {
       setBusy(false);
     }
@@ -473,7 +485,27 @@ export function BranchTreePanel({
   const hoverIsHead = Boolean(hoverBranch && hover && hoverBranch.headNodeId === hover.id);
   const hoverIsSacred = Boolean(hoverBranch?.sacred);
   const hoverIsAi = isAiBranch(hoverBranch);
+  const hoverIsImportedGit = isImportedGitBranch(hoverBranch);
   const showTrash = canPrune && !guestBranchId;
+  const gitExploreBranches = view
+    ? [
+        view.branches.find((b) => b.id === "main"),
+        ...view.branches.filter((b) => isImportedGitBranch(b) && b.id !== "main"),
+      ].filter((b): b is TimelineBranch => Boolean(b))
+    : [];
+  const exploreValue = gitExploreBranches.some((b) => b.id === view?.activeBranchId)
+    ? view!.activeBranchId
+    : "main";
+
+  const exploreGitBranch = async (branchId: string) => {
+    if (!view) return;
+    const branch = view.branches.find((b) => b.id === branchId);
+    if (!branch?.headNodeId) return;
+    const node = view.nodes.find((n) => n.id === branch.headNodeId);
+    if (!node) return;
+    await selectNode(node, branch);
+    setRecenterToken((n) => n + 1);
+  };
 
   return (
     <aside className="history-drawer timeline-drawer" aria-label="Branch timeline">
@@ -558,8 +590,29 @@ export function BranchTreePanel({
             : mergeDraft.fromBranchId
               ? "Tap the tip that should receive it — or Start merge if both sides are set."
               : "Tap the tip that should receive the incoming work."
-          : "Time runs left → right. Tap a leaf to inspect, tap again to open. Merge is a two-tap on tips."}
+          : "Time runs left → right. Tap a leaf to inspect. Git branches besides main appear as extra threads."}
       </p>
+
+      {gitExploreBranches.length > 1 && !mergeDraft && (
+        <label className="tl-git-explore">
+          <span className="tl-git-explore-label">Explore git branch</span>
+          <select
+            value={exploreValue}
+            disabled={busy || loading}
+            aria-label="Explore a git branch on the timeline"
+            onChange={(e) => void exploreGitBranch(e.target.value)}
+          >
+            {gitExploreBranches.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+                {view?.gitHeadBranch && (view.gitHeadBranch === b.gitRef || view.gitHeadBranch === b.name)
+                  ? " · checked out"
+                  : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
 
       {error && <div className="error-banner">{error}</div>}
 
@@ -758,6 +811,7 @@ export function BranchTreePanel({
                 <span className="tl-card-branch">{hoverBranch.name}</span>
                 {hoverIsHead && <span>tip</span>}
                 {hoverIsAi && <span className="tl-ai-tag">AI</span>}
+                {hoverIsImportedGit && <span className="tl-chip">git</span>}
                 {hover.legacy && <span>legacy</span>}
                 {hoverIsHead && leafByBranch.get(hoverBranch.id)?.dirty && (
                   <span className="tl-meta-dirty">

@@ -158,4 +158,102 @@ describe("syncMainFromGit", () => {
     assert.equal(mainNodes[3]!.gitHash, h4);
     assert.equal(getBranch(after, "main").headNodeId, mainNodes[3]!.id);
   });
+
+  describe("imported local git branches", () => {
+  const id = "sync-git-feature";
+  let dir = "";
+  let mainTip = "";
+  let featureHashes: string[] = [];
+
+  before(async () => {
+    dir = path.join(projectsRoot, id);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "main.tex"), "main-1\n", "utf8");
+    await ensureProjectGit(id);
+    await git(dir, ["add", "-A"]);
+    await git(dir, ["commit", "-m", "on-main", "--no-gpg-sign"]);
+    mainTip = await git(dir, ["rev-parse", "HEAD"]);
+
+    await git(dir, ["checkout", "-b", "fair-viewport-benchmark"]);
+    fs.writeFileSync(path.join(dir, "main.tex"), "feat-1\n", "utf8");
+    await git(dir, ["add", "-A"]);
+    await git(dir, ["commit", "-m", "feature one", "--no-gpg-sign"]);
+    const f1 = await git(dir, ["rev-parse", "HEAD"]);
+    fs.writeFileSync(path.join(dir, "main.tex"), "feat-2\n", "utf8");
+    await git(dir, ["add", "-A"]);
+    await git(dir, ["commit", "-m", "feature two", "--no-gpg-sign"]);
+    const f2 = await git(dir, ["rev-parse", "HEAD"]);
+    featureHashes = [f1, f2];
+  });
+
+  it("imports a local non-main git branch as an explore thread", async () => {
+    const tl = await loadTimeline(id);
+    const imported = tl.branches.find((b) => b.importedGit || b.gitRef === "fair-viewport-benchmark");
+    assert.ok(imported, "expected imported git branch on the timeline");
+    assert.equal(imported!.name, "fair-viewport-benchmark");
+    assert.equal(imported!.gitRef, "fair-viewport-benchmark");
+    assert.equal(imported!.sacred, false);
+
+    const nodes = tl.nodes.filter((n) => n.branchId === imported!.id);
+    assert.equal(nodes.length, 2);
+    assert.deepEqual(
+      nodes.map((n) => n.gitHash),
+      featureHashes,
+    );
+    const mainHead = tl.nodes.find((n) => n.gitHash === mainTip && n.branchId === "main");
+    assert.ok(mainHead);
+    assert.equal(nodes[0]!.parentId, mainHead!.id);
+    assert.equal(nodes[1]!.parentId, nodes[0]!.id);
+    assert.equal(imported!.headNodeId, nodes[1]!.id);
+  });
+
+  it("second load keeps imported node ids stable", async () => {
+    const a = await loadTimeline(id);
+    const b = await loadTimeline(id);
+    const aImp = a.branches.find((x) => x.gitRef === "fair-viewport-benchmark")!;
+    const bImp = b.branches.find((x) => x.gitRef === "fair-viewport-benchmark")!;
+    assert.equal(aImp.id, bImp.id);
+    assert.deepEqual(
+      a.nodes.filter((n) => n.branchId === aImp.id).map((n) => n.id),
+      b.nodes.filter((n) => n.branchId === bImp.id).map((n) => n.id),
+    );
+  });
+
+  it("does not import OpenLeaf ol/ forks as git-* threads", async () => {
+    const tl = await loadTimeline(id);
+    const main = getBranch(tl, "main");
+    const forked = await forkBranch(id, {
+      fromNodeId: main.headNodeId!,
+      name: "methods-rewrite",
+      activate: false,
+    });
+    const after = await loadTimeline(id);
+    assert.ok(after.branches.some((b) => b.id === forked.branch.id));
+    assert.equal(forked.branch.gitRef.startsWith("ol/"), true);
+    assert.ok(!after.branches.some((b) => b.id === `git-${forked.branch.gitRef}`));
+    assert.ok(!after.branches.some((b) => b.importedGit && b.gitRef === forked.branch.gitRef));
+  });
+
+  it("keeps an imported thread after it is merged into main", async () => {
+    await git(dir, ["checkout", "main"]);
+    await git(dir, ["merge", "fair-viewport-benchmark", "-m", "merge feature", "--no-gpg-sign", "--no-ff"]);
+    const tl = await loadTimeline(id);
+    const imported = tl.branches.find((b) => b.gitRef === "fair-viewport-benchmark");
+    assert.ok(imported, "merged git branch should remain explorable");
+    const nodes = tl.nodes.filter((n) => n.branchId === imported!.id);
+    assert.ok(nodes.length >= 1);
+    assert.equal(imported!.headNodeId, nodes[nodes.length - 1]!.id);
+  });
+
+  it("delete-forever of an imported thread does not delete the git branch", async () => {
+    const { pruneBranchTip, deletePrunedBranchForever } = await import("./timeline.js");
+    const tl = await loadTimeline(id);
+    const imported = tl.branches.find((b) => b.gitRef === "fair-viewport-benchmark");
+    assert.ok(imported);
+    await pruneBranchTip(id, imported!.id);
+    await deletePrunedBranchForever(id, imported!.id);
+    const refs = await git(dir, ["show-ref", "--verify", "refs/heads/fair-viewport-benchmark"]);
+    assert.match(refs, /fair-viewport-benchmark/);
+  });
+  });
 });
