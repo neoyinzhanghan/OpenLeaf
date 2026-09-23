@@ -1,21 +1,5 @@
 /** Shared labels & helpers for Paperpile/Zotero-style library organization. */
-import type { LibrarySort, PaperRecord, ReadingStatus } from "../api/types";
-
-export const READING_STATUSES: ReadingStatus[] = [
-  "unread",
-  "to-read",
-  "reading",
-  "read",
-  "archived",
-];
-
-export const STATUS_LABEL: Record<ReadingStatus, string> = {
-  unread: "Unread",
-  "to-read": "To read",
-  reading: "Reading",
-  read: "Read",
-  archived: "Archived",
-};
+import type { LibrarySort, PaperRecord } from "../api/types";
 
 export const SORT_OPTIONS: Array<{ id: LibrarySort; label: string }> = [
   { id: "added", label: "Recently updated" },
@@ -23,10 +7,9 @@ export const SORT_OPTIONS: Array<{ id: LibrarySort; label: string }> = [
   { id: "year", label: "Year" },
   { id: "rating", label: "Rating" },
   { id: "starred", label: "Starred first" },
-  { id: "status", label: "Reading status" },
 ];
 
-/** Topic suggestions (subject matter — not reading workflow; use status/star for that). */
+/** Topic suggestions (subject matter — not workflow labels). */
 export const TOPIC_SUGGESTIONS = [
   "machine-learning",
   "statistics",
@@ -54,10 +37,6 @@ export function normalizePaper(p: PaperRecord): PaperRecord {
     tags: p.tags ?? [],
     collections: p.collections ?? [],
   };
-}
-
-export function statusClass(status: ReadingStatus): string {
-  return `lib-status lib-status-${status}`;
 }
 
 export function ratingStars(rating: number): string {

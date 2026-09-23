@@ -17,16 +17,13 @@ import {
   patchLibraryPaper,
   type CitationInstance,
 } from "../api/client";
-import type { LibraryCollections, LibrarySort, PaperRecord, ReadingStatus } from "../api/types";
+import type { LibraryCollections, LibrarySort, PaperRecord } from "../api/types";
 import {
   TOPIC_SUGGESTIONS,
-  READING_STATUSES,
   SORT_OPTIONS,
-  STATUS_LABEL,
   normalizePaper,
   ratingStars,
   slugCollectionId,
-  statusClass,
 } from "./LibraryOrganize";
 import { LibrarySharePanel } from "./LibrarySharePanel";
 
@@ -91,7 +88,6 @@ export function LibraryPanel({
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [collectionFilter, setCollectionFilter] = useState<string | null>(null);
   const [starredOnly, setStarredOnly] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<ReadingStatus | null>(null);
   const [sort, setSort] = useState<LibrarySort>("added");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [checkedKeys, setCheckedKeys] = useState<Set<string>>(new Set());
@@ -131,7 +127,6 @@ export function LibraryPanel({
           tag: tagFilter ?? undefined,
           collection: collectionFilter ?? undefined,
           starred: starredOnly ? true : undefined,
-          status: statusFilter ?? undefined,
           sort,
           limit: 2000,
         }),
@@ -143,7 +138,7 @@ export function LibraryPanel({
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load library");
     }
-  }, [query, tagFilter, collectionFilter, starredOnly, statusFilter, sort]);
+  }, [query, tagFilter, collectionFilter, starredOnly, sort]);
 
   useEffect(() => {
     if (!open) return;
@@ -168,7 +163,6 @@ export function LibraryPanel({
     setCollectionFilter(null);
     setTagFilter(null);
     setStarredOnly(false);
-    setStatusFilter(null);
   };
 
   const toggleChecked = (citekey: string) => {
@@ -192,14 +186,6 @@ export function LibraryPanel({
       await patchOne(paper.citekey, { starred: !paper.starred });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not update star");
-    }
-  };
-
-  const setStatus = async (paper: PaperRecord, status: ReadingStatus) => {
-    try {
-      await patchOne(paper.citekey, { status });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not update status");
     }
   };
 
@@ -571,24 +557,6 @@ export function LibraryPanel({
           </button>
           <select
             className="library-inline-select"
-            disabled={busy}
-            defaultValue=""
-            onChange={(e) => {
-              const v = e.target.value as ReadingStatus | "";
-              if (v) void runBulk({ status: v });
-              e.target.value = "";
-            }}
-            aria-label="Set status for selected"
-          >
-            <option value="">Status…</option>
-            {READING_STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {STATUS_LABEL[s]}
-              </option>
-            ))}
-          </select>
-          <select
-            className="library-inline-select"
             disabled={busy || !collections}
             defaultValue=""
             onChange={(e) => {
@@ -756,7 +724,7 @@ export function LibraryPanel({
             <div className="library-filters" role="toolbar" aria-label="Smart views">
               <button
                 type="button"
-                className={`library-chip${!collectionFilter && !tagFilter && !starredOnly && !statusFilter ? " is-active" : ""}`}
+                className={`library-chip${!collectionFilter && !tagFilter && !starredOnly ? " is-active" : ""}`}
                 onClick={clearSmartFilters}
               >
                 All
@@ -764,26 +732,10 @@ export function LibraryPanel({
               <button
                 type="button"
                 className={`library-chip${starredOnly ? " is-active" : ""}`}
-                onClick={() => {
-                  setStarredOnly((v) => !v);
-                  setStatusFilter(null);
-                }}
+                onClick={() => setStarredOnly((v) => !v)}
               >
                 ★ Starred
               </button>
-              {READING_STATUSES.map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  className={`library-chip${statusFilter === s ? " is-active" : ""}`}
-                  onClick={() => {
-                    setStatusFilter((cur) => (cur === s ? null : s));
-                    setStarredOnly(false);
-                  }}
-                >
-                  {STATUS_LABEL[s]}
-                </button>
-              ))}
             </div>
           </div>
 
@@ -895,7 +847,6 @@ export function LibraryPanel({
                     <div className="library-item-meta">
                       <span className="library-authors">{authorsLabel(p, { compact: true })}</span>
                       {p.year != null ? <span>· {p.year}</span> : null}
-                      <span className={statusClass(p.status)}>{STATUS_LABEL[p.status]}</span>
                       {p.rating > 0 ? <span className="library-rating-mini">{ratingStars(p.rating)}</span> : null}
                       <span className={badge.className}>{badge.label}</span>
                     </div>
@@ -957,20 +908,6 @@ export function LibraryPanel({
                 open={sectionOpen.organize}
                 onToggle={() => setSectionOpen((s) => ({ ...s, organize: !s.organize }))}
               >
-                <label className="library-field">
-                  Reading status
-                  <select
-                    className="library-inline-select"
-                    value={selected.status}
-                    onChange={(e) => void setStatus(selected, e.target.value as ReadingStatus)}
-                  >
-                    {READING_STATUSES.map((s) => (
-                      <option key={s} value={s}>
-                        {STATUS_LABEL[s]}
-                      </option>
-                    ))}
-                  </select>
-                </label>
                 <div className="library-rating" role="group" aria-label="Rating">
                   {[1, 2, 3, 4, 5].map((n) => (
                     <button
