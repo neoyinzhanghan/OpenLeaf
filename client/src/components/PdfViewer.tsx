@@ -49,6 +49,31 @@ export type PdfDiffOverlay = {
   height?: number;
 };
 
+/** Persistent library/project annotation marks on the PDF canvas. */
+export type PdfAnnotationMark = {
+  id: string;
+  kind: "highlight" | "underline" | "area" | "pin" | "note";
+  page: number;
+  x: number;
+  y: number;
+  w?: number;
+  h?: number;
+  color?: string;
+  label?: string;
+  selected?: boolean;
+  rects?: Array<{ x: number; y: number; w: number; h: number }>;
+};
+
+export type PdfInteractionMode = "sync" | "pin" | "highlight" | "underline" | "area";
+
+export type PdfAreaRect = {
+  page: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+};
+
 export type PdfDiffHighlightControls = {
   enabled: boolean;
   /** Baseline commit hash to compare against */
@@ -85,6 +110,16 @@ type Props = {
   highlight?: PdfHighlight | null;
   /** Persistent git-diff addition marks (not the SyncTeX flash) */
   overlays?: PdfDiffOverlay[];
+  /** Persistent annotation marks (library / optional project notes). */
+  annotations?: PdfAnnotationMark[];
+  /**
+   * Interaction mode. Default "sync" preserves Editor SyncTeX click/shift-click.
+   * Library annotate modes: pin (click), highlight/underline/area (drag rect).
+   */
+  interactionMode?: PdfInteractionMode;
+  onAreaSelect?: (rect: PdfAreaRect) => void;
+  onAnnotationClick?: (id: string) => void;
+  onVisiblePageChange?: (page: number) => void;
   diffHighlight?: PdfDiffHighlightControls | null;
 };
 
@@ -153,6 +188,11 @@ export function PdfViewer({
   shiftClickHint,
   highlight,
   overlays,
+  annotations,
+  interactionMode = "sync",
+  onAreaSelect,
+  onAnnotationClick,
+  onVisiblePageChange,
   diffHighlight,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -161,6 +201,14 @@ export function PdfViewer({
   reverseRef.current = onReverseSearch;
   const commentRef = useRef(onCommentAt);
   commentRef.current = onCommentAt;
+  const modeRef = useRef(interactionMode);
+  modeRef.current = interactionMode;
+  const areaSelectRef = useRef(onAreaSelect);
+  areaSelectRef.current = onAreaSelect;
+  const annClickRef = useRef(onAnnotationClick);
+  annClickRef.current = onAnnotationClick;
+  const visiblePageRef = useRef(onVisiblePageChange);
+  visiblePageRef.current = onVisiblePageChange;
   const docRef = useRef<PDFDocumentProxy | null>(null);
   const scaleRef = useRef(1.2);
   const renderedScaleRef = useRef(1.2);
@@ -338,13 +386,86 @@ export function PdfViewer({
       canvas.dataset.page = String(pageNum);
       canvas.style.display = "none";
       canvas.title = "Click → source · Shift+click → comment";
-      wrap.addEventListener("click", (ev) => {
-        const target = ev.currentTarget as HTMLElement;
+      const clientToPdf = (ev: MouseEvent, target: HTMLElement) => {
         const rect = target.getBoundingClientRect();
-        if (rect.width <= 0 || rect.height <= 0) return;
+        if (rect.width <= 0 || rect.height <= 0) return null;
         const currentScale = scaleRef.current;
         const x = ((ev.clientX - rect.left) / rect.width) * (target.offsetWidth / currentScale);
         const y = ((ev.clientY - rect.top) / rect.height) * (target.offsetHeight / currentScale);
+        return { x, y, rect };
+      };
+
+      let dragStart: { x: number; y: number } | null = null;
+      let dragBand: HTMLElement | null = null;
+      let didDrag = false;
+
+      wrap.addEventListener("mousedown", (ev) => {
+        const mode = modeRef.current;
+        if (mode !== "highlight" && mode !== "underline" && mode !== "area") return;
+        if (ev.button !== 0) return;
+        const target = ev.currentTarget as HTMLElement;
+        const pt = clientToPdf(ev, target);
+        if (!pt) return;
+        ev.preventDefault();
+        dragStart = { x: pt.x, y: pt.y };
+        didDrag = false;
+        dragBand?.remove();
+        dragBand = document.createElement("div");
+        dragBand.className = "pdf-ann-drag";
+        dragBand.style.left = `${ev.clientX - pt.rect.left}px`;
+        dragBand.style.top = `${ev.clientY - pt.rect.top}px`;
+        dragBand.style.width = "0px";
+        dragBand.style.height = "0px";
+        target.appendChild(dragBand);
+      });
+
+      wrap.addEventListener("mousemove", (ev) => {
+        if (!dragStart || !dragBand) return;
+        const target = ev.currentTarget as HTMLElement;
+        const pt = clientToPdf(ev, target);
+        if (!pt) return;
+        const currentScale = scaleRef.current;
+        const x0 = Math.min(dragStart.x, pt.x);
+        const y0 = Math.min(dragStart.y, pt.y);
+        const x1 = Math.max(dragStart.x, pt.x);
+        const y1 = Math.max(dragStart.y, pt.y);
+        if (Math.abs(x1 - x0) > 3 || Math.abs(y1 - y0) > 3) didDrag = true;
+        dragBand.style.left = `${x0 * currentScale}px`;
+        dragBand.style.top = `${y0 * currentScale}px`;
+        dragBand.style.width = `${(x1 - x0) * currentScale}px`;
+        dragBand.style.height = `${(y1 - y0) * currentScale}px`;
+      });
+
+      const endDrag = (ev: MouseEvent) => {
+        if (!dragStart) return;
+        const target = ev.currentTarget as HTMLElement;
+        const pt = clientToPdf(ev, target);
+        const start = dragStart;
+        dragStart = null;
+        dragBand?.remove();
+        dragBand = null;
+        if (!pt || !didDrag) return;
+        const x = Math.min(start.x, pt.x);
+        const y = Math.min(start.y, pt.y);
+        const w = Math.abs(pt.x - start.x);
+        const h = Math.abs(pt.y - start.y);
+        if (w < 4 || h < 4) return;
+        areaSelectRef.current?.({ page: pageNum, x, y, w, h });
+      };
+      wrap.addEventListener("mouseup", endDrag);
+      wrap.addEventListener("mouseleave", (ev) => {
+        if (dragStart) endDrag(ev);
+      });
+
+      wrap.addEventListener("click", (ev) => {
+        if (didDrag) {
+          didDrag = false;
+          return;
+        }
+        const target = ev.currentTarget as HTMLElement;
+        const pt = clientToPdf(ev, target);
+        if (!pt) return;
+        const { x, y, rect } = pt;
 
         target.querySelectorAll(".pdf-click-pulse").forEach((el) => el.remove());
         const pulse = document.createElement("div");
@@ -353,6 +474,19 @@ export function PdfViewer({
         pulse.style.top = `${ev.clientY - rect.top - 10}px`;
         target.appendChild(pulse);
         window.setTimeout(() => pulse.remove(), 700);
+
+        const mode = modeRef.current;
+        if (mode === "pin") {
+          commentRef.current?.(pageNum, x, y);
+          return;
+        }
+        if (mode === "highlight" || mode === "underline" || mode === "area") {
+          // Click without drag: treat as a small pin-sized area for convenience.
+          if (ev.shiftKey) {
+            commentRef.current?.(pageNum, x, y);
+          }
+          return;
+        }
 
         if (ev.shiftKey && commentRef.current) {
           commentRef.current(pageNum, x, y);
@@ -663,6 +797,99 @@ export function PdfViewer({
       wrap.appendChild(mark);
     }
   }, [overlays, scale, pagesReady, loading, docVersion]);
+
+  // Persistent library/project annotation marks.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    container.querySelectorAll(".pdf-ann-layer").forEach((el) => el.remove());
+    if (!annotations?.length || !pagesReady || loading) return;
+
+    const byPage = new Map<number, PdfAnnotationMark[]>();
+    for (const ann of annotations) {
+      if (!ann.page || ann.page < 1) continue;
+      const list = byPage.get(ann.page) ?? [];
+      list.push(ann);
+      byPage.set(ann.page, list);
+    }
+
+    for (const [page, marks] of byPage) {
+      const wrap = container.querySelector(
+        `.pdf-page-wrap[data-page="${page}"]`,
+      ) as HTMLElement | null;
+      if (!wrap) continue;
+      const layer = document.createElement("div");
+      layer.className = "pdf-ann-layer";
+      for (const ann of marks) {
+        const color = ann.color || "#facc15";
+        const rects =
+          ann.rects && ann.rects.length
+            ? ann.rects
+            : ann.w != null && ann.h != null
+              ? [{ x: ann.x, y: ann.y, w: ann.w, h: ann.h }]
+              : [{ x: ann.x, y: ann.y, w: ann.w ?? 14, h: ann.h ?? 14 }];
+
+        if (ann.kind === "pin" || ann.kind === "note") {
+          const pin = document.createElement("button");
+          pin.type = "button";
+          pin.className = `pdf-ann-pin${ann.selected ? " is-selected" : ""}`;
+          pin.style.left = `${ann.x * scale}px`;
+          pin.style.top = `${ann.y * scale}px`;
+          pin.style.setProperty("--ann-color", color);
+          pin.title = ann.label || "Annotation";
+          pin.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            annClickRef.current?.(ann.id);
+          });
+          layer.appendChild(pin);
+          continue;
+        }
+
+        for (const r of rects) {
+          const el = document.createElement("button");
+          el.type = "button";
+          el.className = `pdf-ann-mark pdf-ann-${ann.kind}${ann.selected ? " is-selected" : ""}`;
+          el.style.left = `${r.x * scale}px`;
+          el.style.top = `${r.y * scale}px`;
+          el.style.width = `${Math.max(r.w * scale, 4)}px`;
+          el.style.height = `${Math.max(r.h * scale, ann.kind === "underline" ? 3 : 4)}px`;
+          el.style.setProperty("--ann-color", color);
+          el.title = ann.label || "Annotation";
+          el.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            annClickRef.current?.(ann.id);
+          });
+          layer.appendChild(el);
+        }
+      }
+      wrap.appendChild(layer);
+    }
+  }, [annotations, scale, pagesReady, loading, docVersion]);
+
+  // Report the page centered in the viewport (for sidebar page filter).
+  useEffect(() => {
+    const scroller = scrollRef.current;
+    const container = containerRef.current;
+    if (!scroller || !container || !onVisiblePageChange) return;
+
+    let last = 0;
+    const report = () => {
+      const anchor = captureScrollAnchor(scroller, container);
+      if (!anchor || anchor.page === last) return;
+      last = anchor.page;
+      visiblePageRef.current?.(anchor.page);
+    };
+    report();
+    scroller.addEventListener("scroll", report, { passive: true });
+    return () => scroller.removeEventListener("scroll", report);
+  }, [onVisiblePageChange, pagesReady, pageCount, docVersion]);
+
+  // Cursor hint for annotate modes.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    container.dataset.annMode = interactionMode;
+  }, [interactionMode, pagesReady, docVersion]);
 
   return (
     <div

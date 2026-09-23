@@ -49,7 +49,7 @@ export type LibrarySort = "added" | "title" | "year" | "rating" | "starred" | "s
 
 export type PaperAnnotation = {
   id: string;
-  kind: "note" | "highlight";
+  kind: "note" | "highlight" | "underline" | "area" | "pin";
   body: string;
   quote?: string;
   color?: string;
@@ -58,6 +58,7 @@ export type PaperAnnotation = {
   y?: number;
   w?: number;
   h?: number;
+  rects?: Array<{ x: number; y: number; w: number; h: number }>;
   createdAt: string;
   updatedAt: string;
 };

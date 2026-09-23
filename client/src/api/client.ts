@@ -857,7 +857,7 @@ export function listLibraryAnnotations(
 export function createLibraryAnnotation(
   citekey: string,
   body: {
-    kind?: "note" | "highlight";
+    kind?: "note" | "highlight" | "underline" | "area" | "pin";
     body?: string;
     quote?: string;
     color?: string;
@@ -866,6 +866,7 @@ export function createLibraryAnnotation(
     y?: number;
     w?: number;
     h?: number;
+    rects?: Array<{ x: number; y: number; w: number; h: number }>;
   },
 ): Promise<{ annotation: import("./types").PaperAnnotation }> {
   return request(`/api/library/${encodeURIComponent(citekey)}/annotations`, {
@@ -878,7 +879,7 @@ export function patchLibraryAnnotation(
   citekey: string,
   id: string,
   body: Partial<{
-    kind: "note" | "highlight";
+    kind: "note" | "highlight" | "underline" | "area" | "pin";
     body: string;
     quote: string;
     color: string;
@@ -887,6 +888,7 @@ export function patchLibraryAnnotation(
     y: number;
     w: number;
     h: number;
+    rects: Array<{ x: number; y: number; w: number; h: number }>;
   }>,
 ): Promise<{ annotation: import("./types").PaperAnnotation }> {
   return request(`/api/library/${encodeURIComponent(citekey)}/annotations/${encodeURIComponent(id)}`, {

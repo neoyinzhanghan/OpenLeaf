@@ -1504,6 +1504,11 @@ a {
   color: var(--ok);
 }
 
+.library-pdf-notes {
+  display: grid;
+  gap: 0.65rem;
+}
+
 .library-pdf-notes-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -1511,8 +1516,66 @@ a {
   gap: 0.5rem;
 }
 
+.library-ann-tools {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.2rem;
+}
+
+.library-ann-tool.is-active {
+  background: color-mix(in srgb, var(--accent, #5b8def) 18%, var(--bg-elevated)) !important;
+  border-color: color-mix(in srgb, var(--accent, #5b8def) 40%, var(--line)) !important;
+}
+
+.library-ann-colors {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+}
+
+.library-ann-swatch {
+  width: 1rem;
+  height: 1rem;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+  padding: 0;
+}
+
+.library-ann-swatch.is-active {
+  border-color: var(--ink, #1a1a1a);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.12),
+    0 0 0 2px color-mix(in srgb, var(--accent, #5b8def) 35%, transparent);
+}
+
+.library-ann-filter select {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.2rem 0.4rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--bg-elevated);
+  color: inherit;
+}
+
+.library-ann-hint {
+  margin: 0;
+}
+
+.library-ann-quote {
+  width: 100%;
+  font: inherit;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: inherit;
+}
+
 .library-pdf-frame {
-  height: min(52vh, 520px);
+  height: min(56vh, 560px);
   min-height: 280px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
@@ -1549,6 +1612,11 @@ a {
   gap: 0.25rem;
 }
 
+.library-annotation-item.is-selected .library-annotation-jump {
+  border-color: color-mix(in srgb, var(--accent, #5b8def) 55%, var(--line));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent, #5b8def) 25%, transparent);
+}
+
 .library-annotation-jump {
   flex: 1;
   text-align: left;
@@ -1559,21 +1627,41 @@ a {
   cursor: pointer;
   color: inherit;
   font: inherit;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.3rem 0.45rem;
 }
 
 .library-annotation-jump:hover {
   border-color: color-mix(in srgb, var(--accent, #5b8def) 45%, var(--line));
 }
 
+.library-annotation-swatch {
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 999px;
+  flex: 0 0 auto;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.15);
+}
+
+.library-annotation-kind {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
 .library-annotation-page {
   display: inline-block;
-  margin-right: 0.4rem;
   font-size: 0.72rem;
   font-weight: 650;
   color: var(--ink-faint);
 }
 
 .library-annotation-body {
+  flex: 1 1 100%;
   font-size: 0.85rem;
 }
 
@@ -3744,6 +3832,83 @@ button.lib-badge:hover {
   background: rgba(255, 245, 153, 0.5);
   border-radius: 2px;
   z-index: 1;
+}
+
+.pdf-ann-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.pdf-ann-drag {
+  position: absolute;
+  pointer-events: none;
+  z-index: 4;
+  border: 1.5px dashed color-mix(in srgb, var(--accent, #5b8def) 70%, #000);
+  background: color-mix(in srgb, var(--accent, #5b8def) 18%, transparent);
+  border-radius: 2px;
+}
+
+.pdf-ann-mark,
+.pdf-ann-pin {
+  position: absolute;
+  pointer-events: auto;
+  cursor: pointer;
+  border: none;
+  padding: 0;
+  margin: 0;
+  appearance: none;
+  --ann-color: #facc15;
+}
+
+.pdf-ann-mark.pdf-ann-highlight {
+  background: color-mix(in srgb, var(--ann-color) 42%, transparent);
+  border-radius: 2px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ann-color) 35%, transparent);
+}
+
+.pdf-ann-mark.pdf-ann-underline {
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
+  border-bottom: 2.5px solid var(--ann-color);
+  height: 0 !important;
+  min-height: 0;
+  transform: translateY(100%);
+}
+
+.pdf-ann-mark.pdf-ann-area {
+  background: color-mix(in srgb, var(--ann-color) 18%, transparent);
+  border: 1.5px solid color-mix(in srgb, var(--ann-color) 75%, #000);
+  border-radius: 3px;
+}
+
+.pdf-ann-mark.is-selected,
+.pdf-ann-pin.is-selected {
+  outline: 2px solid var(--accent, #5b8def);
+  outline-offset: 1px;
+}
+
+.pdf-ann-pin {
+  width: 14px;
+  height: 14px;
+  border-radius: 50% 50% 50% 0;
+  background: var(--ann-color);
+  transform: translate(-50%, -100%) rotate(-45deg);
+  box-shadow:
+    0 0 0 1.5px color-mix(in srgb, var(--ann-color) 40%, #000),
+    0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+[data-ann-mode="highlight"] .pdf-page,
+[data-ann-mode="underline"] .pdf-page,
+[data-ann-mode="area"] .pdf-page {
+  cursor: crosshair;
+}
+
+[data-ann-mode="pin"] .pdf-page {
+  cursor: cell;
 }
 
 .pdf-diff-controls {

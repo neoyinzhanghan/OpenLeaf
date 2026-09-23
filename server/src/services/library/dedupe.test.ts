@@ -16,6 +16,7 @@ const { paperToRis, exportLibraryPapers } = await import("./cite.js");
 const {
   addAnnotation,
   listAnnotations,
+  updateAnnotation,
   deleteAnnotation,
 } = await import("./annotations.js");
 
@@ -106,6 +107,90 @@ describe("library dedupe / export / annotations", () => {
     assert.equal(listed[0]!.body, "Interesting claim");
     assert.ok(fs.existsSync(path.join(libraryRoot, "papers", citekey, "annotations.json")));
     await deleteAnnotation(citekey, ann.id);
+    assert.equal((await listAnnotations(citekey)).length, 0);
+  });
+
+  it("supports highlight/underline/area/pin/note with colors and rects", async () => {
+    const papers = await (await import("./index.js")).listAllRecords();
+    const citekey = papers[0]!.citekey;
+
+    const hl = await addAnnotation(citekey, {
+      kind: "highlight",
+      quote: "drawn span",
+      color: "#4ade80",
+      page: 1,
+      rects: [
+        { x: 40, y: 80, w: 120, h: 14 },
+        { x: 40, y: 96, w: 90, h: 14 },
+      ],
+    });
+    assert.equal(hl.kind, "highlight");
+    assert.equal(hl.color, "#4ade80");
+    assert.equal(hl.rects?.length, 2);
+    assert.equal(hl.x, 40);
+    assert.equal(hl.y, 80);
+    assert.ok((hl.w ?? 0) >= 120);
+
+    const ul = await addAnnotation(citekey, {
+      kind: "underline",
+      page: 1,
+      x: 10,
+      y: 200,
+      w: 80,
+      h: 12,
+      color: "#60a5fa",
+    });
+    assert.equal(ul.kind, "underline");
+
+    const area = await addAnnotation(citekey, {
+      kind: "area",
+      body: "figure region",
+      page: 3,
+      x: 50,
+      y: 100,
+      w: 200,
+      h: 150,
+    });
+    assert.equal(area.kind, "area");
+
+    const pin = await addAnnotation(citekey, {
+      kind: "pin",
+      body: "check this",
+      page: 2,
+      x: 90,
+      y: 110,
+    });
+    assert.equal(pin.kind, "pin");
+
+    const note = await addAnnotation(citekey, {
+      kind: "note",
+      body: "overall takeaway",
+      page: 1,
+      color: "#a78bfa",
+    });
+    assert.equal(note.kind, "note");
+
+    const patched = await updateAnnotation(citekey, hl.id, {
+      body: "updated body",
+      color: "#fb923c",
+    });
+    assert.equal(patched.body, "updated body");
+    assert.equal(patched.color, "#fb923c");
+    assert.equal(patched.quote, "drawn span");
+
+    const listed = await listAnnotations(citekey);
+    assert.equal(listed.length, 5);
+
+    await assert.rejects(
+      () => addAnnotation(citekey, { kind: "pin", page: 1, x: 1, y: 1, body: "" }),
+      /Pin notes need a body/,
+    );
+    await assert.rejects(
+      () => addAnnotation(citekey, { kind: "highlight", page: 1 }),
+      /Highlights need geometry/,
+    );
+
+    for (const a of listed) await deleteAnnotation(citekey, a.id);
     assert.equal((await listAnnotations(citekey)).length, 0);
   });
 });

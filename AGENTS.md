@@ -25,7 +25,7 @@ For human setup and usage, see [README.md](README.md).
 | `projects/<id>/comments.json` | Review threads (author, file:line, replies); git-tracked |
 | `library/` | Personal citation library (sibling of `projects/`; gitignored) |
 | `library/papers/<citekey>/record.json` | Canonical paper metadata (source of truth) |
-| `library/papers/<citekey>/annotations.json` | PDF highlight / pin notes (optional) |
+| `library/papers/<citekey>/annotations.json` | PDF annotations: highlight / underline / area / pin / note (optional) |
 | `library/papers/<citekey>/attachment.pdf` | Optional full-text PDF |
 | `library/collections.json` | Named collections |
 | `library/.cache/index.sqlite` | Derived FTS5 index — rebuild from `record.json`, never authoritative |
