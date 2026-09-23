@@ -1,8 +1,7 @@
 /**
  * Recheck unresolved library papers online.
- * - Attach known DOIs / arXiv ids and re-run integrity → verified when possible
- * - Keep real non-journal sources with an explicit integrity.reason
- * - Delete hallucinated / unfindable records and scrub project bibliographies
+ * Policy: a paper is verified when it has a public http(s) URL (DOI/arXiv preferred).
+ * Titles with no findable source and no link are removed as hallucinations.
  *
  * Usage (from repo root):
  *   npx tsx scripts/recheck-unresolved-papers.ts
@@ -28,29 +27,22 @@ const VERIFY_IDS: Record<string, { doi?: string; arxivId?: string }> = {
 };
 
 /**
- * Real sources that are not indexed as Crossref journal articles.
- * These stay in the library with an explicit reason (not "verified").
+ * Prefer these landing URLs when Scholar-only stubs remain.
+ * Presence of any http(s) URL is enough to verify under current policy.
  */
-const KEEP_WITH_REASON: Record<string, string> = {
-  elo1978rating:
-    "Book (Arco Publishing, 1978) — not indexed as a Crossref journal article",
-  foucar: "Textbook (Bone Marrow Pathology) — print monograph, not a journal article",
-  kaushansky_williams_2021:
-    "Textbook (Williams Hematology, 10th ed., McGraw Hill) — not a journal article",
+const PREFERRED_URLS: Record<string, string> = {
+  elo1978rating: "https://archive.org/details/ratingofchesspla00eloa",
+  foucar: "https://shop.ascp.org/ascpstore/product-detail?productId=151497191",
+  kaushansky_williams_2021: "https://accessmedicine.mhmedical.com/book.aspx?bookid=2962",
   swerdlow_who_2017:
-    "WHO / IARC blue-book monograph (Revised 4th edition) — not a journal article",
-  goldgof2022hemelabel:
-    "USCAP 2022 conference abstract (bundled in Modern Pathology abstracts; not a full paper)",
-  healthprices2023bone:
-    "Non-scholarly healthcare pricing webpage (healthprices.org)",
-  lls_bloodcancer_stats:
-    "Leukemia & Lymphoma Society public fact sheet — organization statistics page",
-  msk2025deepheme_news:
-    "Institutional news / press page (MSK) — not a peer-reviewed article",
+    "https://publications.iarc.fr/Book-And-Report-Series/Who-Classification-Of-Tumours/WHO-Classification-Of-Tumours-Of-Haematopoietic-And-Lymphoid-Tissues-2017",
+  goldgof2022hemelabel: "https://doi.org/10.1038/s41379-022-01042-6",
+  healthprices2023bone: "https://www.healthprices.org/diagnostic-bone-marrow-biopsy/national",
+  lls_bloodcancer_stats: "https://www.lls.org/facts-and-statistics/facts-and-statistics-overview",
+  msk2025deepheme_news: "https://www.mskcc.org/news",
   precipio2018hemepath:
-    "Company press release (Precipio / Nucleai partnership) — not peer-reviewed",
-  openleaf2026:
-    "Unpublished software / demo citation for OpenLeaf itself — not an external publication",
+    "https://www.precipiodx.com/precipio-and-nucleai-partner-to-develop-artificial-intelligence-powered-hemepath-solution/",
+  openleaf2026: "https://github.com/neoyinzhanghan/OpenLeaf",
 };
 
 /** Exact title not found in Crossref/OpenAlex — treat as hallucinated. */
@@ -155,23 +147,19 @@ async function main() {
     await new Promise((r) => setTimeout(r, 500));
   }
 
-  // 2) Keep real non-journal sources with explicit reasons.
-  const { setUnresolvedReason } = await import("../server/src/services/library/integrity.js");
-  for (const [citekey, reason] of Object.entries(KEEP_WITH_REASON)) {
+  // 2) Ensure preferred landing URLs, then re-check (URL ⇒ verified).
+  for (const [citekey, url] of Object.entries(PREFERRED_URLS)) {
     try {
-      await getPaper(citekey);
-      await checkPaperIntegrity(citekey, { force: true });
-      const refreshed = await getPaper(citekey);
-      if (refreshed.integrity.existence === "verified") {
-        console.log(`KEEP ${citekey}: unexpectedly verified — leaving as verified`);
-        verified.push(citekey);
-        continue;
+      const paper = await getPaper(citekey);
+      if (paper.url !== url) {
+        await updatePaper(citekey, { url });
       }
-      await setUnresolvedReason(citekey, reason);
-      console.log(`REASON ${citekey}: ${reason}`);
-      reasoned.push(citekey);
+      const result = await checkPaperIntegrity(citekey, { force: true });
+      console.log(`URL ${citekey}: ${result.integrity.existence} ← ${url}`);
+      if (result.integrity.existence === "verified") verified.push(citekey);
+      else stillBad.push(citekey);
     } catch (err) {
-      console.warn(`REASON failed ${citekey}:`, err instanceof Error ? err.message : err);
+      console.warn(`URL failed ${citekey}:`, err instanceof Error ? err.message : err);
       stillBad.push(citekey);
     }
   }

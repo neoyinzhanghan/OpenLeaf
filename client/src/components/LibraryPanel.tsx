@@ -1140,7 +1140,15 @@ export function LibraryPanel({
                 ) : null}
                 {selected.integrity.existence !== "verified" && !selected.integrity.reason ? (
                   <p className="library-integrity-reason library-integrity-reason-warn">
-                    No verification reason recorded — re-run Check all.
+                    Missing a public link — add a URL (DOI, arXiv, publisher, or source page).
+                  </p>
+                ) : null}
+                {selected.integrity.existence === "verified" && selected.url ? (
+                  <p className="muted">
+                    Verified via link:{" "}
+                    <a href={selected.url} target="_blank" rel="noreferrer">
+                      {selected.url}
+                    </a>
                   </p>
                 ) : null}
                 <button type="button" className="btn btn-quiet" disabled={busy} onClick={() => void runEnrichSelected()}>

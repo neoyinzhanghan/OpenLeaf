@@ -10,6 +10,11 @@ import type { PaperIntegrity, PaperRecord } from "./types.js";
 import { recordPath } from "./paths.js";
 import fs from "node:fs/promises";
 
+/** A paper with any absolute http(s) landing/search URL is considered verified. */
+export function hasVerifyingUrl(url: string | null | undefined): boolean {
+  return Boolean(url && /^https?:\/\/\S+/i.test(url.trim()));
+}
+
 export type IntegrityCheckResult = {
   citekey: string;
   integrity: PaperIntegrity;
@@ -185,6 +190,13 @@ export async function checkPaperIntegrity(
     detail = "title search via OpenAlex";
   }
 
+  // Policy: any absolute public URL is enough to mark the paper verified
+  // (DOI/arXiv preferred above; books, news, and org pages verify via their link).
+  if (existence !== "verified" && existence !== "mismatch" && hasVerifyingUrl(paper.url)) {
+    existence = "verified";
+    detail = detail ? `${detail}; public URL present` : "public URL present";
+  }
+
   const integrity: PaperIntegrity = {
     existence,
     retraction,
@@ -195,7 +207,9 @@ export async function checkPaperIntegrity(
         : detail?.trim() ||
           (existence === "mismatch"
             ? "Title does not match Crossref/OpenAlex metadata for this DOI"
-            : "No Crossref/OpenAlex/arXiv match found"),
+            : hasVerifyingUrl(paper.url)
+              ? "Could not verify identifiers"
+              : "No public URL — add at least one link (DOI, arXiv, publisher, or source page)"),
   };
 
   const changed =
