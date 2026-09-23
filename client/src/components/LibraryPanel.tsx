@@ -19,7 +19,7 @@ import {
 } from "../api/client";
 import type { LibraryCollections, LibrarySort, PaperRecord, ReadingStatus } from "../api/types";
 import {
-  QUICK_TAGS,
+  TOPIC_SUGGESTIONS,
   READING_STATUSES,
   SORT_OPTIONS,
   STATUS_LABEL,
@@ -155,9 +155,9 @@ export function LibraryPanel({
   );
 
   const allTags = useMemo(() => {
+    // Sidebar filters only show topics already used — suggestions live in the detail pane.
     const tags = new Set<string>();
     for (const p of papers) for (const t of p.tags) tags.add(t);
-    for (const t of QUICK_TAGS) tags.add(t);
     return [...tags].sort();
   }, [papers]);
 
@@ -239,15 +239,34 @@ export function LibraryPanel({
     }
   };
 
-  const createCollection = async () => {
+  const createCollection = async (opts?: { assignSelected?: boolean; assignChecked?: boolean }) => {
     const name = newCollectionName.trim();
     if (!name) return;
     const id = slugCollectionId(name);
+    const assignChecked = Boolean(opts?.assignChecked && checkedKeys.size > 0);
+    const assignSelected = opts?.assignSelected !== false && !assignChecked && Boolean(selected);
     try {
       const coll = await createLibraryCollection(id, name);
       setCollections(coll);
       setNewCollectionName("");
-      if (selected) await toggleCollectionMembership(selected, id);
+      if (assignChecked) {
+        const citekeys = [...checkedKeys];
+        setBusy(true);
+        try {
+          const { papers: updated } = await bulkPatchLibraryPapers({
+            citekeys,
+            collectionsAdd: [id],
+          });
+          const map = new Map(updated.map((p) => [p.citekey, normalizePaper(p)]));
+          setPapers((prev) => prev.map((p) => map.get(p.citekey) ?? p));
+          setCheckedKeys(new Set());
+        } finally {
+          setBusy(false);
+        }
+      } else if (assignSelected && selected) {
+        await toggleCollectionMembership(selected, id);
+      }
+      setCollectionFilter(id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create collection");
     }
@@ -705,7 +724,7 @@ export function LibraryPanel({
             className="library-search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search title, authors, tags…"
+            placeholder="Search title, authors, topics…"
             aria-label="Filter library"
           />
           <label className="library-field library-sort-field">
@@ -779,34 +798,54 @@ export function LibraryPanel({
               <input
                 value={newCollectionName}
                 onChange={(e) => setNewCollectionName(e.target.value)}
-                placeholder="New collection…"
+                placeholder="Create collection…"
                 aria-label="New collection name"
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
-                    void createCollection();
+                    void createCollection({
+                      assignSelected: false,
+                      assignChecked: checkedKeys.size > 0,
+                    });
                   }
                 }}
               />
-              <button type="button" className="btn btn-quiet" onClick={() => void createCollection()}>
-                Add
+              <button
+                type="button"
+                className="btn btn-quiet"
+                disabled={!newCollectionName.trim()}
+                onClick={() =>
+                  void createCollection({
+                    assignSelected: false,
+                    assignChecked: checkedKeys.size > 0,
+                  })
+                }
+              >
+                Create
               </button>
             </div>
+            <p className="library-hint muted">
+              Folders for projects or reading lists. Creating while papers are selected adds them.
+            </p>
           </div>
 
           <div className="library-filter-group">
-            <div className="library-filter-heading">Tags</div>
-            <div className="library-filters" role="toolbar" aria-label="Tags">
-              {allTags.map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  className={`btn btn-ghost${tagFilter === t ? " is-active" : ""}`}
-                  onClick={() => setTagFilter((cur) => (cur === t ? null : t))}
-                >
-                  #{t}
-                </button>
-              ))}
+            <div className="library-filter-heading">Topics</div>
+            <div className="library-filters" role="toolbar" aria-label="Topics">
+              {allTags.length ? (
+                allTags.map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    className={`btn btn-ghost${tagFilter === t ? " is-active" : ""}`}
+                    onClick={() => setTagFilter((cur) => (cur === t ? null : t))}
+                  >
+                    #{t}
+                  </button>
+                ))
+              ) : (
+                <span className="muted library-hint">No topics yet — add on a paper</span>
+              )}
             </div>
           </div>
         </div>
@@ -956,6 +995,28 @@ export function LibraryPanel({
                         })
                       : null}
                   </div>
+                  <div className="library-new-collection" style={{ marginTop: "0.45rem" }}>
+                    <input
+                      value={newCollectionName}
+                      onChange={(e) => setNewCollectionName(e.target.value)}
+                      placeholder="New collection name…"
+                      aria-label="Create collection and add this paper"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void createCollection({ assignSelected: true });
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="btn btn-quiet"
+                      disabled={!newCollectionName.trim()}
+                      onClick={() => void createCollection({ assignSelected: true })}
+                    >
+                      Create & add
+                    </button>
+                  </div>
                 </div>
               </Collapsible>
               <Collapsible
@@ -993,42 +1054,51 @@ export function LibraryPanel({
                 />
               </Collapsible>
               <Collapsible
-                title="Tags"
+                title="Topics"
                 open={sectionOpen.tags}
                 onToggle={() => setSectionOpen((s) => ({ ...s, tags: !s.tags }))}
               >
+                <p className="library-hint muted">Subject-matter labels (e.g. calibration, hematology).</p>
                 <div className="library-tags">
                   {selected.tags.map((t) => (
                     <button
                       key={t}
                       type="button"
                       className="lib-badge is-on"
-                      title="Remove tag"
+                      title="Remove topic"
                       onClick={() => void removeTag(selected, t)}
                     >
                       #{t} ×
                     </button>
                   ))}
-                  {!selected.tags.length ? <span className="muted">No tags yet</span> : null}
+                  {!selected.tags.length ? <span className="muted">No topics yet</span> : null}
                 </div>
                 <div className="library-tag-add">
                   <input
                     value={tagDraft}
                     onChange={(e) => setTagDraft(e.target.value)}
-                    placeholder="Add tag…"
+                    placeholder="Add topic…"
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         e.preventDefault();
-                        void addTag(selected, tagDraft);
+                        const t = tagDraft;
+                        void addTag(selected, t).then(() => setTagDraft(""));
                       }
                     }}
                   />
-                  <button type="button" className="btn btn-quiet" onClick={() => void addTag(selected, tagDraft)}>
+                  <button
+                    type="button"
+                    className="btn btn-quiet"
+                    onClick={() => {
+                      const t = tagDraft;
+                      void addTag(selected, t).then(() => setTagDraft(""));
+                    }}
+                  >
                     Add
                   </button>
                 </div>
                 <div className="library-tags library-quick-tags">
-                  {QUICK_TAGS.filter((t) => !selected.tags.includes(t)).map((t) => (
+                  {TOPIC_SUGGESTIONS.filter((t) => !selected.tags.includes(t)).map((t) => (
                     <button
                       key={t}
                       type="button"

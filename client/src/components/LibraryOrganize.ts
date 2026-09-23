@@ -26,17 +26,24 @@ export const SORT_OPTIONS: Array<{ id: LibrarySort; label: string }> = [
   { id: "status", label: "Reading status" },
 ];
 
-/** Zotero-style workflow tag suggestions (cross-cutting labels). */
-export const QUICK_TAGS = [
-  "to-read",
+/** Topic suggestions (subject matter — not reading workflow; use status/star for that). */
+export const TOPIC_SUGGESTIONS = [
+  "machine-learning",
+  "statistics",
+  "calibration",
+  "label-shift",
+  "hematology",
+  "pathology",
+  "deep-learning",
+  "imaging",
+  "clinical",
+  "theory",
   "methods",
-  "key-result",
-  "cite-intro",
-  "cite-methods",
-  "related-work",
-  "skimmed",
-  "needs-pdf",
+  "benchmark",
 ];
+
+/** @deprecated Use TOPIC_SUGGESTIONS */
+export const QUICK_TAGS = TOPIC_SUGGESTIONS;
 
 export function normalizePaper(p: PaperRecord): PaperRecord {
   return {
