@@ -27,6 +27,7 @@ import {
   ratingStars,
   slugCollectionId,
 } from "./LibraryOrganize";
+import { LibraryAiLinkPanel } from "./LibraryAiLinkPanel";
 import { LibraryPdfNotes } from "./LibraryPdfNotes";
 import { LibrarySharePanel } from "./LibrarySharePanel";
 
@@ -107,6 +108,7 @@ export function LibraryPanel({
   const [density, setDensity] = useState<Density>("comfortable");
   const [importOpen, setImportOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [aiLinkOpen, setAiLinkOpen] = useState(false);
   const [viewMode, setViewMode] = useState<"browse" | "litreview">("browse");
   const [litRows, setLitRows] = useState<
     Array<{ paper: PaperRecord; relevance: string; claim: string; integrity: string; importSelected: boolean }>
@@ -627,6 +629,14 @@ export function LibraryPanel({
             onClick={() => setShareOpen(true)}
           >
             Share
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            title="Mint an AI link for ChatGPT to verify and add papers"
+            onClick={() => setAiLinkOpen(true)}
+          >
+            AI link
           </button>
           <button type="button" className="btn btn-ghost btn-icon" title="Import" onClick={() => setImportOpen((v) => !v)}>
             +
@@ -1318,6 +1328,7 @@ export function LibraryPanel({
             : null
         }
       />
+      <LibraryAiLinkPanel open={aiLinkOpen} onClose={() => setAiLinkOpen(false)} />
     </aside>
   );
 }

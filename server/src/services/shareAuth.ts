@@ -66,7 +66,9 @@ function isOpenHostApi(path: string): boolean {
     path === "/api/host/me" ||
     path === "/api/host/gateway" ||
     // Paper share invite: possession of the token is the credential (Paperpile-style).
-    path.startsWith("/api/lib-share/")
+    path.startsWith("/api/lib-share/") ||
+    // Library AI collaborator: Bearer token on /api/library-ai/v1 (not host cookie).
+    path.startsWith("/api/library-ai/v1")
   );
 }
 
@@ -267,6 +269,11 @@ export function shareGate(req: Request, res: Response, next: NextFunction): void
   }
   // AI collaborator tools authenticate with their own Bearer token (not the guest cookie).
   if (req.path.startsWith("/api/ai/")) {
+    next();
+    return;
+  }
+  // Library AI tools — Bearer token; must be open on the host gateway (no host login).
+  if (req.path.startsWith("/api/library-ai/v1")) {
     next();
     return;
   }

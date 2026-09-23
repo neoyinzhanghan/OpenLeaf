@@ -24,6 +24,35 @@ export function buildMcpConfigJson(opts: { mcpUrl: string; token: string; slug: 
   )}\n`;
 }
 
+/** MCP snippet for a library AI collaborator (writes to the citation library). */
+export function buildLibraryMcpConfigJson(opts: {
+  mcpUrl: string;
+  token: string;
+  title?: string;
+}): string {
+  const slug =
+    (opts.title ?? "library")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 32) || "library";
+  const name = `openleaf-library-ai-${slug}`.slice(0, 64);
+  return `${JSON.stringify(
+    {
+      mcpServers: {
+        [name]: {
+          url: opts.mcpUrl,
+          headers: {
+            Authorization: `Bearer ${opts.token}`,
+          },
+        },
+      },
+    },
+    null,
+    2,
+  )}\n`;
+}
+
 export function buildStarterPrompt(
   aiUrl: string,
   ai: { parentBranchName: string; branchName: string; token: string },
@@ -62,4 +91,62 @@ export function buildStarterPrompt(
     `MCP (Cursor / Claude Desktop): ${apiBase}/mcp — same Bearer; JSON-RPC initialize, tools/list, tools/call. ChatGPT should keep using the REST tools above.`,
     `Optional human briefing page (may be blocked): ${aiUrl}`,
   ].join("\n");
+}
+
+/** ChatGPT / agent prompt for a library AI link (literature review → verified adds). */
+export function buildLibraryStarterPrompt(
+  libraryAiUrl: string,
+  session: {
+    token: string;
+    settings: { allowSearch: boolean; allowAdd: boolean; allowEnrich: boolean; maxAdds: number; title: string };
+  },
+  apiBase: string,
+): string {
+  const token = session.token;
+  const lines = [
+    "You are an OpenLeaf citation-library collaborator helping with literature review.",
+    "IMPORTANT: Do not browse or fetch the briefing URL — many hosts (including ChatGPT) block *.trycloudflare.com. Use the API/MCP below directly instead.",
+    `Link title: “${session.settings.title}”.`,
+    `API base: ${apiBase}`,
+    `On every request set headers: Authorization: Bearer ${token}`,
+    "On every POST also set: Content-Type: application/json",
+    "",
+    "CRITICAL — citation validity:",
+    "- Never invent DOIs, arXiv ids, titles, authors, or years.",
+    "- Prefer proposing { doi } or { arxivId } only. Titles alone are a last resort.",
+    "- Scholar / publisher HTML URLs without a DOI or arXiv id will be REJECTED.",
+    "- Always call POST /verify (or MCP library_verify) before relying on a citation.",
+    "- On decision=reject, read code, hint, and expected — then retry once with the corrected payload. Do not invent a new DOI.",
+    "",
+    "Tools (paths relative to API base):",
+    "GET /context — permissions, quotas, usage",
+  ];
+  if (session.settings.allowSearch) {
+    lines.push(
+      'GET /search?q=... — search the host library',
+      "GET /papers/{citekey} — full library record",
+      "GET /recent?limit=20 — recently added papers",
+    );
+  }
+  lines.push(
+    'POST /lookup  body {"doi"?,"arxivId"?,"title"?,"url"?} — resolve metadata WITHOUT saving',
+    'POST /verify  body {"doi"?,"arxivId"?,"title"?,"authors"?,"url"?} — accept/reject WITHOUT saving',
+  );
+  if (session.settings.allowAdd) {
+    lines.push(
+      `POST /add  body same as /verify — verify-first add (quota ${session.settings.maxAdds}). Returns the same reject shape on failure.`,
+    );
+  }
+  if (session.settings.allowEnrich) {
+    lines.push('POST /enrich/{citekey}  body {"force"?} — refresh metadata for an existing paper');
+  }
+  lines.push(
+    "",
+    "Reject codes you must handle: DOI_NOT_FOUND, ARXIV_NOT_FOUND, TITLE_MISMATCH, HALLUCINATED, NO_PUBLIC_IDENTIFIER, UNRESOLVABLE_URL, RETRACTED, DUPLICATE, INTEGRITY_FAILED.",
+    "Workflow for each candidate paper: POST /verify → if accept and needed, POST /add → cite the returned citekey. If DUPLICATE, use existingCitekey.",
+    "Never print the bearer token in your replies.",
+    `MCP (Cursor / Claude Desktop): ${apiBase}/mcp — same Bearer; tools library_search, library_get, library_list_recent, library_lookup, library_verify, library_add.`,
+    `Optional human briefing page (may be blocked): ${libraryAiUrl}`,
+  );
+  return lines.join("\n");
 }
