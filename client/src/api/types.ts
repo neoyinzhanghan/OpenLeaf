@@ -37,6 +37,8 @@ export type PaperIntegrity = {
   existence: "verified" | "unresolved" | "mismatch";
   retraction: "clean" | "retracted" | "corrected";
   lastChecked: string | null;
+  /** Present when existence !== verified — why it is not a checked journal article. */
+  reason?: string | null;
 };
 
 export type PaperSource = "doi" | "arxiv" | "pdf-upload" | "bibtex-import" | "manual";

@@ -189,12 +189,20 @@ export async function checkPaperIntegrity(
     existence,
     retraction,
     lastChecked: new Date().toISOString(),
+    reason:
+      existence === "verified"
+        ? null
+        : detail?.trim() ||
+          (existence === "mismatch"
+            ? "Title does not match Crossref/OpenAlex metadata for this DOI"
+            : "No Crossref/OpenAlex/arXiv match found"),
   };
 
   const changed =
     integrity.existence !== prev.existence ||
     integrity.retraction !== prev.retraction ||
-    integrity.lastChecked !== prev.lastChecked;
+    integrity.lastChecked !== prev.lastChecked ||
+    (integrity.reason ?? null) !== (prev.reason ?? null);
 
   // Persist integrity into record.json (source of truth).
   await writeIntegrity(citekey, integrity);
@@ -207,6 +215,19 @@ async function writeIntegrity(citekey: string, integrity: PaperIntegrity): Promi
   const next = { ...paper, integrity };
   await fs.writeFile(recordPath(citekey), `${JSON.stringify(next, null, 2)}\n`, "utf8");
   return next;
+}
+
+/** Mark a paper as unresolved with an explicit human-readable reason (books, news, etc.). */
+export async function setUnresolvedReason(citekey: string, reason: string): Promise<PaperRecord> {
+  const paper = await getPaper(citekey);
+  const trimmed = reason.trim();
+  if (!trimmed) throw Object.assign(new Error("Integrity reason is required"), { status: 400 });
+  return writeIntegrity(citekey, {
+    existence: "unresolved",
+    retraction: paper.integrity.retraction ?? "clean",
+    lastChecked: new Date().toISOString(),
+    reason: trimmed,
+  });
 }
 
 export async function checkLibraryIntegrity(opts?: {

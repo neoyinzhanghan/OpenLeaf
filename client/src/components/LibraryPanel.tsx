@@ -66,6 +66,9 @@ function integrityBadge(paper: PaperRecord): { label: string; className: string 
   if (paper.integrity.existence === "mismatch") {
     return { label: "Mismatch", className: "lib-badge lib-badge-warn" };
   }
+  if (paper.integrity.reason?.trim()) {
+    return { label: "Explained", className: "lib-badge lib-badge-warn" };
+  }
   return { label: "Unchecked", className: "lib-badge" };
 }
 
@@ -1130,6 +1133,16 @@ export function LibraryPanel({
                 <p className="muted">
                   Last checked: {selected.integrity.lastChecked ?? "never"}
                 </p>
+                {selected.integrity.existence !== "verified" && selected.integrity.reason ? (
+                  <p className="library-integrity-reason">
+                    Why unchecked: <strong>{selected.integrity.reason}</strong>
+                  </p>
+                ) : null}
+                {selected.integrity.existence !== "verified" && !selected.integrity.reason ? (
+                  <p className="library-integrity-reason library-integrity-reason-warn">
+                    No verification reason recorded — re-run Check all.
+                  </p>
+                ) : null}
                 <button type="button" className="btn btn-quiet" disabled={busy} onClick={() => void runEnrichSelected()}>
                   Enrich from Crossref / OpenAlex
                 </button>{" "}

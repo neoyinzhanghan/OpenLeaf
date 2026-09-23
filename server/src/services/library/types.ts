@@ -16,6 +16,11 @@ export const IntegritySchema = z.object({
   existence: z.enum(["verified", "unresolved", "mismatch"]).default("unresolved"),
   retraction: z.enum(["clean", "retracted", "corrected"]).default("clean"),
   lastChecked: z.string().nullable().default(null),
+  /**
+   * Required context when existence is not verified — e.g. "book / monograph",
+   * "conference abstract", "institutional news page", "no online source found".
+   */
+  reason: z.string().nullable().optional().default(null),
 });
 
 export const PaperSourceSchema = z.enum([
