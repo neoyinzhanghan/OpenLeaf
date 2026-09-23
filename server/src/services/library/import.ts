@@ -390,3 +390,8 @@ async function saveAttachment(citekey: string, buffer: Buffer): Promise<void> {
   const { updatePaper } = await import("./index.js");
   await updatePaper(citekey, { attachment: "attachment.pdf" });
 }
+
+/** Public helper — write PDF bytes beside the paper record. */
+export async function savePaperAttachment(citekey: string, buffer: Buffer): Promise<void> {
+  await saveAttachment(citekey, buffer);
+}

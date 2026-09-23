@@ -821,6 +821,33 @@ export function libraryPdfUrl(citekey: string, bust?: number): string {
   return `/api/library/${encodeURIComponent(citekey)}/pdf${qs}`;
 }
 
+export type LibraryPdfSourceHint = {
+  citekey: string;
+  hasLocal: boolean;
+  directUrl: string | null;
+  source: "local" | "arxiv" | "unpaywall" | "none";
+  canFetch: boolean;
+};
+
+export function getLibraryPdfSource(
+  citekey: string,
+  opts?: { probe?: boolean },
+): Promise<LibraryPdfSourceHint> {
+  const qs = opts?.probe ? "?probe=1" : "";
+  return request(`/api/library/${encodeURIComponent(citekey)}/pdf-source${qs}`);
+}
+
+export function fetchLibraryPdf(citekey: string): Promise<{
+  paper: PaperRecord;
+  source: "arxiv" | "unpaywall";
+  bytes: number;
+}> {
+  return request(`/api/library/${encodeURIComponent(citekey)}/fetch-pdf`, {
+    method: "POST",
+    body: "{}",
+  });
+}
+
 export function listLibraryAnnotations(
   citekey: string,
 ): Promise<{ annotations: import("./types").PaperAnnotation[] }> {

@@ -6,7 +6,7 @@ import { MCP_PROTOCOL_VERSION, type McpHttpResult, type McpJsonRpcResponse } fro
 import { enrichPaper } from "./library/enrich.js";
 import { lookupExternal } from "./library/import.js";
 import { getPaper, searchPapers } from "./library/index.js";
-import { addVerifiedPaper, verifyProposal, type ProposalInput } from "./library/verifyProposal.js";
+import { proposeVerifiedPaper, verifyProposal, type ProposalInput } from "./library/verifyProposal.js";
 import {
   assertLibraryAiAdd,
   assertLibraryAiEnrich,
@@ -138,7 +138,7 @@ const TOOLS = [
   {
     name: "library_add",
     description:
-      "Verify-first add into the host library. Same reject payload as library_verify when invalid. Never invent DOIs.",
+      "Verify-first queue for host Accept/Reject. Returns decision=pending (not yet in library) or the reject payload. Never invent DOIs.",
     inputSchema: {
       type: "object",
       properties: {
@@ -243,9 +243,22 @@ async function callTool(auth: LibraryAiAuth, name: string, args: Record<string, 
     case "library_add": {
       assertLibraryAiAdd(session);
       bumpVerify(session);
-      const result = await addVerifiedPaper(proposalFromArgs(args));
-      if (result.ok) bumpAdd(session);
-      return { payload: result, isError: !result.ok };
+      const { proposeVerifiedPaper } = await import("./library/verifyProposal.js");
+      const { enqueueLibraryProposal, proposalView } = await import("./libraryAiReview.js");
+      const proposed = await proposeVerifiedPaper(proposalFromArgs(args));
+      if (!proposed.ok) return { payload: proposed, isError: true };
+      bumpAdd(session);
+      const pending = enqueueLibraryProposal(session, proposed.proposal, proposed.verify);
+      return {
+        payload: {
+          ok: true,
+          decision: "pending",
+          proposalId: pending.id,
+          proposal: proposalView(pending),
+          hint: "Queued for host Accept/Reject. The paper is not in the library until the human accepts.",
+        },
+        isError: false,
+      };
     }
     case "library_enrich": {
       assertLibraryAiEnrich(session);

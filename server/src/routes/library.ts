@@ -26,6 +26,7 @@ import {
   PatchAnnotationInputSchema,
   updateAnnotation,
 } from "../services/library/annotations.js";
+import { fetchAndAttachPdf, getPdfSourceHint, pdfSourceHintSync } from "../services/library/pdfFetch.js";
 import { attachmentPath } from "../services/library/paths.js";
 import {
   BulkLibraryPatchSchema,
@@ -330,6 +331,29 @@ libraryRouter.get("/:citekey/pdf", async (req, res) => {
       `inline; filename="${paper.citekey}.pdf"`,
     );
     fs.createReadStream(file).pipe(res);
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+libraryRouter.get("/:citekey/pdf-source", async (req, res) => {
+  try {
+    const probe = req.query.probe === "1" || req.query.probe === "true";
+    if (probe) {
+      res.json(await getPdfSourceHint(req.params.citekey));
+      return;
+    }
+    const paper = await getPaper(req.params.citekey);
+    res.json(pdfSourceHintSync(paper));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+libraryRouter.post("/:citekey/fetch-pdf", async (req, res) => {
+  try {
+    const result = await fetchAndAttachPdf(req.params.citekey);
+    res.json(result);
   } catch (err) {
     sendError(res, err);
   }

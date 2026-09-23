@@ -173,6 +173,7 @@ export function revokeLibraryAi(id: string): boolean {
   session.expiryTimer = null;
   session.revoked = true;
   byToken.delete(session.token);
+  void import("./libraryAiReview.js").then((m) => m.clearLibraryProposalsForSession(id));
   console.log(`[library-ai] revoked ${session.id}`);
   return true;
 }
@@ -243,6 +244,7 @@ export function libraryAiBrief(auth: LibraryAiAuth): Record<string, unknown> {
     mcp: `${apiBase}/mcp`,
     rules: [
       "Every add is verify-first: DOI or arXiv must resolve in Crossref/OpenAlex/arXiv.",
+      "Successful adds are queued for host Accept/Reject — not written until Accept.",
       "On reject, read code/hint/expected and retry once — never invent a DOI.",
       "Scholar-only or bare publisher URLs are rejected.",
     ],

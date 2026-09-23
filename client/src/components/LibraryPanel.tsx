@@ -10,15 +10,19 @@ import {
   enrichLibrary,
   enrichLibraryPaper,
   exportLibraryPapers,
+  fetchLibraryPdf,
   getLibraryCollections,
+  getLibraryPdfSource,
   importLibraryBibtex,
   importLibraryLink,
   importLibraryPdf,
   listLibraryPapers,
   patchLibraryPaper,
   type CitationInstance,
+  type LibraryPdfSourceHint,
 } from "../api/client";
 import type { LibraryCollections, LibrarySort, PaperRecord } from "../api/types";
+import { listLibraryAiLinks } from "../api/libraryAi";
 import { copyText } from "../lib/clipboard";
 import {
   TOPIC_SUGGESTIONS,
@@ -28,6 +32,7 @@ import {
   slugCollectionId,
 } from "./LibraryOrganize";
 import { LibraryAiLinkPanel } from "./LibraryAiLinkPanel";
+import { LibraryAiReviewPanel } from "./LibraryAiReviewPanel";
 import { LibraryPdfNotes } from "./LibraryPdfNotes";
 import { LibrarySharePanel } from "./LibrarySharePanel";
 
@@ -39,6 +44,14 @@ function downloadTextFile(filename: string, text: string, mime: string): void {
   a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+/** Cheap list-row PDF affordance (no network). */
+function pdfListHint(p: PaperRecord): "local" | "arxiv" | null {
+  if (p.attachment) return "local";
+  if (p.arxivId?.trim()) return "arxiv";
+  if (p.doi && /^10\.48550\/arxiv\./i.test(p.doi)) return "arxiv";
+  return null;
 }
 
 type Props = {
@@ -109,6 +122,9 @@ export function LibraryPanel({
   const [importOpen, setImportOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [aiLinkOpen, setAiLinkOpen] = useState(false);
+  const [aiReviewOpen, setAiReviewOpen] = useState(false);
+  const [aiPendingCount, setAiPendingCount] = useState(0);
+  const [pdfHint, setPdfHint] = useState<LibraryPdfSourceHint | null>(null);
   const [viewMode, setViewMode] = useState<"browse" | "litreview">("browse");
   const [litRows, setLitRows] = useState<
     Array<{ paper: PaperRecord; relevance: string; claim: string; integrity: string; importSelected: boolean }>
@@ -168,6 +184,37 @@ export function LibraryPanel({
     () => papers.find((p) => p.citekey === selectedKey) ?? null,
     [papers, selectedKey],
   );
+
+  useEffect(() => {
+    if (!open) return;
+    const poll = () => {
+      void listLibraryAiLinks()
+        .then((r) => setAiPendingCount(r.pendingCount ?? 0))
+        .catch(() => undefined);
+    };
+    poll();
+    const t = window.setInterval(poll, 5000);
+    return () => window.clearInterval(t);
+  }, [open]);
+
+  useEffect(() => {
+    if (!selected) {
+      setPdfHint(null);
+      return;
+    }
+    let cancelled = false;
+    setPdfHint(null);
+    void getLibraryPdfSource(selected.citekey, { probe: !selected.attachment })
+      .then((hint) => {
+        if (!cancelled) setPdfHint(hint);
+      })
+      .catch(() => {
+        if (!cancelled) setPdfHint(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected?.citekey, selected?.attachment]);
 
   const allTags = useMemo(() => {
     // Sidebar filters only show topics already used — suggestions live in the detail pane.
@@ -633,10 +680,18 @@ export function LibraryPanel({
           <button
             type="button"
             className="btn btn-ghost"
-            title="Mint an AI link for ChatGPT to verify and add papers"
+            title="Mint an AI link for ChatGPT to verify and propose papers"
             onClick={() => setAiLinkOpen(true)}
           >
             AI link
+          </button>
+          <button
+            type="button"
+            className={`btn btn-ghost${aiPendingCount ? " has-pending" : ""}`}
+            title="Review pending AI library additions"
+            onClick={() => setAiReviewOpen(true)}
+          >
+            Review{aiPendingCount ? ` (${aiPendingCount})` : ""}
           </button>
           <button type="button" className="btn btn-ghost btn-icon" title="Import" onClick={() => setImportOpen((v) => !v)}>
             +
@@ -1001,6 +1056,24 @@ export function LibraryPanel({
                       <span className="library-authors">{authorsLabel(p, { compact: true })}</span>
                       {p.year != null ? <span>· {p.year}</span> : null}
                       {p.rating > 0 ? <span className="library-rating-mini">{ratingStars(p.rating)}</span> : null}
+                      {(() => {
+                        const pdf = pdfListHint(p);
+                        if (pdf === "local") {
+                          return (
+                            <span className="lib-pdf-badge is-local" title="PDF attached">
+                              PDF
+                            </span>
+                          );
+                        }
+                        if (pdf === "arxiv") {
+                          return (
+                            <span className="lib-pdf-badge is-available" title="arXiv PDF available to download">
+                              PDF↓
+                            </span>
+                          );
+                        }
+                        return null;
+                      })()}
                       <span className={badge.className}>{badge.label}</span>
                     </div>
                     {p.tags.length ? (
@@ -1157,6 +1230,44 @@ export function LibraryPanel({
                 open={sectionOpen.pdf}
                 onToggle={() => setSectionOpen((s) => ({ ...s, pdf: !s.pdf }))}
               >
+                {!selected.attachment && pdfHint?.canFetch ? (
+                  <div className="library-pdf-fetch">
+                    <p className="muted library-hint">
+                      {pdfHint.source === "arxiv"
+                        ? "arXiv PDF is available for direct download."
+                        : "An open-access PDF may be available."}
+                    </p>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      disabled={busy}
+                      onClick={() => {
+                        setBusy(true);
+                        setError(null);
+                        void fetchLibraryPdf(selected.citekey)
+                          .then((result) => {
+                            upsertLocal(result.paper);
+                            setPdfHint({
+                              citekey: result.paper.citekey,
+                              hasLocal: true,
+                              directUrl: null,
+                              source: "local",
+                              canFetch: false,
+                            });
+                            setNotice(
+                              `Saved PDF (${Math.round(result.bytes / 1024)} KB via ${result.source})`,
+                            );
+                          })
+                          .catch((err) =>
+                            setError(err instanceof Error ? err.message : "PDF download failed"),
+                          )
+                          .finally(() => setBusy(false));
+                      }}
+                    >
+                      Download PDF
+                    </button>
+                  </div>
+                ) : null}
                 <LibraryPdfNotes paper={selected} onError={(msg) => setError(msg)} />
               </Collapsible>
               <Collapsible
@@ -1329,6 +1440,12 @@ export function LibraryPanel({
         }
       />
       <LibraryAiLinkPanel open={aiLinkOpen} onClose={() => setAiLinkOpen(false)} />
+      <LibraryAiReviewPanel
+        open={aiReviewOpen}
+        onClose={() => setAiReviewOpen(false)}
+        onAccepted={() => void refresh()}
+        onCountChange={setAiPendingCount}
+      />
     </aside>
   );
 }

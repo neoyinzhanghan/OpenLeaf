@@ -368,6 +368,24 @@ function resolvedToCreateInput(resolved: ResolvedPaper, input: ProposalInput): C
 }
 
 /**
+ * Verify a proposal for the library AI review queue (no write).
+ * Host Accept later calls addVerifiedPaper.
+ */
+export async function proposeVerifiedPaper(raw: ProposalInput): Promise<
+  | { ok: true; decision: "pending"; verify: VerifyAccept; proposal: ProposalInput }
+  | VerifyReject
+> {
+  const verify = await verifyProposal(raw);
+  if (!verify.ok) return verify;
+  return {
+    ok: true,
+    decision: "pending",
+    verify,
+    proposal: hydrateFromUrl(raw),
+  };
+}
+
+/**
  * Verify then add. On post-add integrity failure (mismatch/retracted), delete and reject.
  * Duplicates return reject (do not silently re-add).
  */

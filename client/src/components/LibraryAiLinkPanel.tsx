@@ -129,22 +129,28 @@ export function LibraryAiLinkPanel({ open, onClose }: Props) {
   };
 
   return (
-    <div className="library-share-overlay" role="dialog" aria-modal="true" aria-label="Library AI link">
-      <div className="library-share-panel">
-        <header className="library-share-head">
-          <h2>Library AI link</h2>
+    <div className="share-drawer library-share-drawer" role="dialog" aria-label="Library AI link">
+      <div className="share-body">
+        <div className="share-cred" style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+          <div>
+            <p className="share-section-title" style={{ margin: 0 }}>
+              Library AI link
+            </p>
+            <p className="share-muted" style={{ margin: "4px 0 0" }}>
+              ChatGPT proposes verified papers → you Accept/Reject before they enter the library
+            </p>
+          </div>
           <button type="button" className="btn btn-ghost btn-icon" onClick={onClose} title="Close">
             ✕
           </button>
-        </header>
+        </div>
 
         <p className="muted library-hint">
-          Mint a Bearer token for ChatGPT (or Cursor MCP) to search and add papers. Every add is
-          verify-first: DOI/arXiv must resolve; invented citations are rejected with structured
-          feedback.
+          Mint a Bearer token for ChatGPT (or Cursor MCP). Every add is verify-first, then queued for
+          your review — same pattern as OpenLeaf AI edit Accept/Reject.
         </p>
 
-        {error ? <div className="library-error">{error}</div> : null}
+        {error ? <div className="share-error">{error}</div> : null}
 
         <label className="library-field">
           Link title
@@ -207,7 +213,7 @@ export function LibraryAiLinkPanel({ open, onClose }: Props) {
           ))}
         </div>
 
-        <label className="library-share-risk">
+        <label className="library-share-risk share-check">
           <input
             type="checkbox"
             checked={riskAck}
@@ -215,8 +221,9 @@ export function LibraryAiLinkPanel({ open, onClose }: Props) {
             disabled={busy}
           />
           <span>
-            I understand this public link lets an external AI write into my citation library after
-            online verification. I will revoke it when done.
+            I understand this public link lets an external AI propose papers into a review queue (after
+            online verification). Nothing enters the library until I Accept. I will revoke the link when
+            done.
           </span>
         </label>
 

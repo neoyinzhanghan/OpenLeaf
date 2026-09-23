@@ -98,9 +98,20 @@ describe("verifyProposal + library AI mint", () => {
     }
   });
 
-  it("accepts DOI-only and adds via verify-first", async () => {
+  it("accepts arXiv ids", async () => {
+    const v = await verifyProposal({ arxivId: "2401.55555" });
+    assert.equal(v.ok, true);
+    if (v.ok) assert.equal(v.checks.identifier, "arxiv");
+  });
+
+  it("accepts DOI-only and queues via proposeVerifiedPaper", async () => {
     const v = await verifyProposal({ doi: "10.1000/real.paper" });
     assert.equal(v.ok, true);
+
+    const { proposeVerifiedPaper } = await import("./verifyProposal.js");
+    const proposed = await proposeVerifiedPaper({ doi: "10.1000/real.paper" });
+    assert.equal(proposed.ok, true);
+    if (proposed.ok) assert.equal(proposed.decision, "pending");
 
     const added = await addVerifiedPaper({ doi: "10.1000/real.paper" });
     assert.equal(added.ok, true);
@@ -114,10 +125,29 @@ describe("verifyProposal + library AI mint", () => {
     if (!dup.ok) assert.equal(dup.code, "DUPLICATE");
   });
 
-  it("accepts arXiv ids", async () => {
-    const v = await verifyProposal({ arxivId: "2401.55555" });
-    assert.equal(v.ok, true);
-    if (v.ok) assert.equal(v.checks.identifier, "arxiv");
+  it("queues library AI proposals for host Accept/Reject", async () => {
+    const { enqueueLibraryProposal, listPendingLibraryProposals, acceptLibraryProposal, rejectLibraryProposal } =
+      await import("../libraryAiReview.js");
+    const minted = mintLibraryAi({
+      riskAck: true,
+      ttlMinutes: 60,
+      settings: { title: "Review test" },
+      port: 8787,
+    });
+    const proposed = await (await import("./verifyProposal.js")).proposeVerifiedPaper({
+      arxivId: "2401.99991",
+    });
+    assert.equal(proposed.ok, true);
+    if (!proposed.ok) return;
+    const pending = enqueueLibraryProposal(minted.session, proposed.proposal, proposed.verify);
+    assert.equal(listPendingLibraryProposals().some((p) => p.id === pending.id), true);
+    assert.equal(rejectLibraryProposal(pending.id), true);
+    assert.equal(listPendingLibraryProposals().some((p) => p.id === pending.id), false);
+
+    const again = enqueueLibraryProposal(minted.session, proposed.proposal, proposed.verify);
+    const accepted = await acceptLibraryProposal(again.id);
+    assert.ok(accepted.paper.arxivId);
+    revokeLibraryAi(minted.session.id);
   });
 
   it("mints and resolves library AI tokens with riskAck", () => {

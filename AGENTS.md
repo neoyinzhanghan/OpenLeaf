@@ -33,7 +33,8 @@ For human setup and usage, see [README.md](README.md).
 | `server/src/services/library/` | Library service layer (REST + MCP share this) |
 | `POST /api/library/mcp` | Host-only MCP (8 tools); do not wire into Share without risk-ack |
 | Library paper shares | Host `GET/POST/DELETE /api/library-share` + `POST …/import`; guests `/api/lib-share/:token` (join/notes/bundle/pdf). Invite path `/lib-share/:token` on host gateway — token is the credential |
-| Library AI links | Host `GET/POST/DELETE /api/library-ai` (riskAck required). AI Bearer tools + MCP at `/api/library-ai/v1/*`; briefing `/library-ai/:token`. Adds are verify-first (DOI/arXiv must resolve; structured reject codes). |
+| Library AI links | Host `GET/POST/DELETE /api/library-ai` (riskAck required). AI Bearer tools + MCP at `/api/library-ai/v1/*`; briefing `/library-ai/:token`. Adds are verify-first then **queued** for host Accept/Reject (`GET/POST /api/library-ai/review`). |
+| Library PDFs | Local `papers/<citekey>/attachment.pdf`. List shows PDF / PDF↓ badges. `GET …/pdf-source`, `POST …/fetch-pdf` downloads arXiv or Unpaywall OA PDF into the record. |
 | Library integrity | A paper is `verified` when it has a public http(s) URL (DOI/arXiv preferred). Unresolved only if no link — then `integrity.reason` explains why. Hallucinated titles with no source/link are removed (`scripts/recheck-unresolved-papers.ts`). Library AI adds are stricter: Scholar-only / bare URLs are rejected. |
 
 ## Conventions

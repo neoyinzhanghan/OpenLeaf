@@ -42,7 +42,23 @@ export type LibraryAiHostView = {
   mcpConfig: string | null;
 };
 
-export function listLibraryAiLinks(): Promise<{ sessions: LibraryAiHostView[] }> {
+export type LibraryAiProposal = {
+  id: string;
+  sessionId: string;
+  sessionTitle: string;
+  proposedAt: number;
+  title: string;
+  authors: Array<{ given: string; family: string }>;
+  year: number | null;
+  venue: string;
+  doi: string | null;
+  arxivId: string | null;
+  url: string | null;
+  abstract: string;
+  identifier: "doi" | "arxiv" | "title";
+};
+
+export function listLibraryAiLinks(): Promise<{ sessions: LibraryAiHostView[]; pendingCount: number }> {
   return request("/api/library-ai");
 }
 
@@ -62,4 +78,24 @@ export function mintLibraryAiLink(body: {
 
 export function revokeLibraryAiLink(id: string): Promise<void> {
   return request(`/api/library-ai/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export function listLibraryAiReview(): Promise<{ proposals: LibraryAiProposal[]; count: number }> {
+  return request("/api/library-ai/review");
+}
+
+export function acceptLibraryAiProposal(body: {
+  proposalId?: string;
+  all?: boolean;
+  sessionId?: string;
+}): Promise<unknown> {
+  return request("/api/library-ai/review/accept", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function rejectLibraryAiProposal(body: {
+  proposalId?: string;
+  all?: boolean;
+  sessionId?: string;
+}): Promise<{ rejected: number }> {
+  return request("/api/library-ai/review/reject", { method: "POST", body: JSON.stringify(body) });
 }

@@ -10,7 +10,7 @@ import { handleLibraryAiMcpHttp } from "../services/libraryAiMcp.js";
 import { enrichPaper } from "../services/library/enrich.js";
 import { lookupExternal } from "../services/library/import.js";
 import { getPaper, searchPapers } from "../services/library/index.js";
-import { addVerifiedPaper, verifyProposal } from "../services/library/verifyProposal.js";
+import { proposeVerifiedPaper, verifyProposal } from "../services/library/verifyProposal.js";
 import {
   assertLibraryAiAdd,
   assertLibraryAiEnrich,
@@ -25,6 +25,16 @@ import {
   resolveLibraryAiToken,
   revokeLibraryAi,
 } from "../services/libraryAiShare.js";
+import {
+  acceptAllLibraryProposals,
+  acceptLibraryProposal,
+  enqueueLibraryProposal,
+  listPendingLibraryProposals,
+  pendingLibraryProposalCount,
+  proposalView,
+  rejectAllLibraryProposals,
+  rejectLibraryProposal,
+} from "../services/libraryAiReview.js";
 import { hostOnly } from "../services/shareAuth.js";
 
 function statusOf(err: unknown): number {
@@ -105,7 +115,60 @@ libraryAiHostRouter.get("/", (_req, res) => {
     const port = loadConfig().port;
     res.json({
       sessions: listLibraryAiSessions().map((s) => libraryAiHostView(s, port)),
+      pendingCount: pendingLibraryProposalCount(),
     });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+libraryAiHostRouter.get("/review", (_req, res) => {
+  try {
+    const proposals = listPendingLibraryProposals().map(proposalView);
+    res.json({ proposals, count: proposals.length });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+libraryAiHostRouter.post("/review/accept", async (req, res) => {
+  try {
+    if (req.body?.all === true) {
+      const sessionId = typeof req.body?.sessionId === "string" ? req.body.sessionId : undefined;
+      const result = await acceptAllLibraryProposals(sessionId);
+      res.json(result);
+      return;
+    }
+    const proposalId = typeof req.body?.proposalId === "string" ? req.body.proposalId : "";
+    if (!proposalId) {
+      res.status(400).json({ error: "proposalId or all=true required" });
+      return;
+    }
+    const result = await acceptLibraryProposal(proposalId);
+    res.json(result);
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+libraryAiHostRouter.post("/review/reject", (req, res) => {
+  try {
+    if (req.body?.all === true) {
+      const sessionId = typeof req.body?.sessionId === "string" ? req.body.sessionId : undefined;
+      const count = rejectAllLibraryProposals(sessionId);
+      res.json({ rejected: count });
+      return;
+    }
+    const proposalId = typeof req.body?.proposalId === "string" ? req.body.proposalId : "";
+    if (!proposalId) {
+      res.status(400).json({ error: "proposalId or all=true required" });
+      return;
+    }
+    if (!rejectLibraryProposal(proposalId)) {
+      res.status(404).json({ error: "Proposal not found" });
+      return;
+    }
+    res.json({ rejected: 1 });
   } catch (err) {
     sendError(res, err);
   }
@@ -296,9 +359,20 @@ libraryAiApiRouter.post("/add", async (req, res) => {
     assertLibraryAiAdd(auth.session);
     const body = ProposalSchema.parse(req.body ?? {});
     bumpVerify(auth.session);
-    const result = await addVerifiedPaper(body);
-    if (result.ok) bumpAdd(auth.session);
-    res.status(result.ok ? 201 : 422).json(result);
+    const proposed = await proposeVerifiedPaper(body);
+    if (!proposed.ok) {
+      res.status(422).json(proposed);
+      return;
+    }
+    bumpAdd(auth.session);
+    const pending = enqueueLibraryProposal(auth.session, proposed.proposal, proposed.verify);
+    res.status(202).json({
+      ok: true,
+      decision: "pending",
+      proposalId: pending.id,
+      proposal: proposalView(pending),
+      hint: "Queued for host Accept/Reject. The paper is not in the library until the human accepts.",
+    });
   } catch (err) {
     sendError(res, err);
   }
