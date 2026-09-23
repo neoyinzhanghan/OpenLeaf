@@ -492,7 +492,13 @@ export function LibraryPanel({
       onKeyDown={onKeyDown}
     >
       <div className="history-drawer-head">
-        <strong>{isPage ? "Citation library" : "Library"}</strong>
+        <div>
+          <strong>{isPage ? "Citation library" : "Library"}</strong>
+          <div className="library-head-meta">
+            {papers.length} paper{papers.length === 1 ? "" : "s"}
+            {checkedKeys.size ? ` · ${checkedKeys.size} selected` : ""}
+          </div>
+        </div>
         <div className="history-drawer-actions">
           <button
             type="button"
@@ -747,14 +753,14 @@ export function LibraryPanel({
             <div className="library-filters" role="toolbar" aria-label="Smart views">
               <button
                 type="button"
-                className={`btn btn-ghost${!collectionFilter && !tagFilter && !starredOnly && !statusFilter ? " is-active" : ""}`}
+                className={`library-chip${!collectionFilter && !tagFilter && !starredOnly && !statusFilter ? " is-active" : ""}`}
                 onClick={clearSmartFilters}
               >
                 All
               </button>
               <button
                 type="button"
-                className={`btn btn-ghost${starredOnly ? " is-active" : ""}`}
+                className={`library-chip${starredOnly ? " is-active" : ""}`}
                 onClick={() => {
                   setStarredOnly((v) => !v);
                   setStatusFilter(null);
@@ -766,7 +772,7 @@ export function LibraryPanel({
                 <button
                   key={s}
                   type="button"
-                  className={`btn btn-ghost${statusFilter === s ? " is-active" : ""}`}
+                  className={`library-chip${statusFilter === s ? " is-active" : ""}`}
                   onClick={() => {
                     setStatusFilter((cur) => (cur === s ? null : s));
                     setStarredOnly(false);
@@ -786,7 +792,7 @@ export function LibraryPanel({
                     <button
                       key={id}
                       type="button"
-                      className={`btn btn-ghost${collectionFilter === id ? " is-active" : ""}`}
+                      className={`library-chip${collectionFilter === id ? " is-active" : ""}`}
                       onClick={() => setCollectionFilter((cur) => (cur === id ? null : id))}
                     >
                       {c.name}
@@ -824,7 +830,7 @@ export function LibraryPanel({
                 Create
               </button>
             </div>
-            <p className="library-hint muted">
+            <p className="library-hint">
               Folders for projects or reading lists. Creating while papers are selected adds them.
             </p>
           </div>
@@ -837,14 +843,14 @@ export function LibraryPanel({
                   <button
                     key={t}
                     type="button"
-                    className={`btn btn-ghost${tagFilter === t ? " is-active" : ""}`}
+                    className={`library-chip${tagFilter === t ? " is-active" : ""}`}
                     onClick={() => setTagFilter((cur) => (cur === t ? null : t))}
                   >
                     #{t}
                   </button>
                 ))
               ) : (
-                <span className="muted library-hint">No topics yet — add on a paper</span>
+                <span className="library-hint">No topics yet — add on a paper</span>
               )}
             </div>
           </div>
