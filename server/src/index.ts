@@ -13,6 +13,7 @@ import { guestRouter, joinRouter } from "./routes/guest.js";
 import { hostRouter } from "./routes/host.js";
 import { identitiesRouter } from "./routes/identities.js";
 import { libraryRouter } from "./routes/library.js";
+import { librarySharePublicRouter, libraryShareRouter } from "./routes/libraryShare.js";
 import { projectsRouter } from "./routes/projects.js";
 import { shareRouter } from "./routes/share.js";
 import { aiApiRouter, aiBriefRouter } from "./routes/ai.js";
@@ -62,8 +63,10 @@ async function main() {
   app.use("/api/share", shareRouter);
   app.use("/api/config", hostOnly, configRouter);
   app.use("/api/identities", hostOnly, identitiesRouter);
-  // Citation library is host-only for now (not wired into Share sessions).
+  // Citation library is host-only (guests use tokenized /api/lib-share instead).
   app.use("/api/library", hostOnly, libraryRouter);
+  app.use("/api/library-share", libraryShareRouter);
+  app.use("/api/lib-share", librarySharePublicRouter);
   app.use("/api/projects", projectsRouter);
 
   // Serve built client only in production (`npm start`). In `npm run dev`, Vite

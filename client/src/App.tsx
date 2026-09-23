@@ -1,13 +1,26 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { EditorPage } from "./pages/EditorPage";
 import { GuestInactive, GuestLogin } from "./pages/GuestLogin";
 import { HostLogin } from "./pages/HostLogin";
 import { LibraryPage } from "./pages/LibraryPage";
+import { LibraryShareGuestPage } from "./pages/LibraryShareGuestPage";
 import { ProjectList } from "./pages/ProjectList";
 import { useSession } from "./session/SessionContext";
 
 export function App() {
   const { session } = useSession();
+  const location = useLocation();
+
+  // Paper-share invites ride the host gateway; token in the path is the credential —
+  // do not force host login before the guest viewer can load.
+  if (location.pathname.startsWith("/lib-share/")) {
+    return (
+      <Routes>
+        <Route path="/lib-share/:token" element={<LibraryShareGuestPage />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    );
+  }
 
   if (session.kind === "loading") {
     return <div className="guest-shell guest-loading">Loading…</div>;
@@ -31,6 +44,7 @@ export function App() {
     <Routes>
       <Route path="/" element={<ProjectList />} />
       <Route path="/library" element={<LibraryPage />} />
+      <Route path="/lib-share/:token" element={<LibraryShareGuestPage />} />
       <Route path="/p/:id" element={<EditorPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

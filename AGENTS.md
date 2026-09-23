@@ -30,6 +30,7 @@ For human setup and usage, see [README.md](README.md).
 | `projects/<id>/citations.json` | Claim-support instances (file:line); git-tracked |
 | `server/src/services/library/` | Library service layer (REST + MCP share this) |
 | `POST /api/library/mcp` | Host-only MCP (8 tools); do not wire into Share without risk-ack |
+| Library paper shares | Host `GET/POST/DELETE /api/library-share` + `POST …/import`; guests `/api/lib-share/:token` (join/notes/bundle/pdf). Invite path `/lib-share/:token` on host gateway — token is the credential |
 
 ## Conventions
 

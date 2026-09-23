@@ -64,7 +64,9 @@ function isOpenHostApi(path: string): boolean {
     path === "/api/host/login" ||
     path === "/api/host/logout" ||
     path === "/api/host/me" ||
-    path === "/api/host/gateway"
+    path === "/api/host/gateway" ||
+    // Paper share invite: possession of the token is the credential (Paperpile-style).
+    path.startsWith("/api/lib-share/")
   );
 }
 

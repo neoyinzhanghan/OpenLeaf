@@ -28,6 +28,7 @@ import {
   slugCollectionId,
   statusClass,
 } from "./LibraryOrganize";
+import { LibrarySharePanel } from "./LibrarySharePanel";
 
 type Props = {
   open: boolean;
@@ -93,6 +94,7 @@ export function LibraryPanel({
   const [checkedKeys, setCheckedKeys] = useState<Set<string>>(new Set());
   const [density, setDensity] = useState<Density>("comfortable");
   const [importOpen, setImportOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [viewMode, setViewMode] = useState<"browse" | "litreview">("browse");
   const [litRows, setLitRows] = useState<
     Array<{ paper: PaperRecord; relevance: string; claim: string; integrity: string; importSelected: boolean }>
@@ -509,6 +511,14 @@ export function LibraryPanel({
           >
             {busy ? "Checking…" : "Check all"}
           </button>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            title="Share papers with a private link"
+            onClick={() => setShareOpen(true)}
+          >
+            Share
+          </button>
           <button type="button" className="btn btn-ghost btn-icon" title="Import" onClick={() => setImportOpen((v) => !v)}>
             +
           </button>
@@ -569,6 +579,9 @@ export function LibraryPanel({
                 ))
               : null}
           </select>
+          <button type="button" className="btn btn-quiet" disabled={busy} onClick={() => setShareOpen(true)}>
+            Share
+          </button>
           <button type="button" className="btn btn-ghost" onClick={() => setCheckedKeys(new Set())}>
             Clear
           </button>
@@ -1079,6 +1092,24 @@ export function LibraryPanel({
         </div>
       </div>
       )}
+
+      <LibrarySharePanel
+        open={shareOpen}
+        onClose={() => setShareOpen(false)}
+        citekeys={
+          checkedKeys.size > 0
+            ? [...checkedKeys]
+            : selectedKey
+              ? [selectedKey]
+              : []
+        }
+        collectionId={collectionFilter}
+        collectionName={
+          collectionFilter && collections?.collections[collectionFilter]
+            ? collections.collections[collectionFilter]!.name
+            : null
+        }
+      />
     </aside>
   );
 }
