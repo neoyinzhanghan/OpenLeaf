@@ -100,7 +100,7 @@ describe("import flows", () => {
 
   it("parses and bulk-imports BibTeX with DOI dedup", async () => {
     const bib = `
-@article{lovelace2024mock,
+@article{otherkey2024,
   title={Mock Paper Title},
   author={Lovelace, Ada},
   year={2024},
@@ -116,10 +116,35 @@ describe("import flows", () => {
     const parsed = parseBibtex(bib);
     assert.equal(parsed.length, 2);
     const result = await importBibtex(bib);
+    // Existing DOI → either skip, or create a citekey alias without a second DOI.
+    const alias = result.imported.find((p) => p.citekey === "otherkey2024");
+    if (alias) {
+      assert.equal(alias.doi, null);
+      assert.match(alias.notes, /alias of/i);
+      assert.equal(result.skipped.length, 0);
+    } else {
+      assert.equal(result.skipped.length, 1);
+      assert.equal(result.skipped[0]!.reason, "doi-exists");
+      assert.equal(result.skipped[0]!.match, "doi");
+    }
+    assert.ok(result.imported.some((p) => p.citekey === "fresh2024"));
+    const byDoi = await findByDoi("10.1000/test.doi");
+    assert.ok(byDoi);
+  });
+
+  it("skips BibTeX entries that soft-match an existing title + author", async () => {
+    const bib = `
+@article{dupetitle2024,
+  title={Mock Paper Title: an extended abstract},
+  author={Lovelace, Ada},
+  year={2024}
+}
+`;
+    const result = await importBibtex(bib);
+    assert.equal(result.imported.length, 0);
     assert.equal(result.skipped.length, 1);
-    assert.equal(result.skipped[0]!.reason, "doi-exists");
-    assert.equal(result.imported.length, 1);
-    assert.equal(result.imported[0]!.citekey, "fresh2024");
+    assert.equal(result.skipped[0]!.match, "title");
+    assert.ok(result.skipped[0]!.existingCitekey);
   });
 
   it("extracts PDF title and imports via OpenAlex title search", async () => {

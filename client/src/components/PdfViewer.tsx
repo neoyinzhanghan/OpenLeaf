@@ -80,6 +80,8 @@ type Props = {
   onReverseSearch?: (page: number, x: number, y: number) => void;
   /** Shift+click PDF → create a comment at the SyncTeX source hit */
   onCommentAt?: (page: number, x: number, y: number) => void;
+  /** Toolbar hint for shift+click; pass null to hide. */
+  shiftClickHint?: string | null;
   highlight?: PdfHighlight | null;
   /** Persistent git-diff addition marks (not the SyncTeX flash) */
   overlays?: PdfDiffOverlay[];
@@ -148,6 +150,7 @@ export function PdfViewer({
   emptyHint,
   onReverseSearch,
   onCommentAt,
+  shiftClickHint,
   highlight,
   overlays,
   diffHighlight,
@@ -670,12 +673,17 @@ export function PdfViewer({
         <span className="pane-title" style={{ padding: 0 }}>
           PDF
         </span>
-        <span
-          className="status-pill pdf-comment-hint"
-          title="Shift+click anywhere in the PDF to start a comment at the matching source line"
-        >
-          Shift+click → comment
-        </span>
+        {shiftClickHint !== null ? (
+          <span
+            className="status-pill pdf-comment-hint"
+            title={
+              shiftClickHint ??
+              "Shift+click anywhere in the PDF to start a comment at the matching source line"
+            }
+          >
+            {shiftClickHint ?? "Shift+click → comment"}
+          </span>
+        ) : null}
         {diffHighlight && (
           <div className="pdf-diff-controls">
             <button

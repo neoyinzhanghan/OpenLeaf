@@ -768,13 +768,23 @@ export function importLibraryLink(body: {
   link: string;
   citekey?: string;
   dryRun?: boolean;
-}): Promise<{ paper: PaperRecord; created: boolean; existingCitekey?: string }> {
+}): Promise<{
+  paper: PaperRecord;
+  created: boolean;
+  existingCitekey?: string;
+  match?: "doi" | "arxiv" | "title" | "citekey";
+}> {
   return request("/api/library/import/link", { method: "POST", body: JSON.stringify(body) });
 }
 
 export function importLibraryBibtex(bibtex: string): Promise<{
   imported: PaperRecord[];
-  skipped: Array<{ citekey: string; reason: string; existingCitekey?: string }>;
+  skipped: Array<{
+    citekey: string;
+    reason: string;
+    existingCitekey?: string;
+    match?: "doi" | "arxiv" | "title" | "citekey";
+  }>;
   errors: Array<{ citekey: string; error: string }>;
 }> {
   return request("/api/library/import/bibtex", {
@@ -788,8 +798,80 @@ export function importLibraryPdf(body: {
   filename?: string;
   titleHint?: string;
   citekey?: string;
-}): Promise<{ paper: PaperRecord; created: boolean; resolvedVia: string }> {
+}): Promise<{
+  paper: PaperRecord;
+  created: boolean;
+  resolvedVia: string;
+  existingCitekey?: string;
+  match?: "doi" | "arxiv" | "title" | "citekey";
+}> {
   return request("/api/library/import/pdf", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function exportLibraryPapers(body: {
+  citekeys?: string[];
+  collection?: string;
+  format: "bibtex" | "ris";
+}): Promise<{ text: string; count: number; filename: string; format: "bibtex" | "ris" }> {
+  return request("/api/library/export", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function libraryPdfUrl(citekey: string, bust?: number): string {
+  const qs = bust != null ? `?t=${bust}` : "";
+  return `/api/library/${encodeURIComponent(citekey)}/pdf${qs}`;
+}
+
+export function listLibraryAnnotations(
+  citekey: string,
+): Promise<{ annotations: import("./types").PaperAnnotation[] }> {
+  return request(`/api/library/${encodeURIComponent(citekey)}/annotations`);
+}
+
+export function createLibraryAnnotation(
+  citekey: string,
+  body: {
+    kind?: "note" | "highlight";
+    body?: string;
+    quote?: string;
+    color?: string;
+    page?: number;
+    x?: number;
+    y?: number;
+    w?: number;
+    h?: number;
+  },
+): Promise<{ annotation: import("./types").PaperAnnotation }> {
+  return request(`/api/library/${encodeURIComponent(citekey)}/annotations`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function patchLibraryAnnotation(
+  citekey: string,
+  id: string,
+  body: Partial<{
+    kind: "note" | "highlight";
+    body: string;
+    quote: string;
+    color: string;
+    page: number;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  }>,
+): Promise<{ annotation: import("./types").PaperAnnotation }> {
+  return request(`/api/library/${encodeURIComponent(citekey)}/annotations/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export function deleteLibraryAnnotation(citekey: string, id: string): Promise<void> {
+  return request(`/api/library/${encodeURIComponent(citekey)}/annotations/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
 }
 
 export function checkLibraryIntegrity(body?: {

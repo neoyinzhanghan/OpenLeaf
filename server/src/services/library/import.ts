@@ -5,11 +5,16 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { bibEntryToCreateInput, parseBibtex } from "./bibtex.js";
+import { findLikelyDuplicate } from "./dedupe.js";
 import { addPaper, findByDoi, getPaper } from "./index.js";
 import { paperDir } from "./paths.js";
 import { getSourceClients, type ResolvedPaper } from "./sources/index.js";
 import { normalizeArxivId } from "./sources/arxiv.js";
 import type { CreatePaperInput, PaperRecord } from "./types.js";
+
+export type DuplicateKind = "doi" | "arxiv" | "title" | "citekey";
+
+export type ImportSkipMatch = DuplicateKind;
 
 export type DetectedLink =
   | { kind: "doi"; value: string }
@@ -93,7 +98,12 @@ export async function lookupExternal(input: {
 export async function importFromLink(
   link: string,
   opts?: { citekey?: string; dryRun?: boolean },
-): Promise<{ paper: PaperRecord | ResolvedPaper; created: boolean; existingCitekey?: string }> {
+): Promise<{
+  paper: PaperRecord | ResolvedPaper;
+  created: boolean;
+  existingCitekey?: string;
+  match?: DuplicateKind;
+}> {
   const detected = detectLink(link);
   let resolved: ResolvedPaper | null = null;
 
@@ -114,11 +124,19 @@ export async function importFromLink(
     throw Object.assign(new Error("Could not resolve metadata for that link"), { status: 404 });
   }
 
-  if (resolved.doi) {
-    const existing = await findByDoi(resolved.doi);
-    if (existing) {
-      return { paper: existing, created: false, existingCitekey: existing.citekey };
-    }
+  const dup = await findLikelyDuplicate({
+    doi: resolved.doi,
+    arxivId: resolved.arxivId,
+    title: resolved.title,
+    authors: resolved.authors,
+  });
+  if (dup) {
+    return {
+      paper: dup.paper,
+      created: false,
+      existingCitekey: dup.paper.citekey,
+      match: dup.match,
+    };
   }
 
   if (opts?.dryRun) {
@@ -131,7 +149,7 @@ export async function importFromLink(
 
 export type BibImportResult = {
   imported: PaperRecord[];
-  skipped: Array<{ citekey: string; reason: string; existingCitekey?: string }>;
+  skipped: Array<{ citekey: string; reason: string; existingCitekey?: string; match?: DuplicateKind }>;
   errors: Array<{ citekey: string; error: string }>;
 };
 
@@ -178,7 +196,12 @@ export async function importBibtex(text: string): Promise<BibImportResult> {
           imported.push(upgraded);
           continue;
         }
-        skipped.push({ citekey: entry.citekey, reason: "citekey-exists", existingCitekey: entry.citekey });
+        skipped.push({
+          citekey: entry.citekey,
+          reason: "citekey-exists",
+          existingCitekey: entry.citekey,
+          match: "citekey",
+        });
         continue;
       }
       if (input.doi) {
@@ -233,9 +256,25 @@ export async function importBibtex(text: string): Promise<BibImportResult> {
             citekey: entry.citekey,
             reason: "doi-exists",
             existingCitekey: existingByDoi.citekey,
+            match: "doi",
           });
           continue;
         }
+      }
+      const softDup = await findLikelyDuplicate({
+        doi: input.doi,
+        arxivId: input.arxivId,
+        title: input.title,
+        authors: input.authors,
+      });
+      if (softDup) {
+        skipped.push({
+          citekey: entry.citekey,
+          reason: `${softDup.match}-exists`,
+          existingCitekey: softDup.paper.citekey,
+          match: softDup.match,
+        });
+        continue;
       }
       const paper = await addPaper(input);
       imported.push(paper);
@@ -273,7 +312,13 @@ export function extractPdfTitle(buffer: Buffer): string | null {
 export async function importPdf(
   buffer: Buffer,
   opts?: { filename?: string; titleHint?: string; citekey?: string },
-): Promise<{ paper: PaperRecord; created: boolean; resolvedVia: string }> {
+): Promise<{
+  paper: PaperRecord;
+  created: boolean;
+  resolvedVia: string;
+  existingCitekey?: string;
+  match?: DuplicateKind;
+}> {
   const clients = getSourceClients();
   const embeddedTitle = extractPdfTitle(buffer);
   const title = (opts?.titleHint || embeddedTitle || opts?.filename?.replace(/\.pdf$/i, "") || "").trim();
@@ -301,17 +346,31 @@ export async function importPdf(
         authors: [],
       };
 
-  if (input.doi) {
-    const existing = await findByDoi(input.doi);
-    if (existing) {
-      // Attach PDF to existing record if missing.
-      if (!existing.attachment) {
-        await saveAttachment(existing.citekey, buffer);
-        const updated = await getPaper(existing.citekey);
-        return { paper: updated, created: false, resolvedVia: "doi-exists" };
-      }
-      return { paper: existing, created: false, resolvedVia: "doi-exists" };
+  const dup = await findLikelyDuplicate({
+    doi: input.doi,
+    arxivId: input.arxivId,
+    title: input.title,
+    authors: input.authors,
+  });
+  if (dup) {
+    if (!dup.paper.attachment) {
+      await saveAttachment(dup.paper.citekey, buffer);
+      const updated = await getPaper(dup.paper.citekey);
+      return {
+        paper: updated,
+        created: false,
+        resolvedVia: `${dup.match}-exists`,
+        existingCitekey: dup.paper.citekey,
+        match: dup.match,
+      };
     }
+    return {
+      paper: dup.paper,
+      created: false,
+      resolvedVia: `${dup.match}-exists`,
+      existingCitekey: dup.paper.citekey,
+      match: dup.match,
+    };
   }
 
   const paper = await addPaper(input);

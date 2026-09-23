@@ -47,6 +47,21 @@ export type ReadingStatus = "unread" | "to-read" | "reading" | "read" | "archive
 
 export type LibrarySort = "added" | "title" | "year" | "rating" | "starred" | "status";
 
+export type PaperAnnotation = {
+  id: string;
+  kind: "note" | "highlight";
+  body: string;
+  quote?: string;
+  color?: string;
+  page?: number;
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
 /** Canonical library paper — mirrors server/services/library record.json. */
 export type PaperRecord = {
   citekey: string;

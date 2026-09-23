@@ -9,6 +9,7 @@ import {
   deleteLibraryPaper,
   enrichLibrary,
   enrichLibraryPaper,
+  exportLibraryPapers,
   getLibraryCollections,
   importLibraryBibtex,
   importLibraryLink,
@@ -18,6 +19,7 @@ import {
   type CitationInstance,
 } from "../api/client";
 import type { LibraryCollections, LibrarySort, PaperRecord } from "../api/types";
+import { copyText } from "../lib/clipboard";
 import {
   TOPIC_SUGGESTIONS,
   SORT_OPTIONS,
@@ -25,7 +27,18 @@ import {
   ratingStars,
   slugCollectionId,
 } from "./LibraryOrganize";
+import { LibraryPdfNotes } from "./LibraryPdfNotes";
 import { LibrarySharePanel } from "./LibrarySharePanel";
+
+function downloadTextFile(filename: string, text: string, mime: string): void {
+  const blob = new Blob([text], { type: `${mime};charset=utf-8` });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 type Props = {
   open: boolean;
@@ -102,12 +115,14 @@ export function LibraryPanel({
   const [importBib, setImportBib] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [tagDraft, setTagDraft] = useState("");
   const [newCollectionName, setNewCollectionName] = useState("");
   const [sectionOpen, setSectionOpen] = useState({
     info: true,
     organize: true,
     notes: true,
+    pdf: true,
     tags: true,
     integrity: true,
   });
@@ -328,11 +343,22 @@ export function LibraryPanel({
   const runImportLink = async () => {
     if (!importLink.trim()) return;
     setBusy(true);
+    setError(null);
+    setNotice(null);
     try {
-      await importLibraryLink({ link: importLink.trim() });
+      const result = await importLibraryLink({ link: importLink.trim() });
       setImportLink("");
       setImportOpen(false);
       await refresh();
+      if (!result.created && result.existingCitekey) {
+        setSelectedKey(result.existingCitekey);
+        setNotice(
+          `Already in library as ${result.existingCitekey}${result.match ? ` (matched by ${result.match})` : ""}`,
+        );
+      } else if (result.created) {
+        setSelectedKey(result.paper.citekey);
+        setNotice(`Imported ${result.paper.citekey}`);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Import failed");
     } finally {
@@ -343,11 +369,25 @@ export function LibraryPanel({
   const runImportBib = async () => {
     if (!importBib.trim()) return;
     setBusy(true);
+    setError(null);
+    setNotice(null);
     try {
-      await importLibraryBibtex(importBib);
+      const result = await importLibraryBibtex(importBib);
       setImportBib("");
       setImportOpen(false);
       await refresh();
+      const skipped = result.skipped.length;
+      const parts = [
+        `Imported ${result.imported.length}`,
+        skipped ? `skipped ${skipped} duplicate${skipped === 1 ? "" : "s"}` : null,
+        result.errors.length ? `${result.errors.length} error(s)` : null,
+      ].filter(Boolean);
+      setNotice(parts.join(" · "));
+      if (result.skipped[0]?.existingCitekey) {
+        setSelectedKey(result.skipped[0].existingCitekey);
+      } else if (result.imported[0]) {
+        setSelectedKey(result.imported[0].citekey);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "BibTeX import failed");
     } finally {
@@ -357,16 +397,71 @@ export function LibraryPanel({
 
   const onDropPdf = async (file: File) => {
     setBusy(true);
+    setError(null);
+    setNotice(null);
     try {
       const buf = await file.arrayBuffer();
       const bytes = new Uint8Array(buf);
       let binary = "";
       for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]!);
       const pdfBase64 = btoa(binary);
-      await importLibraryPdf({ pdfBase64, filename: file.name });
+      const result = await importLibraryPdf({ pdfBase64, filename: file.name });
       await refresh();
+      setSelectedKey(result.paper.citekey);
+      if (!result.created) {
+        setNotice(
+          `PDF attached to existing ${result.existingCitekey ?? result.paper.citekey}${
+            result.match ? ` (matched by ${result.match})` : ""
+          }`,
+        );
+      } else {
+        setNotice(`Imported PDF as ${result.paper.citekey}`);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "PDF import failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const runExport = async (
+    format: "bibtex" | "ris",
+    opts?: { copy?: boolean; citekeys?: string[]; collection?: string | null },
+  ) => {
+    const citekeys =
+      opts?.citekeys ??
+      (checkedKeys.size > 0 ? [...checkedKeys] : selectedKey ? [selectedKey] : undefined);
+    const collection =
+      opts?.collection !== undefined
+        ? opts.collection
+        : !citekeys?.length
+          ? collectionFilter
+          : undefined;
+    if (!citekeys?.length && !collection) {
+      setError("Select papers or a collection to export");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await exportLibraryPapers({
+        citekeys,
+        collection: collection ?? undefined,
+        format,
+      });
+      if (opts?.copy) {
+        const ok = await copyText(result.text);
+        setNotice(ok ? `Copied ${result.count} ${format === "ris" ? "RIS" : "BibTeX"} entries` : "Clipboard blocked");
+      } else {
+        downloadTextFile(
+          result.filename,
+          result.text,
+          format === "ris" ? "application/x-research-info-systems" : "application/x-bibtex",
+        );
+        setNotice(`Downloaded ${result.filename} (${result.count} papers)`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Export failed");
     } finally {
       setBusy(false);
     }
@@ -545,6 +640,7 @@ export function LibraryPanel({
       </div>
 
       {error ? <div className="library-error">{error}</div> : null}
+      {notice ? <div className="library-notice">{notice}</div> : null}
 
       {checkedKeys.size > 0 && viewMode === "browse" ? (
         <div className="library-bulk-bar" role="toolbar" aria-label="Bulk actions">
@@ -575,6 +671,33 @@ export function LibraryPanel({
                 ))
               : null}
           </select>
+          <button
+            type="button"
+            className="btn btn-quiet"
+            disabled={busy}
+            title="Download BibTeX"
+            onClick={() => void runExport("bibtex")}
+          >
+            BibTeX
+          </button>
+          <button
+            type="button"
+            className="btn btn-quiet"
+            disabled={busy}
+            title="Copy BibTeX"
+            onClick={() => void runExport("bibtex", { copy: true })}
+          >
+            Copy .bib
+          </button>
+          <button
+            type="button"
+            className="btn btn-quiet"
+            disabled={busy}
+            title="Download RIS"
+            onClick={() => void runExport("ris")}
+          >
+            RIS
+          </button>
           <button type="button" className="btn btn-quiet" disabled={busy} onClick={() => setShareOpen(true)}>
             Share
           </button>
@@ -785,6 +908,26 @@ export function LibraryPanel({
                 Create
               </button>
             </div>
+            {collectionFilter ? (
+              <div className="library-export-row">
+                <button
+                  type="button"
+                  className="btn btn-quiet"
+                  disabled={busy}
+                  onClick={() => void runExport("bibtex", { collection: collectionFilter })}
+                >
+                  Export collection .bib
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-quiet"
+                  disabled={busy}
+                  onClick={() => void runExport("ris", { collection: collectionFilter })}
+                >
+                  Export .ris
+                </button>
+              </div>
+            ) : null}
             <p className="library-hint">
               Folders for projects or reading lists. Creating while papers are selected adds them.
             </p>
@@ -1000,6 +1143,13 @@ export function LibraryPanel({
                 />
               </Collapsible>
               <Collapsible
+                title={selected.attachment ? "PDF & highlights" : "PDF & highlights"}
+                open={sectionOpen.pdf}
+                onToggle={() => setSectionOpen((s) => ({ ...s, pdf: !s.pdf }))}
+              >
+                <LibraryPdfNotes paper={selected} onError={(msg) => setError(msg)} />
+              </Collapsible>
+              <Collapsible
                 title="Topics"
                 open={sectionOpen.tags}
                 onToggle={() => setSectionOpen((s) => ({ ...s, tags: !s.tags }))}
@@ -1105,6 +1255,30 @@ export function LibraryPanel({
                     Cite into project
                   </button>
                 ) : null}
+                <button
+                  type="button"
+                  className="btn btn-quiet"
+                  disabled={busy}
+                  onClick={() => void runExport("bibtex", { citekeys: [selected.citekey] })}
+                >
+                  BibTeX
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-quiet"
+                  disabled={busy}
+                  onClick={() => void runExport("bibtex", { citekeys: [selected.citekey], copy: true })}
+                >
+                  Copy .bib
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-quiet"
+                  disabled={busy}
+                  onClick={() => void runExport("ris", { citekeys: [selected.citekey] })}
+                >
+                  RIS
+                </button>
                 <button
                   type="button"
                   className="btn btn-ghost"

@@ -45,6 +45,74 @@ export function paperToBibtex(paper: PaperRecord): string {
   return `@${type}{${paper.citekey},\n${fields.join(",\n")}\n}\n`;
 }
 
+function risLine(tag: string, value: string): string {
+  const cleaned = value.replace(/\r?\n/g, " ").trim();
+  return cleaned ? `${tag}  - ${cleaned}\n` : "";
+}
+
+/** RIS (Research Information Systems) export for a single paper. */
+export function paperToRis(paper: PaperRecord): string {
+  const type = paper.arxivId && !paper.doi ? "THES" : "JOUR";
+  let out = risLine("TY", type);
+  out += risLine("ID", paper.citekey);
+  out += risLine("TI", paper.title);
+  for (const a of paper.authors) {
+    const name = a.given.trim() ? `${a.family}, ${a.given}` : a.family;
+    out += risLine("AU", name);
+  }
+  if (paper.year != null) out += risLine("PY", String(paper.year));
+  if (paper.venue) out += risLine("JO", paper.venue);
+  if (paper.doi) out += risLine("DO", paper.doi);
+  if (paper.url) out += risLine("UR", paper.url);
+  else if (paper.doi) out += risLine("UR", `https://doi.org/${paper.doi}`);
+  if (paper.arxivId) out += risLine("UR", `https://arxiv.org/abs/${paper.arxivId}`);
+  if (paper.abstract) out += risLine("AB", paper.abstract.slice(0, 4000));
+  for (const tag of paper.tags) out += risLine("KW", tag);
+  out += "ER  - \n";
+  return out;
+}
+
+export type LibraryExportFormat = "bibtex" | "ris";
+
+export async function exportLibraryPapers(opts: {
+  citekeys?: string[];
+  collection?: string;
+  format: LibraryExportFormat;
+}): Promise<{ text: string; count: number; filename: string; format: LibraryExportFormat }> {
+  const { searchPapers, getPaper } = await import("./index.js");
+  let papers: PaperRecord[];
+  if (opts.citekeys?.length) {
+    const unique = [...new Set(opts.citekeys.map((k) => k.trim()).filter(Boolean))];
+    papers = [];
+    for (const key of unique) {
+      papers.push(await getPaper(key));
+    }
+  } else if (opts.collection?.trim()) {
+    papers = await searchPapers({ collection: opts.collection.trim(), limit: 2000 });
+  } else {
+    throw Object.assign(new Error("Provide citekeys or collection"), { status: 400 });
+  }
+  if (!papers.length) {
+    throw Object.assign(new Error("No papers to export"), { status: 404 });
+  }
+
+  const format = opts.format;
+  const text =
+    format === "ris"
+      ? papers.map((p) => paperToRis(p)).join("\n")
+      : papers.map((p) => paperToBibtex(p).trimEnd()).join("\n\n") + "\n";
+
+  const stamp = new Date().toISOString().slice(0, 10);
+  const base =
+    opts.collection?.trim()
+      ? `openleaf-${opts.collection.trim()}`
+      : papers.length === 1
+        ? papers[0]!.citekey
+        : `openleaf-export-${papers.length}`;
+  const ext = format === "ris" ? "ris" : "bib";
+  return { text, count: papers.length, filename: `${base}-${stamp}.${ext}`, format };
+}
+
 function findBibFile(projectId: string): string {
   const root = projectDir(projectId);
   const candidates = ["references.bib", "refs.bib", "bibliography.bib", "main.bib"];

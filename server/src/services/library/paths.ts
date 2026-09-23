@@ -18,6 +18,14 @@ export function recordPath(citekey: string): string {
   return path.join(paperDir(citekey), "record.json");
 }
 
+export function annotationsPath(citekey: string): string {
+  return path.join(paperDir(citekey), "annotations.json");
+}
+
+export function attachmentPath(citekey: string): string {
+  return path.join(paperDir(citekey), "attachment.pdf");
+}
+
 export function collectionsPath(): string {
   return path.join(libraryRoot(), "collections.json");
 }

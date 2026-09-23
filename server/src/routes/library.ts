@@ -1,4 +1,5 @@
 import { Router } from "express";
+import fs from "node:fs";
 import { ZodError } from "zod";
 import {
   addPaper,
@@ -16,6 +17,16 @@ import {
 import { importBibtex, importFromLink, importPdf, lookupExternal } from "../services/library/import.js";
 import { enrichLibrary, enrichPaper } from "../services/library/enrich.js";
 import { checkLibraryIntegrity, checkPaperIntegrity } from "../services/library/integrity.js";
+import { exportLibraryPapers } from "../services/library/cite.js";
+import {
+  addAnnotation,
+  CreateAnnotationInputSchema,
+  deleteAnnotation,
+  listAnnotations,
+  PatchAnnotationInputSchema,
+  updateAnnotation,
+} from "../services/library/annotations.js";
+import { attachmentPath } from "../services/library/paths.js";
 import {
   BulkLibraryPatchSchema,
   CreatePaperInputSchema,
@@ -125,6 +136,34 @@ libraryRouter.post("/bulk", async (req, res) => {
     const body = BulkLibraryPatchSchema.parse(req.body);
     const papers = await bulkPatchPapers(body);
     res.json({ papers, count: papers.length });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+/** Export selected papers or a collection as BibTeX or RIS. */
+libraryRouter.post("/export", async (req, res) => {
+  try {
+    const format =
+      req.body?.format === "ris" || req.query.format === "ris" ? "ris" : "bibtex";
+    const citekeys = Array.isArray(req.body?.citekeys)
+      ? (req.body.citekeys as unknown[]).filter((c): c is string => typeof c === "string")
+      : undefined;
+    const collection =
+      typeof req.body?.collection === "string"
+        ? req.body.collection
+        : typeof req.query.collection === "string"
+          ? req.query.collection
+          : undefined;
+    const result = await exportLibraryPapers({ citekeys, collection, format });
+    const mime = format === "ris" ? "application/x-research-info-systems" : "application/x-bibtex";
+    if (req.body?.download === true || req.query.download === "1") {
+      res.setHeader("Content-Type", `${mime}; charset=utf-8`);
+      res.setHeader("Content-Disposition", `attachment; filename="${result.filename}"`);
+      res.send(result.text);
+      return;
+    }
+    res.json(result);
   } catch (err) {
     sendError(res, err);
   }
@@ -268,6 +307,67 @@ libraryRouter.post("/:citekey/integrity", async (req, res) => {
       force: Boolean(req.body?.force),
     });
     res.json(result);
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+libraryRouter.get("/:citekey/pdf", async (req, res) => {
+  try {
+    const paper = await getPaper(req.params.citekey);
+    if (!paper.attachment) {
+      res.status(404).json({ error: "No PDF attachment" });
+      return;
+    }
+    const file = attachmentPath(paper.citekey);
+    if (!fs.existsSync(file)) {
+      res.status(404).json({ error: "PDF file missing on disk" });
+      return;
+    }
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="${paper.citekey}.pdf"`,
+    );
+    fs.createReadStream(file).pipe(res);
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+libraryRouter.get("/:citekey/annotations", async (req, res) => {
+  try {
+    const annotations = await listAnnotations(req.params.citekey);
+    res.json({ annotations });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+libraryRouter.post("/:citekey/annotations", async (req, res) => {
+  try {
+    const input = CreateAnnotationInputSchema.parse(req.body ?? {});
+    const annotation = await addAnnotation(req.params.citekey, input);
+    res.status(201).json({ annotation });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+libraryRouter.patch("/:citekey/annotations/:id", async (req, res) => {
+  try {
+    const patch = PatchAnnotationInputSchema.parse(req.body ?? {});
+    const annotation = await updateAnnotation(req.params.citekey, req.params.id, patch);
+    res.json({ annotation });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+libraryRouter.delete("/:citekey/annotations/:id", async (req, res) => {
+  try {
+    await deleteAnnotation(req.params.citekey, req.params.id);
+    res.status(204).end();
   } catch (err) {
     sendError(res, err);
   }
