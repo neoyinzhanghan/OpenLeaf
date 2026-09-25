@@ -7075,8 +7075,38 @@ button.lib-badge:hover {
   }
 
   .topbar {
-    padding-left: max(1rem, env(safe-area-inset-left, 0px));
-    padding-right: max(1rem, env(safe-area-inset-right, 0px));
+    gap: 0.4rem;
+    padding-left: max(0.75rem, env(safe-area-inset-left, 0px));
+    padding-right: max(0.75rem, env(safe-area-inset-right, 0px));
+    flex-wrap: nowrap;
+  }
+
+  .topbar .brand {
+    min-width: 0;
+    flex: 0 1 auto;
+    gap: 0.4rem;
+  }
+
+  .topbar .brand-mark {
+    font-size: 1rem;
+  }
+
+  .topbar-nav {
+    flex-shrink: 0;
+    margin-left: 0;
+    margin-right: 0;
+    gap: 0.1rem;
+  }
+
+  .topbar-nav .btn {
+    padding: 0.3rem 0.45rem;
+    min-height: 36px;
+  }
+
+  .topbar-end {
+    flex-shrink: 0;
+    margin-left: auto;
+    gap: 0.2rem;
   }
 
   .brand-sub {
@@ -7086,20 +7116,40 @@ button.lib-badge:hover {
   .editor-page.is-narrow .editor-toolbar {
     flex-wrap: nowrap;
     overflow: visible;
-    gap: 0.3rem;
-    padding-left: max(0.5rem, env(safe-area-inset-left, 0px));
-    padding-right: max(0.5rem, env(safe-area-inset-right, 0px));
+    gap: 0.25rem;
+    padding-left: max(0.45rem, env(safe-area-inset-left, 0px));
+    padding-right: max(0.45rem, env(safe-area-inset-right, 0px));
   }
 
   .editor-page.is-narrow .toolbar-cluster:first-child {
     min-width: 0;
     flex: 1 1 auto;
     overflow: hidden;
+    gap: 0.3rem;
+  }
+
+  .editor-page.is-narrow .toolbar-cluster:first-child > .toolbar-logo,
+  .editor-page.is-narrow .toolbar-cluster:first-child > .btn,
+  .editor-page.is-narrow .toolbar-cluster:first-child > a.btn,
+  .editor-page.is-narrow .toolbar-cluster:first-child > .badge {
+    flex-shrink: 0;
+  }
+
+  .editor-page.is-narrow .toolbar-home-link {
+    padding-left: 0.4rem;
+    padding-right: 0.4rem;
   }
 
   .editor-page.is-narrow .toolbar-cluster,
   .editor-page.is-narrow .toolbar-actions {
     flex-wrap: nowrap;
+  }
+
+  .editor-page.is-narrow .toolbar-actions {
+    flex: 0 0 auto;
+    gap: 0.15rem;
+    margin-left: 0;
+    min-width: 0;
   }
 
   .editor-page.is-narrow .toolbar-actions,
@@ -7111,11 +7161,18 @@ button.lib-badge:hover {
   .editor-page.is-narrow .toolbar-actions > .btn,
   .editor-page.is-narrow .toolbar-actions > a.btn {
     min-height: 36px;
-    padding: 0.28rem 0.5rem;
+    padding: 0.28rem 0.45rem;
+  }
+
+  .editor-page.is-narrow .toolbar-more .btn-icon {
+    min-width: 36px;
+    min-height: 36px;
   }
 
   .toolbar-project-name {
-    max-width: 7.5rem;
+    max-width: 5.5rem;
+    min-width: 0;
+    flex: 1 1 auto;
   }
 
   .history-drawer,

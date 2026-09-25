@@ -2161,7 +2161,7 @@ export function EditorPage() {
               Shared with you
             </span>
           ) : (
-            <Link className="btn btn-ghost btn-quiet" to="/" title="Back to projects">
+            <Link className="btn btn-ghost btn-quiet toolbar-home-link" to="/" title="Back to projects">
               Projects
             </Link>
           )}
@@ -2261,7 +2261,7 @@ export function EditorPage() {
           {!isGuest && shareActive && (
             <button
               type="button"
-              className={`btn share-timer-chip${shareUrgent ? " is-urgent" : ""}`}
+              className={`btn share-timer-chip toolbar-wide-only${shareUrgent ? " is-urgent" : ""}`}
               onClick={() => {
                 closeOverlappingChrome("share");
                 setShareOpen(true);
@@ -2285,7 +2285,7 @@ export function EditorPage() {
           {canHistory && (
             <button
               type="button"
-              className={`btn btn-quiet${historyOpen ? " is-active" : ""}`}
+              className={`btn btn-quiet toolbar-wide-only${historyOpen ? " is-active" : ""}`}
               onClick={() => {
                 closeOverlappingChrome("history");
                 setHistoryOpen(true);
@@ -2299,14 +2299,14 @@ export function EditorPage() {
             <>
               <Link
                 to="/library"
-                className="btn btn-quiet"
+                className="btn btn-quiet toolbar-wide-only"
                 title="Open the personal citation library (independent of this project)"
               >
                 Library
               </Link>
               <button
                 type="button"
-                className={`btn btn-quiet${libraryOpen ? " is-active" : ""}`}
+                className={`btn btn-quiet toolbar-wide-only${libraryOpen ? " is-active" : ""}`}
                 onClick={() => {
                   closeOverlappingChrome("library");
                   setLibraryOpen(true);
@@ -2348,12 +2348,12 @@ export function EditorPage() {
             </button>
           )}
           {!timelineCanEdit && !isGuest && (
-            <span className="share-muted" title="Historical checkpoint">
+            <span className="share-muted toolbar-wide-only" title="Historical checkpoint">
               Read-only checkpoint
             </span>
           )}
           {!timelineCanEdit && isGuest && (
-            <span className="share-muted" title="You are watching another branch’s live working copy">
+            <span className="share-muted toolbar-wide-only" title="You are watching another branch’s live working copy">
               Observing {branchLabel}
             </span>
           )}
@@ -2410,7 +2410,7 @@ export function EditorPage() {
           {openCommentCount > 0 && (
             <button
               type="button"
-              className={`btn btn-quiet toolbar-comments has-open${commentsOpen ? " is-active" : ""}`}
+              className={`btn btn-quiet toolbar-comments toolbar-wide-only has-open${commentsOpen ? " is-active" : ""}`}
               onClick={() => {
                 closeOverlappingChrome("comments");
                 setCommentsOpen(true);
@@ -2425,7 +2425,7 @@ export function EditorPage() {
           {!isGuest && aiReviewCount > 0 && (
             <button
               type="button"
-              className={`btn btn-quiet toolbar-comments toolbar-ai-review has-open${aiReviewOpen || (narrow && aiActiveId) ? " is-active" : ""}`}
+              className={`btn btn-quiet toolbar-comments toolbar-ai-review toolbar-wide-only has-open${aiReviewOpen || (narrow && aiActiveId) ? " is-active" : ""}`}
               onClick={() => {
                 void beginAiReview();
               }}
@@ -2508,6 +2508,45 @@ export function EditorPage() {
                   </button>
                 )}
                 {narrow && (isGuest || collab.identities.length > 0) && <div className="toolbar-menu-sep" />}
+                {narrow && canHistory && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setToolbarMoreOpen(false);
+                      closeOverlappingChrome("history");
+                      setHistoryOpen(true);
+                    }}
+                  >
+                    Timeline
+                    {lastCommit ? (
+                      <span className="toolbar-menu-hint">{lastCommit.slice(0, 7)}</span>
+                    ) : null}
+                  </button>
+                )}
+                {narrow && !isGuest && (
+                  <>
+                    <Link
+                      role="menuitem"
+                      to="/library"
+                      onClick={() => setToolbarMoreOpen(false)}
+                    >
+                      Library
+                    </Link>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setToolbarMoreOpen(false);
+                        closeOverlappingChrome("library");
+                        setLibraryOpen(true);
+                      }}
+                    >
+                      Cite from library
+                    </button>
+                  </>
+                )}
+                {narrow && (canHistory || !isGuest) && <div className="toolbar-menu-sep" />}
                 {!isGuest && (
                   <button
                     type="button"
