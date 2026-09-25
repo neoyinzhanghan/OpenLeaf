@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import type { IncomingMessage } from "node:http";
 import path from "node:path";
-import { CONFIG_DIR } from "../config.js";
+import { getConfigDir, loadConfig } from "../config.js";
 
 /**
  * Password gate for the public host Cloudflare URL.
@@ -12,7 +12,8 @@ import { CONFIG_DIR } from "../config.js";
  */
 
 export const HOST_COOKIE = "openleaf_host";
-export const HOST_USERNAME_DEFAULT = "admin";
+/** Used only when setup has not chosen an operator username. Not a collab identity. */
+export const HOST_USERNAME_DEFAULT = "host";
 
 const COOKIE_TTL_MS = 14 * 24 * 3600_000;
 const SCRYPT_KEYLEN = 64;
@@ -31,7 +32,7 @@ type HostAuthFile = {
 const loginFailures = new Map<string, { count: number; first: number }>();
 
 function authDir(): string {
-  return process.env.OPENLEAF_HOST_AUTH_DIR || CONFIG_DIR;
+  return process.env.OPENLEAF_HOST_AUTH_DIR || getConfigDir();
 }
 
 function authPath(): string {
@@ -111,15 +112,63 @@ export function updateHostCredentialsUrl(publicUrl: string): void {
 
 function persistAuth(file: HostAuthFile): void {
   writeFilePrivate(authPath(), `${JSON.stringify(file, null, 2)}\n`);
+  try {
+    cachedMtime = fs.statSync(authPath()).mtimeMs;
+  } catch {
+    cachedMtime = 0;
+  }
+}
+
+/**
+ * Replace the host password and rotate the cookie secret so existing
+ * host sessions stop verifying. Does not print the password.
+ */
+export function resetHostPassword(password: string): { username: string } {
+  const trimmed = password.trim();
+  if (trimmed.length < 8) {
+    throw Object.assign(new Error("Password must be at least 8 characters"), { status: 400 });
+  }
+  const existing = loadHostAuth();
+  if (!existing) {
+    throw Object.assign(new Error("Host login is not configured yet"), { status: 404 });
+  }
+  const salt = crypto.randomBytes(16);
+  const file: HostAuthFile = {
+    ...existing,
+    salt: salt.toString("base64"),
+    passwordHash: hashPassword(trimmed, salt),
+    cookieSecret: crypto.randomBytes(32).toString("base64"),
+  };
+  const previous = fs.existsSync(credentialsPath()) ? fs.readFileSync(credentialsPath(), "utf8") : "";
+  const urlMatch = previous.match(/^Public URL:\s*(.+)$/m);
+  persistAuth(file);
+  writeCredentialsFile(existing.username, trimmed, urlMatch?.[1]?.trim());
+  cached = file;
+  return { username: existing.username };
 }
 
 let cached: HostAuthFile | null = null;
+let cachedMtime = 0;
 
 export function loadHostAuth(): HostAuthFile | null {
-  if (cached) return cached;
-  const file = readJsonIfExists(authPath());
-  if (!file?.username || !file.salt || !file.passwordHash || !file.cookieSecret) return null;
+  const filePath = authPath();
+  let mtime = 0;
+  try {
+    mtime = fs.statSync(filePath).mtimeMs;
+  } catch {
+    cached = null;
+    cachedMtime = 0;
+    return null;
+  }
+  if (cached && mtime === cachedMtime) return cached;
+  const file = readJsonIfExists(filePath);
+  if (!file?.username || !file.salt || !file.passwordHash || !file.cookieSecret) {
+    cached = null;
+    cachedMtime = 0;
+    return null;
+  }
   cached = file;
+  cachedMtime = mtime;
   return cached;
 }
 
@@ -131,7 +180,8 @@ export function ensureHostAuth(): { created: boolean; username: string; password
   const existing = loadHostAuth();
   if (existing) return { created: false, username: existing.username };
 
-  const username = (process.env.OPENLEAF_HOST_USER || HOST_USERNAME_DEFAULT).trim() || HOST_USERNAME_DEFAULT;
+  const configured = loadConfig().user?.hostUsername?.trim();
+  const username = (process.env.OPENLEAF_HOST_USER || configured || HOST_USERNAME_DEFAULT).trim() || HOST_USERNAME_DEFAULT;
   const password = (process.env.OPENLEAF_HOST_PASSWORD || "").trim() || generateHostPassword();
   const salt = crypto.randomBytes(16);
   const file: HostAuthFile = {
@@ -250,5 +300,6 @@ export function hostLogin(
 /** Test helper: drop cached auth so a new temp dir can be used. */
 export function resetHostAuthCache(): void {
   cached = null;
+  cachedMtime = 0;
   loginFailures.clear();
 }

@@ -18,5 +18,9 @@
   },
   "git": {
     "enabled": true
-  }
+  },
+  "user": {
+    "displayName": "Your Name"
+  },
+  "access": "localhost"
 }

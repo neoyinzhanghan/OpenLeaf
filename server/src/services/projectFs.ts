@@ -1,7 +1,13 @@
 import fs from "node:fs/promises";
 import fsSync from "node:fs";
 import path from "node:path";
-import { getProjectsRootAbs, loadConfig, type Identity, type LatexEngine } from "../config.js";
+import {
+  getDefaultIdentities,
+  getProjectsRootAbs,
+  loadConfig,
+  type Identity,
+  type LatexEngine,
+} from "../config.js";
 
 /** Never list or zip these system dirs. Build artifacts (`.openleaf`) stay visible. */
 export const SKIP_DIRS = new Set([".git", "node_modules"]);
@@ -30,13 +36,12 @@ export type PaperflowProjectConfig = {
   identities?: Identity[];
 };
 
-const DEFAULT_PROJECT_IDENTITIES: Identity[] = [
-  { id: "admin-neo", name: "Admin Neo", color: "#0F766E" },
-];
+/** Last resort when setup has not recorded a display name. Not a personal account. */
+const UNCONFIGURED_IDENTITY: Identity = { id: "author", name: "Author", color: "#0F766E" };
 
 export function defaultProjectIdentities(): Identity[] {
-  const fromConfig = loadConfig().defaultIdentities;
-  return fromConfig.length > 0 ? fromConfig.map((i) => ({ ...i })) : DEFAULT_PROJECT_IDENTITIES.map((i) => ({ ...i }));
+  const fromConfig = getDefaultIdentities();
+  return fromConfig.length > 0 ? fromConfig.map((i) => ({ ...i })) : [{ ...UNCONFIGURED_IDENTITY }];
 }
 
 function assertSafeProjectId(id: string): string {

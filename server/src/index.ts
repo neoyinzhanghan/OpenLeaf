@@ -4,7 +4,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { getLibraryRootAbs, getPublicConfig, loadConfig, REPO_ROOT } from "./config.js";
+import { getLibraryRootAbs, getPublicConfig, getRepoRoot, loadConfig } from "./config.js";
 import { attachCollabServer } from "./services/collab/server.js";
 import { ensureProjectsRoot } from "./services/projectFs.js";
 import { ensureLibraryBoot } from "./services/library/index.js";
@@ -79,7 +79,7 @@ async function main() {
 
   // Serve built client only in production (`npm start`). In `npm run dev`, Vite
   // on cfg.client.devPort is the UI — serving a stale client/dist here hides new features.
-  const clientDist = path.resolve(REPO_ROOT, "client/dist");
+  const clientDist = path.resolve(getRepoRoot(), "client/dist");
   const serveBuiltClient =
     process.env.NODE_ENV === "production" && fs.existsSync(clientDist);
   if (serveBuiltClient) {
@@ -135,17 +135,19 @@ async function main() {
     const ip = lanIp() ?? "127.0.0.1";
     console.log(`OpenLeaf API http://${ip}:${cfg.port}`);
     console.log(`Collab WS  ws://${ip}:${cfg.port}/collab/<project>?identity=<id>`);
-    console.log(`Projects root: ${path.resolve(REPO_ROOT, cfg.projectsRoot)}`);
+    if (!process.env.OPENLEAF_HOST_GATEWAY && cfg.access && cfg.access !== "remote") {
+      process.env.OPENLEAF_HOST_GATEWAY = "0";
+    }
+    console.log(`Projects root: ${path.resolve(getRepoRoot(), cfg.projectsRoot)}`);
     console.log(`Library root:  ${getLibraryRootAbs()}`);
     if (serveBuiltClient) {
       console.log(`UI         http://${ip}:${cfg.port}`);
     } else {
       console.log(`Dev UI:    http://${ip}:${cfg.client.devPort} (vite — use this during npm run dev)`);
     }
-    if (hostCreds.created && hostCreds.password) {
+    if (hostCreds.created) {
       console.log(`Host login username: ${hostCreds.username}`);
-      console.log(`Host login password: ${hostCreds.password}`);
-      console.log(`(saved to config/host-credentials.txt — will not be printed again)`);
+      console.log("Host login password written to config/host-credentials.txt (not printed)");
     } else {
       console.log(`Host login username: ${hostCreds.username} (password in config/host-credentials.txt)`);
     }

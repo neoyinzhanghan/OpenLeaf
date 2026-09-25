@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { CONFIG_DIR, loadConfig } from "../config.js";
+import { getConfigDir, loadConfig } from "../config.js";
 import { updateHostCredentialsUrl } from "./hostAuth.js";
 
 /**
@@ -35,7 +35,7 @@ let stopping = false;
 let restartAttempt = 0;
 
 function persistPath(): string {
-  const dir = process.env.OPENLEAF_HOST_AUTH_DIR || CONFIG_DIR;
+  const dir = process.env.OPENLEAF_HOST_AUTH_DIR || getConfigDir();
   return path.join(dir, "host-gateway.json");
 }
 

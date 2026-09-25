@@ -12,13 +12,7 @@
   "client": {
     "devPort": 5173
   },
-  "defaultIdentities": [
-    {
-      "id": "host",
-      "name": "Host",
-      "color": "#0F766E"
-    }
-  ],
+  "defaultIdentities": [],
   "collab": {
     "flushMs": 750,
     "persistYjs": true

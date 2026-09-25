@@ -5,7 +5,7 @@ import { useSession } from "../session/SessionContext";
 
 export function HostLogin() {
   const { refresh } = useSession();
-  const [username, setUsername] = useState("admin");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -47,6 +47,7 @@ export function HostLogin() {
           <input
             autoComplete="username"
             spellCheck={false}
+            placeholder="Host username"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             required

@@ -22,21 +22,31 @@ export type CompileResult = {
   durationMs: number;
 };
 
-/** TeX installs (TinyTeX, MacTeX) often sit outside the PATH of GUI/IDE shells. */
+/** TeX installs (TinyTeX, MacTeX, MiKTeX, TeX Live) often sit outside the PATH of GUI shells. */
 export function texEnv(): NodeJS.ProcessEnv {
   const home = os.homedir();
+  const localApp = process.env.LOCALAPPDATA ?? path.join(home, "AppData", "Local");
+  const programFiles = process.env.ProgramFiles ?? "C:\\Program Files";
+  const texYears = ["2026", "2025", "2024", "2023"];
   const candidates = [
     path.join(home, "Library/TinyTeX/bin/universal-darwin"),
     path.join(home, "Library/TinyTeX/bin/aarch64-darwin"),
     path.join(home, "Library/TinyTeX/bin/x86_64-darwin"),
     path.join(home, ".TinyTeX/bin/x86_64-linux"),
     path.join(home, ".TinyTeX/bin/aarch64-linux"),
+    path.join(home, ".TinyTeX/bin/windows"),
+    path.join(home, "AppData", "Roaming", "TinyTeX", "bin", "windows"),
+    path.join(localApp, "Programs", "MiKTeX", "miktex", "bin", "x64"),
+    path.join(programFiles, "MiKTeX", "miktex", "bin", "x64"),
     "/Library/TeX/texbin",
-    "/usr/local/texlive/2026/bin/universal-darwin",
-    "/usr/local/texlive/2025/bin/universal-darwin",
-    "/usr/local/texlive/2024/bin/universal-darwin",
     "/opt/homebrew/bin",
     "/usr/local/bin",
+    ...texYears.flatMap((year) => [
+      `/usr/local/texlive/${year}/bin/universal-darwin`,
+      `/usr/local/texlive/${year}/bin/x86_64-linux`,
+      `/usr/local/texlive/${year}/bin/aarch64-linux`,
+      `C:\\texlive\\${year}\\bin\\windows`,
+    ]),
   ];
   const seen = new Set<string>();
   const dirs: string[] = [];
