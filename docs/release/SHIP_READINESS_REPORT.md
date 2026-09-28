@@ -18,7 +18,7 @@ On the project list, choose **Open on your phone**. Same Wi-Fi is a one-time lin
 
 ## Changes
 
-Commits are on `release/ship-ready` (see `git log origin/feature/citation-library..HEAD`). The first security commit is `3b68003`. Later commits cover the phone dialog, bundled editor, CLI setup, the recursive test glob, and these docs.
+Commits on `release/ship-ready`: `3b68003` (compile confinement and device auth) and `9016c5b` (phone pairing, bundled editor, CLI setup, recursive tests, and these docs).
 
 ## Findings
 
@@ -54,7 +54,7 @@ Run on this WSL machine with Playwright Chromium. Desktop 1440×900. Phone conte
 | Undefined control sequence shows an error badge and an issue row | Pass |
 | Same Wi-Fi pairing link, second context, link is single use | Pass |
 | From anywhere with fake cloudflared shows the fake hostname | Pass |
-| Fresh `git clone` of this branch on a clean machine | Not run (no second machine). `npm ci` was not repeated in a temp clone before the report was written. |
+| Local `git clone` of this branch into a temp directory, then `npm ci` and `npm run typecheck` | Pass. Full setup, start, and sample compile were not repeated in that directory. |
 | Welcome compile, SyncTeX both ways, zip upload, comments, share guest, offline theme | Not run end to end in this pass |
 
 ## Discovery passes
@@ -95,7 +95,7 @@ Run on this WSL machine with Playwright Chromium. Desktop 1440×900. Phone conte
 | `npm run build` | Pass |
 | `npm run e2e` | Pass. 4 tests |
 | `npm audit` after `npm audit fix` | 0 vulnerabilities |
-| Fresh clone rehearsal | Not run |
+| Fresh clone rehearsal | Local clone, `npm ci`, and `npm run typecheck` passed. Setup and sample compile were not repeated there. |
 
 ## Decisions for Neo
 
