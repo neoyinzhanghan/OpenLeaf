@@ -51,7 +51,10 @@ async function checkCrossrefRetraction(
     return result;
   }
   if (!res.ok) {
-    throw Object.assign(new Error(`Crossref HTTP ${res.status}`), { status: 502 });
+    throw Object.assign(
+      new Error("Couldn't reach Crossref. Check your connection, or paste BibTeX instead."),
+      { status: 502 },
+    );
   }
   const body = (await res.json()) as {
     message?: {

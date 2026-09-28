@@ -58,7 +58,12 @@ export function createCrossrefClient(opts?: {
         headers: { Accept: "application/json", "User-Agent": `OpenLeaf/1.0 (mailto:${mailto})` },
       });
       if (res.status === 404) return null;
-      if (!res.ok) throw Object.assign(new Error(`Crossref HTTP ${res.status}`), { status: 502 });
+      if (!res.ok) {
+        throw Object.assign(
+          new Error("Couldn't reach Crossref. Check your connection, or paste BibTeX instead."),
+          { status: 502 },
+        );
+      }
       const body = (await res.json()) as { message?: Record<string, unknown> };
       if (!body.message) return null;
       const paper = fromCrossrefMessage(body.message);

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { getConfigDir, getLibraryRootAbs, getProjectsRootAbs, loadConfig, tryParseAppConfig } from "../../server/src/config.js";
+import { getConfigDir, getLibraryRootAbs, getProjectsRootAbs, getRepoRoot, loadConfig, tryParseAppConfig } from "../../server/src/config.js";
 import { compileProjectAtRoot } from "../../server/src/services/compiler.js";
 import { commandExists, installHint, nodeMajor, type ToolId } from "./deps.js";
 import {
@@ -211,8 +211,48 @@ export async function runChecks(opts: { smoke?: boolean } = {}): Promise<CheckRe
         "Install Node.js 20 or newer from https://nodejs.org/",
       ),
     );
+  } else if (nodeMajor() === 20) {
+    checks.push(
+      fail(
+        "node-version",
+        "warning",
+        `Node ${process.version} runs, and Node 22 is the version this release is tested with.`,
+        "A future release may require Node 22.",
+        "Install Node.js 22 from https://nodejs.org/ when you can. .nvmrc in this repo is 22.",
+      ),
+    );
   } else {
     checks.push(pass("node-version", `Node ${process.version} meets the requirement.`));
+  }
+
+  const libraryAbs = path.resolve(getLibraryRootAbs());
+  const repoAbs = path.resolve(getRepoRoot());
+  if (libraryAbs === repoAbs || libraryAbs.startsWith(repoAbs + path.sep)) {
+    checks.push(
+      fail(
+        "library-location",
+        "warning",
+        "Library is inside the app folder; move it with openleaf setup --library-dir …",
+        "Updating the app with git can sit next to your papers.",
+        "Choose a library folder outside this checkout.",
+      ),
+    );
+  } else {
+    checks.push(pass("library-location", "The citation library is outside the app folder."));
+  }
+
+  if (loadConfig().lanAuth === "open") {
+    checks.push(
+      fail(
+        "lan-auth",
+        "warning",
+        "LAN devices are treated as the owner (lanAuth is open).",
+        "Anyone who can reach this port can edit projects.",
+        "Set lanAuth to device in config/local.json so phones must pair.",
+      ),
+    );
+  } else {
+    checks.push(pass("lan-auth", "Phones and other LAN devices must pair before they can edit."));
   }
 
   const engine = (loadConfig().latex.engine ?? "pdflatex") as ToolId;

@@ -1,7 +1,7 @@
 import type { IncomingMessage } from "node:http";
 import type { NextFunction, Request, Response } from "express";
 import { isAiGatewayHost } from "./aiGateway.js";
-import { verifyHostCookie } from "./hostAuth.js";
+import { hostCookieHeader, requestIsHttps, verifyHostCookie } from "./hostAuth.js";
 import { isHostGatewayHost } from "./hostGateway.js";
 import { isGuestForbiddenWritePath } from "./projectFs.js";
 import {
@@ -257,6 +257,9 @@ export function shareGate(req: Request, res: Response, next: NextFunction): void
     }
     const device = verifyHostCookie(req);
     if (device) {
+      if (device.refreshedToken) {
+        res.setHeader("Set-Cookie", hostCookieHeader(device.refreshedToken, requestIsHttps(req)));
+      }
       req.access = { mode: "host", remote: true };
       next();
       return;
@@ -291,6 +294,9 @@ export function shareGate(req: Request, res: Response, next: NextFunction): void
     if (!host) {
       res.status(401).json({ error: "Sign in required", code: "HOST_AUTH" });
       return;
+    }
+    if (host.refreshedToken) {
+      res.setHeader("Set-Cookie", hostCookieHeader(host.refreshedToken, requestIsHttps(req)));
     }
     req.access = { mode: "host", remote: true };
     next();

@@ -1,10 +1,13 @@
 import { useState, type FormEvent } from "react";
+import { useSearchParams } from "react-router-dom";
 import { hostLogin } from "../api/share";
 import { ThemePicker } from "../components/ThemeToggle";
 import { useSession } from "../session/SessionContext";
 
 export function HostLogin() {
   const { refresh } = useSession();
+  const [params] = useSearchParams();
+  const pairInvalid = params.get("pair") === "invalid";
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -38,9 +41,15 @@ export function HostLogin() {
         <p className="guest-kicker">Host access</p>
         <h1>Sign in to OpenLeaf</h1>
         <p className="guest-lead">
-          This is the public link to the editor running on your machine. Enter the host password to
-          open projects from this phone or another computer.
+          Scan the QR code from OpenLeaf on your computer (Open on your phone), or sign in with the host
+          password.
         </p>
+        {pairInvalid && (
+          <div className="error-banner guest-error">
+            This link has expired or was already used. On your computer, open OpenLeaf → Open on your phone →
+            New link.
+          </div>
+        )}
 
         <label className="guest-field">
           <span>Username</span>

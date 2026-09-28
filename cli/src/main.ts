@@ -41,6 +41,7 @@ Setup flags:
   --display-name NAME
   --projects-dir PATH
   --access localhost|lan|remote
+  --library-dir PATH           Citation library (default: a library folder next to the projects folder)
   --host-username NAME
   --password-stdin
   --non-interactive
@@ -135,6 +136,7 @@ async function cmdSetup(flags: Map<string, string | true>): Promise<number> {
   }
 
   let projectsDir = flagString(flags, "projects-dir");
+  const libraryDir = flagString(flags, "library-dir");
   if (!projectsDir && !existing) {
     const suggested = path.join(os.homedir(), "OpenLeaf", "projects");
     if (auto) projectsDir = suggested;
@@ -148,6 +150,9 @@ async function cmdSetup(flags: Map<string, string | true>): Promise<number> {
   if (!access && !existing) {
     if (auto) access = "localhost";
     else {
+      out("localhost — only this computer.");
+      out("lan — other devices on your Wi-Fi. Each phone is paired from Open on your phone.");
+      out("remote — a public link. You sign in with the host password.");
       const answer = ((await promptLine("Access: localhost, lan, or remote", "localhost")) || "localhost").toLowerCase();
       if (!["localhost", "lan", "remote"].includes(answer)) throw new CliError("Access must be localhost, lan, or remote.", 2);
       access = answer as AccessMode;
@@ -176,6 +181,7 @@ async function cmdSetup(flags: Map<string, string | true>): Promise<number> {
       displayName,
       updateIdentity,
       projectsDir,
+      libraryDir,
       access,
       hostUsername,
       hostPassword,

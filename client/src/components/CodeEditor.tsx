@@ -1,9 +1,9 @@
 import Editor, { type BeforeMount, type OnMount } from "@monaco-editor/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { editor as monacoEditor, type editor } from "monaco-editor";
+import { editor as monacoEditor, type editor } from "monaco-editor/esm/vs/editor/editor.api";
 import type { Awareness } from "y-protocols/awareness";
 import type * as Y from "yjs";
-import { bindYTextToMonaco, type YMonacoBinding } from "../collab/bindYTextToMonaco";
+import { bindYTextToMonaco, sealModelUndo, type YMonacoBinding } from "../collab/bindYTextToMonaco";
 import {
   BIBTEX_LANGUAGE,
   LATEX_LANGUAGE,
@@ -768,6 +768,7 @@ export function CodeEditor({
     const binding = bindYTextToMonaco(yText, model, new Set([ed]), awareness ?? undefined);
     bindingRef.current = binding;
     forceModelLf(model, monacoApi);
+    sealModelUndo(model);
 
     // Web fonts (JetBrains Mono) load async. Until glyph metrics match what Monaco
     // measured at mount, the painted caret x-position drifts from the click target.

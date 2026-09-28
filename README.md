@@ -6,6 +6,18 @@
 
 # OpenLeaf
 
+```bash
+git clone https://github.com/neoyinzhanghan/OpenLeaf.git
+cd OpenLeaf
+npm ci
+node cli/bin/openleaf.js setup --non-interactive --display-name "Your Name"
+node cli/bin/openleaf.js open
+```
+
+On the project list, **Open on your phone** makes a one-time link. Same Wi-Fi is the default when a LAN address exists; each phone is paired. From anywhere starts a tunnel only when you ask. Update with `git pull && npm ci && node cli/bin/openleaf.js restart`, and run `npm run build` when `openleaf doctor` says the editor build is stale.
+
+Loopback on this computer is the owner. Other devices need a paired session (`lanAuth` defaults to `device`). A public tunnel uses the host password or a pairing link.
+
 ## Overview
 
 OpenLeaf is a **local-first LaTeX editor built for hackers and AI**.
@@ -34,7 +46,7 @@ OpenLeaf is for trusted local or LAN use. Localhost does not ask you to sign in.
 
 ## Prerequisites
 
-Node.js 20 or newer, from [nodejs.org](https://nodejs.org/). Git is needed for per-project history. A TeX install must provide `pdflatex` and `bibtex`. `latexmk` is recommended. `latexdiff` is optional and is only used for track-changes PDFs.
+Node.js 20 or newer, from [nodejs.org](https://nodejs.org/). Node 22 is what this release is tested with (see `.nvmrc`). Prefer `npm ci` over `npm install` so the lockfile is the install. Git is needed for per-project history. A TeX install must provide `pdflatex` and `bibtex`. `latexmk` is recommended. `latexdiff` is optional and is only used for track-changes PDFs.
 
 OpenLeaf looks for TeX in the usual install locations even when a GUI shell does not put them on `PATH` (MacTeX, Homebrew, MiKTeX, TeX Live, TinyTeX). Setup and `openleaf doctor` print the install step for the computer you are on. They do not run the installer for you.
 

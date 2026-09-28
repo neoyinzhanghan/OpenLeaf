@@ -647,7 +647,7 @@ export function LibraryPanel({
             title="AI literature review table"
             onClick={() => (viewMode === "litreview" ? setViewMode("browse") : seedLitReviewFromLibrary())}
           >
-            Review
+            Lit review
           </button>
           {projectId ? (
             <button
@@ -693,8 +693,8 @@ export function LibraryPanel({
           >
             Review{aiPendingCount ? ` (${aiPendingCount})` : ""}
           </button>
-          <button type="button" className="btn btn-ghost btn-icon" title="Import" onClick={() => setImportOpen((v) => !v)}>
-            +
+          <button type="button" className="btn btn-primary" onClick={() => setImportOpen((v) => !v)}>
+            Add paper
           </button>
           {!isPage ? (
             <button type="button" className="btn btn-ghost btn-icon" title="Close" onClick={onClose}>
@@ -1101,7 +1101,14 @@ export function LibraryPanel({
               </li>
             );
           })}
-          {!papers.length ? <li className="library-empty">No papers yet — import a link or BibTeX.</li> : null}
+          {!papers.length ? (
+            <li className="library-empty">
+              No papers yet.
+              <button type="button" className="btn btn-primary" onClick={() => setImportOpen(true)}>
+                Add paper
+              </button>
+            </li>
+          ) : null}
         </ul>
 
         <div className="library-detail">
@@ -1204,7 +1211,7 @@ export function LibraryPanel({
                 {selected.url ? (
                   <p>
                     <a href={selected.url} target="_blank" rel="noreferrer">
-                      {selected.url}
+                      {/scholar\.google\./i.test(selected.url) ? "Search on Google Scholar" : selected.url}
                     </a>
                   </p>
                 ) : null}
@@ -1355,7 +1362,7 @@ export function LibraryPanel({
                   <p className="muted">
                     Verified via link:{" "}
                     <a href={selected.url} target="_blank" rel="noreferrer">
-                      {selected.url}
+                      {/scholar\.google\./i.test(selected.url) ? "Search on Google Scholar" : selected.url}
                     </a>
                   </p>
                 ) : null}

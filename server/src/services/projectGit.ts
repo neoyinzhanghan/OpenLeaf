@@ -94,6 +94,15 @@ export async function readCommitText(
   return result.stdout;
 }
 
+/** Commit a snapshot when the project has no commits yet. */
+export async function ensureInitialSnapshot(id: string): Promise<void> {
+  if (!isGitEnabled()) return;
+  await ensureProjectGit(id);
+  const head = await runGit(id, ["rev-parse", "--verify", "HEAD"], { allowFailure: true });
+  if (head.code === 0) return;
+  await autoCommitProject(id, { message: "Initial project snapshot" });
+}
+
 /** Ensure the project is a git repo with a sensible .gitignore. */
 export async function ensureProjectGit(id: string): Promise<void> {
   const root = projectDir(id);

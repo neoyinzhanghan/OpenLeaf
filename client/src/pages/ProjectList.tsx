@@ -1,14 +1,24 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { createProject, listProjects } from "../api/client";
 import { hostGateway, hostLogout, type HostGatewayView } from "../api/share";
 import type { ProjectMeta } from "../api/types";
+import { HostAccessPanel } from "../components/HostAccessPanel";
 import { ThemePicker } from "../components/ThemeToggle";
-import { copyText } from "../lib/clipboard";
 import { useSession } from "../session/SessionContext";
+
+function slugifyProjectId(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+}
 
 export function ProjectList() {
   const { session, refresh } = useSession();
+  const [params] = useSearchParams();
   const remoteHost = session.kind === "host" && session.remote;
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
   const [name, setName] = useState("");
@@ -16,7 +26,8 @@ export function ProjectList() {
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [gateway, setGateway] = useState<HostGatewayView | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [phoneOpen, setPhoneOpen] = useState(false);
+  const slug = slugifyProjectId(name);
 
   const refreshProjects = async () => {
     setProjects(await listProjects());
@@ -58,7 +69,7 @@ export function ProjectList() {
 
   const onCreate = async (e: FormEvent) => {
     e.preventDefault();
-    const id = name.trim();
+    const id = slugifyProjectId(name);
     if (!id) return;
     setBusy(true);
     setError(null);
@@ -72,8 +83,6 @@ export function ProjectList() {
       setBusy(false);
     }
   };
-
-  const publicUrl = gateway && !gateway.localOnly && gateway.url ? gateway.url : null;
 
   return (
     <div className="app-shell">
@@ -108,6 +117,12 @@ export function ProjectList() {
       </header>
       <main className="home">
         <h1>Projects</h1>
+        {params.get("pair") === "invalid" && (
+          <div className="error-banner">
+            This link has expired or was already used. On your computer, open OpenLeaf → Open on your phone → New
+            link.
+          </div>
+        )}
         <p className="home-lead">
           Local folders with a main <code>.tex</code>, bibliography, and figures — edit and compile side by side.
           Your personal reference collection lives separately in{" "}
@@ -121,45 +136,16 @@ export function ProjectList() {
           </div>
         )}
 
-        {!remoteHost && publicUrl && (
+        {!remoteHost && (
           <div className="host-gateway-card">
             <p className="guest-kicker">Open on your phone</p>
-            <p>
-              Persistent Cloudflare URL for this machine. Sign in as <strong>admin</strong> with the host
-              password. The address changes if OpenLeaf or the tunnel restarts.
-            </p>
-            <div className="host-gateway-url-row">
-              <code className="host-gateway-url">{publicUrl}</code>
-              <button
-                type="button"
-                className="btn btn-quiet"
-                onClick={() => {
-                  void copyText(publicUrl).then((ok) => {
-                    if (!ok) {
-                      setError("Could not copy the URL — select it and copy manually");
-                      return;
-                    }
-                    setCopied(true);
-                    window.setTimeout(() => setCopied(false), 1600);
-                  });
-                }}
-              >
-                {copied ? "Copied" : "Copy"}
-              </button>
-            </div>
-            {gateway && !gateway.dnsReady && (
-              <p className="home-actions-hint">DNS is still propagating — wait a few seconds, then open it.</p>
-            )}
-          </div>
-        )}
-
-        {!remoteHost && gateway?.localOnly && (
-          <div className="host-gateway-card">
-            <p className="guest-kicker">Phone access</p>
-            <p>
-              No public Cloudflare tunnel yet. Install <code>cloudflared</code> on this machine, then restart
-              OpenLeaf to get a link you can open on your phone.
-            </p>
+            <p>Same Wi-Fi uses a one-time link. From anywhere starts a tunnel only when you ask for it.</p>
+            <button type="button" className="btn btn-primary" onClick={() => setPhoneOpen(true)}>
+              Open on your phone
+            </button>
+            {gateway?.url && !gateway.localOnly ? (
+              <p className="home-actions-hint">A remote tunnel is already running. The phone dialog can reuse it.</p>
+            ) : null}
           </div>
         )}
 
@@ -167,19 +153,23 @@ export function ProjectList() {
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="methods-draft"
-            pattern="[a-zA-Z0-9._-]+"
-            title="Letters, numbers, dots, underscores, hyphens"
-            aria-label="New project id"
+            placeholder="My first paper"
+            aria-label="New project name"
           />
-          <button className="btn btn-primary" type="submit" disabled={busy || !name.trim()}>
+          <button className="btn btn-primary" type="submit" disabled={busy || !slug}>
             {busy ? "Creating…" : "Create from example"}
           </button>
         </form>
+        {name.trim() && slug ? (
+          <p className="home-actions-hint">
+            Project id: <code>{slug}</code>
+          </p>
+        ) : null}
         <p className="home-actions-hint">
-          Seeds a starter article you can rename and rewrite. Id: letters, numbers, <code>.</code> <code>_</code>{" "}
-          <code>-</code>.
+          Seeds a starter article you can rename and rewrite. The name becomes a project id of letters, numbers,{" "}
+          <code>.</code> <code>_</code> and <code>-</code>.
         </p>
+        {!remoteHost && <HostAccessPanel open={phoneOpen} onClose={() => setPhoneOpen(false)} />}
 
         {error && <div className="error-banner">{error}</div>}
 

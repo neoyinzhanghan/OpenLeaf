@@ -118,8 +118,17 @@ export type FilePayload = {
   contentOmitted?: boolean;
 };
 
+export type TexIssue = {
+  severity: "error" | "warning" | "info";
+  file: string | null;
+  line: number | null;
+  message: string;
+};
+
 export type CompileResult = {
   ok: boolean;
+  pdfUpdated?: boolean;
+  issues?: TexIssue[];
   engine: LatexEngine;
   usedLatexmk: boolean;
   log: string;

@@ -49,6 +49,7 @@ import { AiSuggestionCard } from "../components/AiSuggestionCard";
 import { isAiBranch } from "../components/timelineLayout";
 import { MergePanel } from "../components/MergePanel";
 import { PdfViewer, type PdfDiffOverlay, type PdfHighlight } from "../components/PdfViewer";
+import { HostAccessPanel } from "../components/HostAccessPanel";
 import { SharePanel } from "../components/SharePanel";
 import { SplitPane } from "../components/SplitPane";
 import { ThemePicker } from "../components/ThemeToggle";
@@ -241,6 +242,7 @@ export function EditorPage() {
   const [project, setProject] = useState<ProjectMeta | null>(null);
   const collab = useProjectCollab(project?.id === id ? id || undefined : undefined, guestIdentity, branchId);
   const [shareOpen, setShareOpen] = useState(false);
+  const [phoneOpen, setPhoneOpen] = useState(false);
   const [aiLinksOpen, setAiLinksOpen] = useState(false);
   const [shareActive, setShareActive] = useState(false);
   const [shareCount, setShareCount] = useState(0);
@@ -300,9 +302,9 @@ export function EditorPage() {
     base64: string;
   } | null>(null);
   const [log, setLog] = useState("");
-  const [logOpen, setLogOpen] = useState(() =>
-    typeof window === "undefined" ? true : !window.matchMedia("(max-width: 720px)").matches,
-  );
+  const [compileIssues, setCompileIssues] = useState<import("./../api/types").TexIssue[]>([]);
+  const [stalePdf, setStalePdf] = useState(false);
+  const [logOpen, setLogOpen] = useState(false);
   const [status, setStatus] = useState<Status>("idle");
   const [pdfBust, setPdfBust] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -357,7 +359,7 @@ export function EditorPage() {
     maxHeight: number;
   } | null>(null);
 
-  const closeOverlappingChrome = useCallback((keep?: "history" | "comments" | "ai" | "share" | "aiLinks" | "library") => {
+  const closeOverlappingChrome = useCallback((keep?: "history" | "comments" | "ai" | "share" | "aiLinks" | "library" | "phone") => {
     setToolbarMoreOpen(false);
     if (keep !== "history") setHistoryOpen(false);
     if (keep !== "comments") setCommentsOpen(false);
@@ -365,6 +367,7 @@ export function EditorPage() {
     if (keep !== "share") setShareOpen(false);
     if (keep !== "aiLinks") setAiLinksOpen(false);
     if (keep !== "library") setLibraryOpen(false);
+    if (keep !== "phone") setPhoneOpen(false);
   }, []);
   const [commitBusy, setCommitBusy] = useState(false);
   const [commentDraft, setCommentDraft] = useState<CommentDraft | null>(null);
@@ -1103,14 +1106,19 @@ export function EditorPage() {
       );
       if (!stillHere()) return false;
       setLog((prev) => prev || result.log);
+      const issues = result.issues ?? [];
+      setCompileIssues(issues);
+      const errorCount = issues.filter((issue) => issue.severity === "error").length;
       if (result.ok) {
+        setStalePdf(false);
         setStatus("ok");
         setPdfBust(Date.now());
         await refreshTree();
         return true;
       }
+      setStalePdf(Boolean(result.pdfRelative));
       setStatus("err");
-      if (opts?.auto) setLogOpen(true);
+      if (errorCount > 0 || !opts?.auto) setLogOpen(true);
       return false;
     } catch (err) {
       if (!stillHere()) return false;
@@ -2187,6 +2195,15 @@ export function EditorPage() {
             >
               {statusLabel}
             </span>
+            {compileIssues.some((issue) => issue.severity === "error") && (
+              <button
+                type="button"
+                className="status-pill err"
+                onClick={() => setLogOpen(true)}
+              >
+                {compileIssues.filter((issue) => issue.severity === "error").length} errors
+              </button>
+            )}
             {editMode === "base64" && <span className="status-pill warn">base64</span>}
             {readOnly && <span className="status-pill warn">read-only</span>}
           </div>
@@ -2553,6 +2570,19 @@ export function EditorPage() {
                     role="menuitem"
                     onClick={() => {
                       setToolbarMoreOpen(false);
+                      closeOverlappingChrome("phone");
+                      setPhoneOpen(true);
+                    }}
+                  >
+                    Open on your phone
+                  </button>
+                )}
+                {!isGuest && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setToolbarMoreOpen(false);
                       closeOverlappingChrome("share");
                       setShareOpen(true);
                     }}
@@ -2686,6 +2716,9 @@ export function EditorPage() {
           onActiveChange={onShareStatus}
           onTimelineChange={onTimelineChange}
         />
+      )}
+      {!isGuest && id && (
+        <HostAccessPanel open={phoneOpen} onClose={() => setPhoneOpen(false)} nextPath={`/p/${encodeURIComponent(id)}`} />
       )}
 
       {(!isGuest || !readOnly) && (
@@ -2988,6 +3021,8 @@ export function EditorPage() {
                   onCommentAt={(page, x, y) => void onPdfComment(page, x, y)}
                   highlight={pdfHighlight}
                   overlays={diffOn && !trackChangesPreviewOn ? diffBoxes : undefined}
+                  projectId={id}
+                  staleBanner={stalePdf ? "Showing the last successful PDF" : null}
                   diffHighlight={
                     config?.git?.enabled === false
                       ? null
@@ -3022,7 +3057,12 @@ export function EditorPage() {
             log={log}
             open={logOpen}
             onToggle={() => setLogOpen((v) => !v)}
-            height={narrow ? 140 : 180}
+            height={narrow ? 220 : 220}
+            issues={compileIssues}
+            onJump={(issue) => {
+              if (!issue.file || !issue.line) return;
+              jumpToAnchor({ file: issue.file, line: issue.line, column: 1 });
+            }}
           />
         )}
         {narrow && (

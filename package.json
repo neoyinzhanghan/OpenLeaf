@@ -24,9 +24,11 @@
     "start": "npm run start -w server",
     "openleaf": "node cli/bin/openleaf.js",
     "typecheck": "npm run typecheck -w server && npm run typecheck -w client && npm run typecheck -w cli",
-    "test": "node scripts/test-all.mjs"
+    "test": "node scripts/test-all.mjs",
+    "e2e": "playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "concurrently": "^9.1.2"
   },
   "engines": {

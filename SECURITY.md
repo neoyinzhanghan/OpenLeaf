@@ -2,7 +2,7 @@
 
 ## What OpenLeaf is (and is not)
 
-OpenLeaf is a **local-first** LaTeX editor. On the local / LAN port there is **no host login**: anyone who can reach that port can read and write projects and trigger compiles. Public access is meant to go through the **Share** / host-gateway flows (Cloudflare Quick Tunnel + credentials), not by port-forwarding `:8787` or `:5173`.
+OpenLeaf is a **local-first** LaTeX editor. The owner is a request whose socket and Host are both loopback. Other devices, including phones on the same Wi-Fi, need a paired device session unless `lanAuth` is set to `open`. Public access uses a one-time pairing link or the host password on a tunnel you start yourself. Do not port-forward the editor.
 
 ## Data security disclaimer
 
@@ -26,6 +26,7 @@ These paths are gitignored and must stay local to each deploy:
 | Path | Contents |
 |------|----------|
 | `config/host-auth.json` | Host password hash + cookie HMAC secret |
+| `config/host-devices.json` | Paired device sessions |
 | `config/host-credentials.txt` | Bootstrap username / password / public URL (operator file) |
 | `config/host-gateway.json` | Live Cloudflare tunnel URL |
 | `config/local.json` | Runtime config overrides |
@@ -35,6 +36,12 @@ These paths are gitignored and must stay local to each deploy:
 Also never commit API tokens, share-session credentials, AI collaborator bearer tokens, private keys, or real Cloudflare Quick Tunnel hostnames from a live machine.
 
 If you accidentally commit a secret, rotate it immediately (delete the relevant `config/host-*` files and restart to regenerate host login; end any live share / AI sessions) and treat the old value as burned — rewriting git history may still be needed if the repo was pushed.
+
+## Compiles and the browser
+
+Project `latexmkrc` files are not loaded unless `latex.allowProjectLatexmkrc` is true, and they stay off while a share or AI link is live on that project. Paranoid TeX file access is on by default (`openin_any=p`, `openout_any=p`, restricted shell escape). Compiles never pass `-shell-escape`.
+
+The API does not send a global CORS header. Bearer clients may call `/api/ai/` and `/api/library-ai/v1` from another origin without cookies. Other state-changing requests must come from the page's own origin. WebSocket upgrades use the same host and origin checks. A `Host` header that is not this machine is rejected.
 
 ## Reporting a vulnerability
 

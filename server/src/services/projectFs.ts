@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   getDefaultIdentities,
   getProjectsRootAbs,
+  getRepoRoot,
   loadConfig,
   type Identity,
   type LatexEngine,
@@ -539,14 +540,26 @@ export async function createEmptyFile(
   await fs.writeFile(full, content, "utf8");
 }
 
+function resolveTemplateDir(fromTemplate: string): string | null {
+  const candidates = [
+    path.join(getProjectsRootAbs(), fromTemplate),
+    path.join(getRepoRoot(), "projects", fromTemplate),
+    path.join(getRepoRoot(), "templates", fromTemplate),
+  ];
+  for (const dir of candidates) {
+    if (fsSync.existsSync(dir) && fsSync.statSync(dir).isDirectory()) return dir;
+  }
+  return null;
+}
+
 export async function createProject(id: string, fromTemplate = "example-article"): Promise<ProjectMeta> {
   assertSafeProjectId(id);
   const dest = projectDir(id);
   if (fsSync.existsSync(dest)) {
     throw Object.assign(new Error("Project already exists"), { status: 409 });
   }
-  const templateDir = path.join(getProjectsRootAbs(), fromTemplate);
-  if (!fsSync.existsSync(templateDir)) {
+  const templateDir = resolveTemplateDir(fromTemplate);
+  if (!templateDir) {
     await fs.mkdir(dest, { recursive: true });
     await fs.mkdir(path.join(dest, "figures"), { recursive: true });
     await fs.writeFile(
@@ -570,15 +583,7 @@ export async function createProject(id: string, fromTemplate = "example-article"
     );
   } else {
     await copyDir(templateDir, dest);
-    // Ensure identities exist on copied projects
-    try {
-      const cfg = await readProjectConfig(id);
-      if (!cfg.identities || cfg.identities.length === 0) {
-        await writeProjectConfig(id, { identities: defaultProjectIdentities() });
-      }
-    } catch {
-      /* ignore */
-    }
+    await writeProjectConfig(id, { identities: defaultProjectIdentities() });
   }
   // Initialize per-project git backup repo with an initial snapshot
   try {

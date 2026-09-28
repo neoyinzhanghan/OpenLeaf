@@ -52,6 +52,18 @@ function parseAuthors(authorField: string): Array<{ given: string; family: strin
     });
 }
 
+function arxivIdFromBibFields(fields: Record<string, string>, urlFromHow: string | null): string | null {
+  if (fields.arxiv?.trim()) return fields.arxiv.trim();
+  const eprint = fields.eprint?.trim();
+  const prefix = `${fields.archiveprefix ?? ""} ${fields.eprinttype ?? ""}`.toLowerCase();
+  if (eprint && (prefix.includes("arxiv") || /arxiv/i.test(eprint) || /^\d{4}\.\d{4,5}(v\d+)?$/i.test(eprint))) {
+    return eprint.replace(/^arxiv:/i, "");
+  }
+  const url = fields.url || urlFromHow || "";
+  const fromUrl = url.match(/arxiv\.org\/(?:abs|pdf)\/([^/?#]+)/i)?.[1];
+  return fromUrl ? fromUrl.replace(/\.pdf$/i, "") : null;
+}
+
 export function bibEntryToCreateInput(entry: BibEntry): CreatePaperInput {
   const f = entry.fields;
   const yearRaw = f.year ? Number(f.year.slice(0, 4)) : null;
@@ -68,7 +80,7 @@ export function bibEntryToCreateInput(entry: BibEntry): CreatePaperInput {
     venue: f.journal || f.booktitle || f.publisher || "",
     abstract: f.abstract || "",
     doi: f.doi ? f.doi.replace(/^https?:\/\/(dx\.)?doi\.org\//i, "") : null,
-    arxivId: f.eprint && /arxiv/i.test(f.archiveprefix ?? f.eprint ?? "") ? f.eprint : f.arxiv ?? null,
+    arxivId: arxivIdFromBibFields(f, urlFromHow),
     url: f.url || urlFromHow,
     notes: "",
     tags: [],

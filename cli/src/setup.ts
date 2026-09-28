@@ -2,7 +2,9 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import {
+  getLibraryRootAbs,
   getProjectsRootAbs,
+  getRepoRoot,
   identityFromDisplayName,
   loadConfig,
   patchConfig,
@@ -21,6 +23,7 @@ export type SetupRequest = {
   /** When true, write displayName into the seed identity. Existing projects are not rewritten. */
   updateIdentity: boolean;
   projectsDir?: string;
+  libraryDir?: string;
   access?: AccessMode;
   hostUsername?: string;
   hostPassword?: string;
@@ -57,7 +60,13 @@ function runNpmBuild(repoRoot: string): Promise<void> {
   });
 }
 
-function ensureWelcome(displayName: string | undefined): { created: boolean; id: string } {
+function libraryInsideCheckoutHasPapers(): boolean {
+  const inside = path.join(getRepoRoot(), "library", "papers");
+  if (!fs.existsSync(inside)) return false;
+  return fs.readdirSync(inside).some((name) => !name.startsWith("."));
+}
+
+async function ensureWelcome(displayName: string | undefined): Promise<{ created: boolean; id: string }> {
   const root = getProjectsRootAbs();
   fs.mkdirSync(root, { recursive: true });
   const dir = path.join(root, WELCOME_ID);
@@ -76,6 +85,13 @@ function ensureWelcome(displayName: string | undefined): { created: boolean; id:
     path.join(dir, "openleaf.json"),
     `${JSON.stringify({ mainFile: "main.tex", identities: [identity] }, null, 2)}\n`,
   );
+  try {
+    const { ensureProjectGit, autoCommitProject } = await import("../../server/src/services/projectGit.js");
+    await ensureProjectGit(WELCOME_ID);
+    await autoCommitProject(WELCOME_ID, { message: "Initial project snapshot" });
+  } catch {
+    /* git is optional; doctor reports it */
+  }
   return { created: true, id: WELCOME_ID };
 }
 
@@ -94,6 +110,15 @@ export async function runSetup(request: SetupRequest, repoRoot: string): Promise
   if (Object.keys(user).length) patch.user = user;
 
   if (request.projectsDir) patch.projectsRoot = request.projectsDir;
+  if (request.libraryDir) {
+    patch.libraryRoot = request.libraryDir;
+  } else if (request.projectsDir && !request.existing) {
+    if (libraryInsideCheckoutHasPapers()) {
+      notes.push("Library is inside the app folder; move it with openleaf setup --library-dir …");
+    } else {
+      patch.libraryRoot = path.join(path.dirname(path.resolve(request.projectsDir)), "library");
+    }
+  }
   if (request.access) {
     patch.access = request.access;
     if (request.access === "lan") patch.host = "0.0.0.0";
@@ -102,6 +127,9 @@ export async function runSetup(request: SetupRequest, repoRoot: string): Promise
     patch.access = "localhost";
     patch.host = "127.0.0.1";
     notes.push("Bound to localhost only. Re-run openleaf setup to enable LAN or a public link.");
+  }
+  if (request.access === "lan") {
+    notes.push("Phones on the same Wi-Fi must be paired. In OpenLeaf choose Open on your phone.");
   }
 
   if (Object.keys(patch).length) patchConfig(patch);
@@ -127,7 +155,8 @@ export async function runSetup(request: SetupRequest, repoRoot: string): Promise
     }
   }
 
-  const welcome = ensureWelcome(cfg.user.displayName);
+  const welcome = await ensureWelcome(cfg.user.displayName);
+  notes.push(`Library: ${request.libraryDir ? path.resolve(request.libraryDir) : getLibraryRootAbs()}`);
   notes.push(
     welcome.created
       ? `Created sample project ${welcome.id}.`

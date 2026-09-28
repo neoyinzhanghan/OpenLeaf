@@ -4352,6 +4352,132 @@ button.lib-badge:hover {
   line-height: 1.45;
 }
 
+.host-access-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: color-mix(in srgb, var(--ink) 35%, transparent);
+}
+
+.host-access-modal {
+  width: min(32rem, 100%);
+  max-height: min(90vh, 48rem);
+  overflow: auto;
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem;
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+}
+
+.host-access-head,
+.host-access-actions,
+.host-access-routes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.host-access-head {
+  justify-content: space-between;
+}
+
+.host-access-head h2,
+.host-access-modal h3 {
+  margin: 0;
+}
+
+.host-access-note,
+.host-access-link p {
+  margin: 0;
+  color: var(--ink-muted);
+}
+
+.host-access-link code,
+.host-access-password {
+  display: block;
+  overflow-wrap: anywhere;
+  padding: 0.45rem 0.6rem;
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.host-access-qr svg {
+  width: min(240px, 100%);
+  height: auto;
+  background: white;
+}
+
+.host-access-devices {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.host-access-devices li {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.host-access-field,
+.host-access-check {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.host-access-modal .btn,
+.host-access-modal input,
+.host-access-modal select {
+  min-height: 44px;
+}
+
+.compile-issues {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0 0 0.5rem;
+  padding: 0;
+  list-style: none;
+}
+
+.compile-issue {
+  text-align: left;
+  min-height: 44px;
+  padding: 0.4rem 0.55rem;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.compile-issue.is-error {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--line));
+}
+
+.pdf-stale-banner {
+  margin: 0;
+  padding: 0.45rem 0.75rem;
+  background: color-mix(in srgb, var(--danger) 12%, var(--bg-elevated));
+  color: var(--danger);
+  font-size: 0.85rem;
+}
+
+@media (max-width: 800px) {
+  .library-page .btn,
+  .library-page .btn-icon,
+  .history-drawer-actions .btn {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
 .host-gateway-url-row {
   display: flex;
   flex-wrap: wrap;

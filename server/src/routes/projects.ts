@@ -22,6 +22,7 @@ import {
 } from "../services/comments.js";
 import {
   autoCommitProject,
+  ensureInitialSnapshot,
   listProjectCommits,
   restoreProjectCommit,
   type GitAuthor,
@@ -163,6 +164,7 @@ projectsRouter.post("/", async (req, res) => {
 
 projectsRouter.get("/:id", async (req, res) => {
   try {
+    await ensureInitialSnapshot(req.params.id);
     res.json(await getProject(req.params.id));
   } catch (err) {
     res.status(statusOf(err)).json({ error: publicErrorMessage(err) });

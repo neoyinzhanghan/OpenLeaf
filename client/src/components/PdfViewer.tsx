@@ -121,6 +121,10 @@ type Props = {
   onAnnotationClick?: (id: string) => void;
   onVisiblePageChange?: (page: number) => void;
   diffHighlight?: PdfDiffHighlightControls | null;
+  /** Remembered zoom is per project. Narrow screens always fit the page width. */
+  projectId?: string;
+  /** Shown when this build failed but an older PDF is still on screen. */
+  staleBanner?: string | null;
 };
 
 type ScrollAnchor = {
@@ -132,6 +136,16 @@ type ScrollAnchor = {
 function clampScale(scale: number): number {
   const stepped = Math.round(scale / SCALE_STEP) * SCALE_STEP;
   return Math.min(MAX_SCALE, Math.max(MIN_SCALE, Number(stepped.toFixed(1))));
+}
+
+function scaleStorageKey(projectId: string): string {
+  return `openleaf.pdfScale.${projectId}`;
+}
+
+function fitWidthScale(pageWidth: number, scroller: HTMLElement | null): number {
+  const available = Math.max(200, (scroller?.clientWidth ?? 640) - 28);
+  if (pageWidth <= 0) return 1;
+  return clampScale(available / pageWidth);
 }
 
 function captureScrollAnchor(scroller: HTMLElement, container: HTMLElement): ScrollAnchor | null {
@@ -194,6 +208,8 @@ export function PdfViewer({
   onAnnotationClick,
   onVisiblePageChange,
   diffHighlight,
+  projectId,
+  staleBanner,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -210,14 +226,15 @@ export function PdfViewer({
   const visiblePageRef = useRef(onVisiblePageChange);
   visiblePageRef.current = onVisiblePageChange;
   const docRef = useRef<PDFDocumentProxy | null>(null);
-  const scaleRef = useRef(1.2);
-  const renderedScaleRef = useRef(1.2);
+  const scaleRef = useRef(1);
+  const renderedScaleRef = useRef(1);
+  const fittedRef = useRef(false);
   const scrolledFlashNonceRef = useRef<number | null>(null);
   const pageSizesRef = useRef<Array<{ width: number; height: number }>>([]);
   const paintTokenRef = useRef(0);
 
   const [pageCount, setPageCount] = useState(0);
-  const [scale, setScale] = useState(1.2);
+  const [scale, setScale] = useState(1);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [flash, setFlash] = useState<PdfHighlight | null>(null);
@@ -227,6 +244,31 @@ export function PdfViewer({
   const [pagesReady, setPagesReady] = useState(false);
 
   scaleRef.current = scale;
+
+  useEffect(() => {
+    fittedRef.current = false;
+  }, [projectId, url]);
+
+  useEffect(() => {
+    if (pageCount < 1 || fittedRef.current) return;
+    const pageWidth = pageSizesRef.current[0]?.width ?? 0;
+    if (pageWidth <= 0) return;
+    const narrow = window.matchMedia("(max-width: 800px)").matches;
+    let next = fitWidthScale(pageWidth, scrollRef.current);
+    if (!narrow && projectId) {
+      const raw = window.localStorage.getItem(scaleStorageKey(projectId));
+      const remembered = raw ? Number(raw) : NaN;
+      if (Number.isFinite(remembered)) next = clampScale(remembered);
+    }
+    fittedRef.current = true;
+    setScale(next);
+  }, [pageCount, projectId]);
+
+  useEffect(() => {
+    if (!projectId || !fittedRef.current) return;
+    if (window.matchMedia("(max-width: 800px)").matches) return;
+    window.localStorage.setItem(scaleStorageKey(projectId), String(scale));
+  }, [projectId, scale]);
 
   /** Drop the resident PDF immediately — only one document should stay in memory. */
   const dropResidentDoc = () => {
@@ -896,6 +938,7 @@ export function PdfViewer({
       className={`pane pdf-pane${fullscreen ? " pdf-pane--fullscreen" : ""}`}
       style={{ height: "100%" }}
     >
+      {staleBanner ? <div className="pdf-stale-banner">{staleBanner}</div> : null}
       <div className="pdf-toolbar">
         <span className="pane-title" style={{ padding: 0 }}>
           PDF

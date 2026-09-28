@@ -174,6 +174,7 @@ export function FileTree({
   fileChanges = null,
 }: Props) {
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [showBuildFiles, setShowBuildFiles] = useState(false);
   const [dragOverDir, setDragOverDir] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(ancestorsOf(activePath)));
   const treeKey = nodes.map((n) => n.path).join("\0");
@@ -308,6 +309,9 @@ export function FileTree({
           <span className="status-pill warn" title="This share link is read-only">
             Read-only
           </span>
+          <button type="button" className="btn btn-ghost tree-action" onClick={() => setShowBuildFiles((v) => !v)}>
+            {showBuildFiles ? "Hide build files" : "Show build files"}
+          </button>
         </div>
       ) : (
         <div className="file-tree-actions">
@@ -329,6 +333,9 @@ export function FileTree({
               }}
             />
           </label>
+          <button type="button" className="btn btn-ghost tree-action" onClick={() => setShowBuildFiles((v) => !v)}>
+            {showBuildFiles ? "Hide build files" : "Show build files"}
+          </button>
         </div>
       )}
       <div
@@ -344,7 +351,7 @@ export function FileTree({
             <p>{readOnly ? "This share has an empty tree." : "Use New / Folder / Upload, or right-click here."}</p>
           </div>
         ) : null}
-        {nodes.map((node) => (
+        {(showBuildFiles ? nodes : nodes.filter((node) => node.path !== ".openleaf" && !node.path.startsWith(".openleaf/"))).map((node) => (
           <NodeView
             key={node.path}
             node={node}

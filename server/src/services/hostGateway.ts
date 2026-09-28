@@ -136,6 +136,7 @@ function pushLog(g: HostGateway, line: string) {
 }
 
 async function hostnameResolves(hostname: string): Promise<boolean> {
+  if (process.env.OPENLEAF_TUNNEL_SKIP_DNS === "1") return hostname.length > 0;
   try {
     const res = await fetch(
       `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(hostname)}&type=A`,
