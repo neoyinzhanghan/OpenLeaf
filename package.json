@@ -23,6 +23,7 @@
     "build": "npm run build -w server && npm run build -w client",
     "start": "npm run start -w server",
     "openleaf": "node cli/bin/openleaf.js",
+    "postinstall": "node scripts/install-cli-bin.mjs",
     "typecheck": "npm run typecheck -w server && npm run typecheck -w client && npm run typecheck -w cli",
     "test": "node scripts/test-all.mjs",
     "e2e": "playwright test"

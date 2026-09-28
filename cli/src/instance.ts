@@ -107,6 +107,92 @@ export function belongsToThisInstall(pid: number): boolean {
   return commandLineHasInstance(readCommandLineSync(pid), instanceId());
 }
 
+/** A server from this checkout, including one started by systemd rather than `openleaf start`. */
+export function commandIsCheckoutServer(cmdline: string | null, cwd: string | null): boolean {
+  if (!cmdline) return false;
+  const entry = serverEntry();
+  if (cmdline.includes(entry)) return true;
+  if (!cwd) return false;
+  if (path.resolve(cwd) !== path.resolve(getRepoRoot())) return false;
+  const rel = path.relative(getRepoRoot(), entry);
+  return rel.length > 0 && cmdline.includes(rel);
+}
+
+function processCwd(pid: number): string | null {
+  if (process.platform !== "linux") return null;
+  try {
+    return fs.readlinkSync(`/proc/${pid}/cwd`);
+  } catch {
+    return null;
+  }
+}
+
+function listenInodes(port: number): Set<string> {
+  const inodes = new Set<string>();
+  const hexPort = port.toString(16).toUpperCase().padStart(4, "0");
+  for (const file of ["/proc/net/tcp", "/proc/net/tcp6"]) {
+    let text = "";
+    try {
+      text = fs.readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    for (const line of text.split("\n").slice(1)) {
+      const parts = line.trim().split(/\s+/);
+      if (parts.length < 10) continue;
+      if (parts[3] !== "0A") continue;
+      const localPort = parts[1]?.split(":").pop()?.toUpperCase();
+      if (localPort !== hexPort) continue;
+      const inode = parts[9];
+      if (inode) inodes.add(inode);
+    }
+  }
+  return inodes;
+}
+
+function pidsForInodes(inodes: Set<string>): number[] {
+  if (inodes.size === 0 || process.platform !== "linux") return [];
+  const pids: number[] = [];
+  let names: string[] = [];
+  try {
+    names = fs.readdirSync("/proc");
+  } catch {
+    return [];
+  }
+  for (const name of names) {
+    if (!/^\d+$/.test(name)) continue;
+    const fdDir = `/proc/${name}/fd`;
+    let fds: string[] = [];
+    try {
+      fds = fs.readdirSync(fdDir);
+    } catch {
+      continue;
+    }
+    for (const fd of fds) {
+      let target = "";
+      try {
+        target = fs.readlinkSync(path.join(fdDir, fd));
+      } catch {
+        continue;
+      }
+      const match = /^socket:\[(\d+)\]$/.exec(target);
+      if (match && inodes.has(match[1]!)) {
+        pids.push(Number(name));
+        break;
+      }
+    }
+  }
+  return pids;
+}
+
+/** Pid of this checkout's server listening on `port`, or null. */
+export function checkoutServerPid(port: number): number | null {
+  for (const pid of pidsForInodes(listenInodes(port))) {
+    if (commandIsCheckoutServer(readCommandLineSync(pid), processCwd(pid))) return pid;
+  }
+  return null;
+}
+
 export function editorUrl(host = loadConfig().host, port = loadConfig().port): string {
   const bind = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
   return `http://${bind}:${port}`;
@@ -206,6 +292,10 @@ export async function startServer(): Promise<StartResult> {
   }
 
   if (await portAccepting(cfg.port, cfg.host)) {
+    const pid = checkoutServerPid(cfg.port);
+    if (pid) {
+      return { status: "already-running", url: editorUrl(cfg.host, cfg.port), pid };
+    }
     return {
       status: "failed",
       message: `Port ${cfg.port} is already in use by another program. OpenLeaf will not stop it. Set a different port in config/local.json or OPENLEAF_PORT, then run openleaf start again.`,
@@ -294,7 +384,17 @@ async function stopPid(pid: number): Promise<void> {
 
 export async function stopServer(): Promise<{ stopped: boolean; message: string }> {
   const meta = readInstance();
-  if (!meta) return { stopped: false, message: "OpenLeaf is not running (no instance metadata)." };
+  if (!meta) {
+    const cfg = loadConfig();
+    const pid = checkoutServerPid(cfg.port);
+    if (pid) {
+      return {
+        stopped: false,
+        message: `OpenLeaf is running (pid ${pid}) but it was started outside openleaf start. This command will not stop it.`,
+      };
+    }
+    return { stopped: false, message: "OpenLeaf is not running (no instance metadata)." };
+  }
   if (!processAlive(meta.pid)) {
     clearInstance();
     return { stopped: true, message: "Cleared stale instance metadata. The recorded process was already gone." };

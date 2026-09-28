@@ -9,6 +9,7 @@ import {
   clientIndex,
   editorUrl,
   healthOk,
+  checkoutServerPid,
   portAccepting,
   processAlive,
   readInstance,
@@ -334,7 +335,19 @@ export async function runChecks(opts: { smoke?: boolean } = {}): Promise<CheckRe
   );
 
   const meta = readInstance();
-  if (!meta) {
+  const cfg = loadConfig();
+  const checkoutPid = checkoutServerPid(cfg.port);
+  const ours = Boolean(meta && processAlive(meta.pid) && belongsToThisInstall(meta.pid));
+  if (ours && meta) {
+    checks.push(pass("process", `OpenLeaf is running (pid ${meta.pid}).`));
+  } else if (checkoutPid && processAlive(checkoutPid)) {
+    checks.push(
+      pass(
+        "process",
+        `OpenLeaf is running (pid ${checkoutPid}). It was started outside openleaf start.`,
+      ),
+    );
+  } else if (!meta) {
     checks.push(
       fail(
         "process",
@@ -364,14 +377,10 @@ export async function runChecks(opts: { smoke?: boolean } = {}): Promise<CheckRe
         "Run openleaf doctor --fix to drop the stale metadata if you are sure it is leftover. OpenLeaf will not kill that process.",
       ),
     );
-  } else {
-    checks.push(pass("process", `OpenLeaf is running (pid ${meta.pid}).`));
   }
 
-  const cfg = loadConfig();
   const listening = await portAccepting(cfg.port, cfg.host);
-  const ours = meta && processAlive(meta.pid) && belongsToThisInstall(meta.pid);
-  if (listening && ours) {
+  if (listening && (ours || checkoutPid)) {
     checks.push(pass("port", `Port ${cfg.port} is serving this OpenLeaf install.`));
   } else if (listening && !ours) {
     checks.push(

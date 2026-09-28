@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { commandIsCheckoutServer } from "./instance.js";
 import { redactText } from "./sanitize.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -44,6 +45,64 @@ function isolated(port?: number): Record<string, string> {
 }
 
 describe("openleaf cli", { concurrency: 1 }, () => {
+  it("installs the openleaf command into a directory on PATH", () => {
+    const home = temp("openleaf-home-");
+    const dir = path.join(home, "bin-dir");
+    fs.mkdirSync(dir, { recursive: true });
+    const env = {
+      ...process.env,
+      HOME: home,
+      USERPROFILE: home,
+      SHELL: "/bin/bash",
+      OPENLEAF_BIN_DIR: dir,
+      PATH: "/usr/bin",
+    };
+    const result = spawnSync(process.execPath, [path.join(repoRoot, "scripts", "install-cli-bin.mjs")], {
+      env,
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const link = path.join(dir, process.platform === "win32" ? "openleaf.cmd" : "openleaf");
+    assert.equal(fs.existsSync(link), true, result.stdout + result.stderr);
+    if (process.platform !== "win32") {
+      assert.equal(fs.readlinkSync(link), path.join(repoRoot, "cli", "bin", "openleaf.js"));
+      const rc = fs.readFileSync(path.join(home, ".bashrc"), "utf8");
+      assert.match(rc, /# openleaf-cli/);
+      assert.match(rc, /bin-dir/);
+    }
+    const again = spawnSync(process.execPath, [path.join(repoRoot, "scripts", "install-cli-bin.mjs")], {
+      env,
+      encoding: "utf8",
+    });
+    assert.equal(again.status, 0, again.stderr);
+    if (process.platform !== "win32") {
+      const rc = fs.readFileSync(path.join(home, ".bashrc"), "utf8");
+      assert.equal(rc.split("# openleaf-cli").length, 2);
+    }
+  });
+
+  it("explains every command from openleaf help", () => {
+    const result = run(["help"], isolated());
+    assert.equal(result.status, 0, result.stderr);
+    for (const phrase of [
+      "openleaf setup",
+      "openleaf start",
+      "openleaf stop",
+      "openleaf restart",
+      "openleaf status",
+      "openleaf open",
+      "openleaf logs",
+      "openleaf doctor",
+      "openleaf support-report",
+      "openleaf account reset-password",
+      "host password",
+    ]) {
+      assert.match(result.stdout, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    }
+    assert.match(result.stdout, /First-time setup/);
+    assert.match(result.stdout, /left running/);
+  });
+
   it("prints an entry point without waiting when stdin is not a terminal", () => {
     const result = run([], isolated());
     assert.equal(result.status, 0);
@@ -232,6 +291,63 @@ describe("openleaf cli", { concurrency: 1 }, () => {
       sleeper.kill("SIGKILL");
       blocker.close();
       run(["stop"], env);
+    }
+  });
+
+  it("treats this checkout's server entry as OpenLeaf even without the CLI marker", () => {
+    const previous = process.env.OPENLEAF_SERVER_ENTRY;
+    delete process.env.OPENLEAF_SERVER_ENTRY;
+    try {
+      assert.equal(commandIsCheckoutServer("/usr/bin/node server/dist/index.js", repoRoot), true);
+      assert.equal(commandIsCheckoutServer("/usr/bin/node server/dist/index.js", "/tmp"), false);
+      assert.equal(commandIsCheckoutServer("sleep 30", repoRoot), false);
+    } finally {
+      if (previous === undefined) delete process.env.OPENLEAF_SERVER_ENTRY;
+      else process.env.OPENLEAF_SERVER_ENTRY = previous;
+    }
+  });
+
+  it("recognizes a checkout server that was not started by the CLI", async () => {
+    const port = 22000 + Math.floor(Math.random() * 1000);
+    const env = { ...isolated(port), OPENLEAF_SERVER_ENTRY: healthEntry };
+    const child = spawn(process.execPath, [healthEntry], {
+      cwd: repoRoot,
+      env: { ...process.env, ...env },
+      stdio: "ignore",
+    });
+    try {
+      const deadline = Date.now() + 5000;
+      let up = false;
+      while (Date.now() < deadline) {
+        try {
+          const res = await fetch(`http://127.0.0.1:${port}/api/health`);
+          if (res.ok) {
+            up = true;
+            break;
+          }
+        } catch {
+          /* still starting */
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      assert.equal(up, true);
+      const status = run(["status"], env);
+      assert.equal(status.status, 0, status.stdout + status.stderr);
+      assert.match(status.stdout, new RegExp(`pid ${child.pid}`));
+      assert.match(status.stdout, /outside openleaf start/);
+      assert.doesNotMatch(status.stdout, /not this OpenLeaf install/);
+      const stopped = run(["stop"], env);
+      assert.notEqual(stopped.status, 0);
+      assert.match(stopped.stdout, /will not stop/);
+      assert.equal(process.kill(child.pid!, 0), true);
+    } finally {
+      if (child.pid) {
+        try {
+          process.kill(child.pid, "SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      }
     }
   });
 

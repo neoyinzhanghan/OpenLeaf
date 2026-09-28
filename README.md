@@ -10,11 +10,13 @@
 git clone https://github.com/neoyinzhanghan/OpenLeaf.git
 cd OpenLeaf
 npm ci
-node cli/bin/openleaf.js setup --non-interactive --display-name "Your Name"
-node cli/bin/openleaf.js open
+openleaf setup --non-interactive --display-name "Your Name"
+openleaf open
 ```
 
-On the project list, **Open on your phone** makes a one-time link. Same Wi-Fi is the default when a LAN address exists; each phone is paired. From anywhere starts a tunnel only when you ask. Update with `git pull && npm ci && node cli/bin/openleaf.js restart`, and run `npm run build` when `openleaf doctor` says the editor build is stale.
+`npm ci` installs the `openleaf` command on your PATH, next to Node. `openleaf help` lists every command. If a terminal that was already open cannot find `openleaf`, open a new one. From inside this checkout, `node cli/bin/openleaf.js` is the same program.
+
+On the project list, **Open on your phone** makes a one-time link. Same Wi-Fi is the default when a LAN address exists; each phone is paired. From anywhere starts a tunnel only when you ask. Update with `git pull && npm ci && openleaf restart`, and run `npm run build` when `openleaf doctor` says the editor build is stale.
 
 Loopback on this computer is the owner. Other devices need a paired session (`lanAuth` defaults to `device`). A public tunnel uses the host password or a pairing link.
 
@@ -66,25 +68,25 @@ Ordinary use is the CLI. From a fresh checkout:
 git clone <your-repo-url> OpenLeaf
 cd OpenLeaf
 npm install
-node cli/bin/openleaf.js setup
+openleaf setup
 ```
 
-`npm install` is the bootstrap. The `openleaf` command is not published to npm; `node cli/bin/openleaf.js` works before `npm run build`. After install you can also run `npx openleaf` or `npm run openleaf -- setup`.
+`npm install` (or `npm ci`) is the bootstrap. It installs the `openleaf` command on your PATH, so `openleaf setup`, `openleaf status`, and `openleaf help` work from any directory. On Linux and macOS the command is placed next to Node (nvm, Homebrew, or the official installer). If that folder is not writable, it goes in `~/.local/bin` and your shell startup file is updated. On Windows it goes in `%AppData%\npm`, as both `openleaf.cmd` (Command Prompt and PowerShell) and a Git Bash script. The package is not published to the npm registry. If the command could not be installed, run `node cli/bin/openleaf.js` from this checkout instead. Open a new terminal if the current one cannot find `openleaf`.
 
 The same commands work in **Windows PowerShell** and **macOS Terminal**. Quote the path if it contains spaces.
 
 ```powershell
 cd C:\path\OpenLeaf
 npm install
-node cli/bin/openleaf.js setup
-node cli/bin/openleaf.js start
+openleaf setup
+openleaf start
 ```
 
 ```bash
 cd ~/OpenLeaf
 npm install
-node cli/bin/openleaf.js setup
-node cli/bin/openleaf.js start
+openleaf setup
+openleaf start
 ```
 
 On Windows, `stop` uses `taskkill` only after PowerShell confirms the process command line belongs to this install. On macOS, that check uses `ps -ww`. Neither platform stops a program merely because it is listening on the port. `open` uses `Start-Process` in Windows PowerShell and `open` on macOS.
@@ -94,9 +96,9 @@ Setup asks for a display name, a projects directory outside this checkout, and w
 Check status any time with:
 
 ```bash
-node cli/bin/openleaf.js
-node cli/bin/openleaf.js status
-node cli/bin/openleaf.js doctor
+openleaf help
+openleaf status
+openleaf doctor
 ```
 
 Running `openleaf` with no arguments prints the current state and the next commands. In a non-interactive shell it does not wait for input.
@@ -163,10 +165,10 @@ A failed tunnel does not mean the local editor is down. Open the localhost URL f
 The host password is only for the public link. Localhost does not use it. From the machine that runs OpenLeaf:
 
 ```text
-node cli/bin/openleaf.js account reset-password
+openleaf account reset-password
 ```
 
-That is the same command in Windows PowerShell and macOS Terminal.
+That is the same command in Windows PowerShell and macOS Terminal. `openleaf help` explains the other commands.
 
 Use `--generate` to write a new password into `config/host-credentials.txt`, or `--password-stdin` to provide one without putting it in the process arguments. Existing host sessions stop working. This does not change collaboration names inside papers.
 

@@ -18,24 +18,56 @@ import {
   resetHostPassword,
 } from "../../server/src/services/hostAuth.js";
 
-const HELP = `OpenLeaf CLI
+const HELP = `OpenLeaf commands
 
-Bootstrap (from a fresh checkout, before the app is built):
-  npm install
-  node cli/bin/openleaf.js
+  openleaf
+      Show the editor URL and whether it is running.
+      In a terminal, you can then type an action.
 
-Usage:
-  openleaf                      Show status and next actions
-  openleaf setup                Configure identity, projects, and access
-  openleaf start                Start the built app and wait until it is ready
-  openleaf stop                 Stop this install only
-  openleaf restart              Stop, then start
-  openleaf status               Process, URL, and health
-  openleaf open                 Open the editor in a browser
-  openleaf logs [--follow]      Show the server log
-  openleaf doctor [--fix] [--smoke] [--json]
-  openleaf support-report [--json] [--out file]
-  openleaf account reset-password [--generate | --password-stdin]
+  openleaf help
+      Show this list. openleaf --help and openleaf -h do the same thing.
+
+  openleaf setup
+      First-time setup: your display name, where papers are stored, and who
+      can open the editor. It then builds the app, starts it, and compiles
+      a sample. Papers and logins already on disk are kept.
+
+  openleaf start
+      Start the editor and wait until it answers. This serves the built app.
+
+  openleaf stop
+      Stop the editor this command started. A server started another way,
+      such as the system service, is left running.
+
+  openleaf restart
+      Stop, then start.
+
+  openleaf status
+      Print the editor URL, the process, and whether the API is healthy.
+
+  openleaf open
+      Open the editor URL in your browser.
+
+  openleaf logs
+      Print the server log. --follow keeps printing new lines.
+      --lines N sets how many existing lines to show first (default 80).
+
+  openleaf doctor
+      Check Node, TeX, config, and the build. Nothing is changed.
+      --fix creates a missing projects folder or clears a dead process record.
+      --smoke compiles a throwaway file and leaves your papers alone.
+      --json prints the same checks as JSON.
+
+  openleaf support-report
+      Write a report with secrets removed, for pasting into an assistant.
+      It is not uploaded. --out FILE writes it to a file. --json prints JSON.
+
+  openleaf account reset-password
+      Set a new host password and sign out phones and other devices.
+      Localhost on this computer does not use that password.
+      --generate writes a new password into the credentials file.
+      --password-stdin reads the new password from stdin.
+      The password is never accepted as a command-line argument.
 
 Setup flags:
   --display-name NAME
@@ -49,6 +81,8 @@ Setup flags:
   --skip-build --skip-start --skip-compile --skip-open
 
 Exit codes: 0 success, 1 failure, 2 usage or missing confirmation, 3 setup incomplete.
+npm ci installs this command onto PATH. From inside the checkout,
+node cli/bin/openleaf.js is the same program.
 Contributors run the live editor with: npm run dev
 `;
 
@@ -94,10 +128,10 @@ async function showMenu(): Promise<number> {
   out(`Editor:   ${editorUrl(cfg.host, cfg.port)}`);
   out(meta ? `Process:  pid ${meta.pid}` : "Process:  not started");
   out("");
-  out("Commands: setup, start, stop, restart, status, open, logs, doctor, support-report");
+  out("Commands: setup, start, stop, restart, status, open, logs, doctor, support-report, help");
   out("Password: openleaf account reset-password");
   if (!isInteractive()) {
-    out("Run openleaf --help for flags. This shell is not interactive, so no menu was opened.");
+    out("Run openleaf help for what each command does. This shell is not interactive, so no menu was opened.");
     return 0;
   }
   const choice = (await promptLine("Action (or press Enter to quit)")).toLowerCase();
@@ -345,7 +379,7 @@ async function main(): Promise<void> {
     out("openleaf 1.0.0");
     return;
   }
-  if (flagBool(flags, "help")) {
+  if (flagBool(flags, "help") || positionals[0] === "-h") {
     out(HELP);
     return;
   }
