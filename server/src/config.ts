@@ -8,6 +8,10 @@ const LatexConfigSchema = z.object({
   autoCompile: z.boolean().default(true),
   timeoutMs: z.number().int().positive().default(120_000),
   outputDir: z.string().default(".openleaf/out"),
+  /** When false (the default), latexmk is invoked with -norc. */
+  allowProjectLatexmkrc: z.boolean().default(false),
+  /** When true (the default), TeX may only read and write inside the project. */
+  paranoidFileAccess: z.boolean().default(true),
 });
 
 const IdentitySchema = z.object({
@@ -64,6 +68,13 @@ const AppConfigSchema = z
      * Omitted on older installs — do not infer a bind-address change from absence.
      */
     access: AccessSchema.optional(),
+    /**
+     * Who counts as the owner on a non-loopback connection.
+     * "device" (default) requires a paired device cookie. "open" is the old LAN behavior.
+     */
+    lanAuth: z.enum(["device", "open"]).default("device"),
+    /** Extra Host header names treated as this machine (DNS rebinding defense). */
+    allowedHosts: z.array(z.string().min(1)).default([]),
     collab: CollabConfigSchema.default({}),
     git: GitConfigSchema.default({}),
   })
@@ -179,6 +190,10 @@ function applyEnv(config: AppConfig): AppConfig {
   };
   if (process.env.OPENLEAF_HOST) next.host = process.env.OPENLEAF_HOST;
   if (process.env.OPENLEAF_PORT) next.port = Number(process.env.OPENLEAF_PORT);
+  if (process.env.OPENLEAF_CLIENT_PORT) {
+    const devPort = Number(process.env.OPENLEAF_CLIENT_PORT);
+    if (Number.isFinite(devPort) && devPort > 0) next.client.devPort = devPort;
+  }
   if (process.env.OPENLEAF_PROJECTS_ROOT) next.projectsRoot = process.env.OPENLEAF_PROJECTS_ROOT;
   if (process.env.OPENLEAF_LIBRARY_ROOT) next.libraryRoot = process.env.OPENLEAF_LIBRARY_ROOT;
   if (process.env.OPENLEAF_ENGINE === "pdflatex" || process.env.OPENLEAF_ENGINE === "xelatex") {
@@ -265,6 +280,8 @@ const PatchSchema = z
     defaultIdentities: z.array(IdentitySchema).optional(),
     user: UserConfigObject.partial().optional(),
     access: AccessSchema.optional(),
+    lanAuth: z.enum(["device", "open"]).optional(),
+    allowedHosts: z.array(z.string().min(1)).optional(),
     collab: CollabConfigSchema.partial().optional(),
     git: GitConfigSchema.partial().optional(),
   })

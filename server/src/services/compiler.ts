@@ -10,11 +10,14 @@ import {
   projectDir,
   readProjectConfig,
 } from "./projectFs.js";
+import { parseTexLog, texErrorCount, type TexIssue } from "./texLog.js";
 
 const execFileAsync = promisify(execFile);
 
 export type CompileResult = {
   ok: boolean;
+  pdfUpdated: boolean;
+  issues: TexIssue[];
   engine: LatexEngine;
   usedLatexmk: boolean;
   log: string;
@@ -22,7 +25,10 @@ export type CompileResult = {
   durationMs: number;
 };
 
-/** TeX installs (TinyTeX, MacTeX, MiKTeX, TeX Live) often sit outside the PATH of GUI shells. */
+/**
+ * TeX installs (TinyTeX, MacTeX, MiKTeX, TeX Live) often sit outside the PATH of GUI shells.
+ * Paranoid mode (the default) confines `\input` and `\openout` to the project tree.
+ */
 export function texEnv(): NodeJS.ProcessEnv {
   const home = os.homedir();
   const localApp = process.env.LOCALAPPDATA ?? path.join(home, "AppData", "Local");
@@ -56,7 +62,23 @@ export function texEnv(): NodeJS.ProcessEnv {
     seen.add(dir);
     dirs.push(dir);
   }
-  return { ...process.env, PATH: dirs.join(path.delimiter) };
+  const env: NodeJS.ProcessEnv = { ...process.env, PATH: dirs.join(path.delimiter) };
+  if (loadConfig().latex.paranoidFileAccess !== false) {
+    env.openin_any = "p";
+    env.openout_any = "p";
+    env.shell_escape = "p";
+  }
+  return env;
+}
+
+/** Project rc files stay off while a share session or AI link is live, even if the host opted in. */
+export async function projectLatexmkrcAllowed(projectId: string): Promise<boolean> {
+  if (loadConfig().latex.allowProjectLatexmkrc !== true) return false;
+  const { listSharesForProject } = await import("./share.js");
+  const { listLiveAi } = await import("./aiShare.js");
+  if (listSharesForProject(projectId).some((session) => session.status === "active")) return false;
+  if (listLiveAi(projectId).length > 0) return false;
+  return true;
 }
 
 let latexmkAvailable: boolean | null = null;
@@ -113,10 +135,12 @@ async function compileWithLatexmk(
   engine: LatexEngine,
   outDir: string,
   timeoutMs: number,
+  allowRc: boolean,
   onChunk?: (chunk: string) => void,
 ): Promise<{ code: number; log: string }> {
   const engineFlag = engine === "xelatex" ? "-xelatex" : "-pdf";
   const args = [
+    ...(allowRc ? [] : ["-norc"]),
     engineFlag,
     "-interaction=nonstopmode",
     "-f",
@@ -235,23 +259,34 @@ async function compileProjectUnlocked(
       : `[openleaf] latexmk not found; using ${engine} + bibtex fallback\n`,
   );
 
+  const allowRc = await projectLatexmkrcAllowed(id);
   const result = useMk
-    ? await compileWithLatexmk(cwd, projectCfg.mainFile, engine, outRel, cfg.latex.timeoutMs, onChunk)
+    ? await compileWithLatexmk(cwd, projectCfg.mainFile, engine, outRel, cfg.latex.timeoutMs, allowRc, onChunk)
     : await compileFallback(cwd, projectCfg.mainFile, engine, outRel, cfg.latex.timeoutMs, onChunk);
 
   const pdfAbs = pdfPathAbs(id, projectCfg.mainFile, cwd);
-  // TeX often exits non-zero on warnings/errors even when a PDF was written.
-  const ok = fs.existsSync(pdfAbs);
-  const pdfRelative = ok ? path.relative(cwd, pdfAbs).replace(/\\/g, "/") : null;
+  let pdfMtime = 0;
+  try {
+    pdfMtime = fs.statSync(pdfAbs).mtimeMs;
+  } catch {
+    pdfMtime = 0;
+  }
+  // Coarse filesystem timestamps can land in the second before Date.now().
+  const pdfUpdated = pdfMtime > 0 && pdfMtime >= started - 2000;
+  const issues = parseTexLog(result.log);
+  const ok = result.code === 0 && texErrorCount(issues) === 0 && pdfUpdated;
+  const pdfRelative = pdfMtime > 0 ? path.relative(cwd, pdfAbs).replace(/\\/g, "/") : null;
 
-  if (!ok) {
-    onChunk?.("\n[openleaf] compile finished without a PDF (check log for errors)\n");
-  } else if (result.code !== 0) {
-    onChunk?.("\n[openleaf] PDF written with TeX warnings/errors (see log)\n");
+  if (!pdfUpdated) {
+    onChunk?.("\n[openleaf] compile finished without a new PDF (check log for errors)\n");
+  } else if (!ok) {
+    onChunk?.("\n[openleaf] PDF was not updated cleanly — see the issues in the log\n");
   }
 
   return {
     ok,
+    pdfUpdated,
+    issues,
     engine,
     usedLatexmk: useMk,
     log: result.log,

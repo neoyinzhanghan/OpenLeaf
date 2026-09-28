@@ -2,7 +2,17 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import { compileProject } from "./compiler.js";
 import { listWorkingTreeChanges } from "./projectGit.js";
-import { deletePath, getTree, MAX_TEXT_FILE_BYTES, readFile, writeFile, resolveRootPath, type TreeNode } from "./projectFs.js";
+import {
+  deletePath,
+  getTree,
+  isGitMetadataPath,
+  isLatexmkrcPath,
+  MAX_TEXT_FILE_BYTES,
+  readFile,
+  writeFile,
+  resolveRootPath,
+  type TreeNode,
+} from "./projectFs.js";
 import { type ShareError } from "./share.js";
 import { buildMcpConfigJson, buildStarterPrompt, mcpUrlFromApiBase } from "./aiPrompt.js";
 import {
@@ -473,11 +483,15 @@ export function assertAiWritablePath(rel: string): string {
   if (!normalized || normalized.split("/").some((p) => p === ".." || p === "")) {
     throw aiError(400, "Invalid path");
   }
-  if (normalized.startsWith(".openleaf/") || normalized.startsWith(".git/") || normalized === ".git") {
+  const lower = normalized.toLowerCase();
+  if (FORBIDDEN_WRITE.has(lower) || lower === "openleaf.json" || lower.endsWith("/openleaf.json")) {
+    throw aiError(403, "Cannot modify openleaf.json (host settings)");
+  }
+  if (lower === ".openleaf" || lower.startsWith(".openleaf/") || isGitMetadataPath(normalized)) {
     throw aiError(403, "Cannot write runtime paths");
   }
-  if (FORBIDDEN_WRITE.has(normalized) || normalized.endsWith("/openleaf.json")) {
-    throw aiError(403, "Cannot modify openleaf.json (host settings)");
+  if (isLatexmkrcPath(normalized)) {
+    throw aiError(403, "Cannot write this path");
   }
   return normalized;
 }

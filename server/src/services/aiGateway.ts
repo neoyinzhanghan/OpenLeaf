@@ -300,11 +300,6 @@ export function gatewayPublicView(g: AiGateway | undefined) {
   };
 }
 
-for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
-  process.once(sig, () => {
-    stopAllAiGateways();
-  });
-}
 process.once("exit", () => {
   for (const g of byProject.values()) killProc(g);
 });

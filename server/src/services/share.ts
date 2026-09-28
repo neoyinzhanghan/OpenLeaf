@@ -618,13 +618,6 @@ export function stopAllShares(): void {
   }
 }
 
-for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
-  process.once(sig, () => {
-    stopAllShares();
-    // Give cloudflared a moment to receive SIGTERM before we exit.
-    setTimeout(() => process.exit(0), 200).unref();
-  });
-}
 process.once("exit", () => {
   for (const s of sessionsByKey.values()) killProc(s);
 });

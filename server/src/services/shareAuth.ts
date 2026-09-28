@@ -4,6 +4,14 @@ import { isAiGatewayHost } from "./aiGateway.js";
 import { verifyHostCookie } from "./hostAuth.js";
 import { isHostGatewayHost } from "./hostGateway.js";
 import { isGuestForbiddenWritePath } from "./projectFs.js";
+import {
+  effectiveClientIp,
+  hostHeaderAllowed,
+  hostnameOf,
+  isLoopbackOwner,
+  lanAuthIsOpen,
+  originAllowed,
+} from "./requestGuard.js";
 import { getShareByHost, isExpired, verifyGuestToken, type Guest, type ShareSession } from "./share.js";
 
 /**
@@ -39,9 +47,7 @@ export const GUEST_COOKIE = "openleaf_share";
 /** Set by GET /join/:token; proves the guest opened the full invitation link. */
 export const LINK_COOKIE = "openleaf_link";
 
-export function hostnameOf(req: IncomingMessage): string {
-  return (req.headers.host ?? "").toLowerCase().split(":")[0] ?? "";
-}
+export { hostnameOf };
 
 export function requestLane(req: IncomingMessage): RequestLane {
   if (getShareByHost(req.headers.host)) return { kind: "share" };
@@ -73,9 +79,7 @@ function isOpenHostApi(path: string): boolean {
 }
 
 export function clientIp(req: IncomingMessage): string {
-  const cf = req.headers["cf-connecting-ip"];
-  if (typeof cf === "string" && cf) return cf;
-  return req.socket?.remoteAddress ?? "unknown";
+  return effectiveClientIp(req);
 }
 
 export function parseCookies(header: string | undefined): Record<string, string> {
@@ -234,10 +238,40 @@ function guestTouchesProtectedPath(req: Request, sub: string): boolean {
  * tunnels need a guest cookie.
  */
 export function shareGate(req: Request, res: Response, next: NextFunction): void {
+  if (!hostHeaderAllowed(req)) {
+    res.status(421).json({ error: "Unrecognized Host header", code: "BAD_HOST" });
+    return;
+  }
+  const bearerApi = req.path.startsWith("/api/ai/") || req.path.startsWith("/api/library-ai/v1");
+  if (!bearerApi && !originAllowed(req)) {
+    res.status(403).json({ error: "Cross-origin request blocked", code: "BAD_ORIGIN" });
+    return;
+  }
+
   const lane = requestLane(req);
   if (lane.kind === "local") {
-    req.access = { mode: "host", remote: false };
-    next();
+    if (isLoopbackOwner(req) || lanAuthIsOpen()) {
+      req.access = { mode: "host", remote: false };
+      next();
+      return;
+    }
+    const device = verifyHostCookie(req);
+    if (device) {
+      req.access = { mode: "host", remote: true };
+      next();
+      return;
+    }
+    const isApi = req.path.startsWith("/api/");
+    const isCollab = req.path.startsWith("/collab");
+    if (!isApi && !isCollab) {
+      next();
+      return;
+    }
+    if (isOpenHostApi(req.path) || req.path.startsWith("/host/pair/")) {
+      next();
+      return;
+    }
+    res.status(401).json({ error: "Sign in required", code: "HOST_AUTH" });
     return;
   }
 

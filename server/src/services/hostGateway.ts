@@ -241,8 +241,9 @@ function scheduleRestart(): void {
 /**
  * Start (or reuse) the host public tunnel. Safe to call more than once.
  */
-export async function startHostGateway(): Promise<HostGateway> {
-  if (disabled()) return localFallback("Host gateway disabled (OPENLEAF_HOST_GATEWAY=0)");
+export async function startHostGateway(opts?: { demand?: boolean }): Promise<HostGateway> {
+  if (opts?.demand) stopping = false;
+  if (disabled() && !opts?.demand) return localFallback("Host gateway disabled (OPENLEAF_HOST_GATEWAY=0)");
 
   if (gateway && (gateway.status === "active" || gateway.status === "starting") && gateway.proc) {
     return gateway;
@@ -370,11 +371,6 @@ export function stopHostGateway(): void {
   console.log("[host-gateway] stopped");
 }
 
-for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
-  process.once(sig, () => {
-    stopHostGateway();
-  });
-}
 process.once("exit", () => {
   if (gateway) killProc(gateway);
 });

@@ -94,12 +94,25 @@ export function isHostMetadataPath(relativePath: string): boolean {
   return lower === "openleaf.json" || lower === ".openleaf" || lower.startsWith(".openleaf/");
 }
 
+/** latexmk reads these as Perl. A project copy must not run unless the host opts in. */
+export function isLatexmkrcPath(relativePath: string): boolean {
+  const base = (normalizeRelativePath(relativePath).split("/").pop() ?? "").toLowerCase();
+  return base === "latexmkrc" || base === ".latexmkrc" || base.endsWith(".latexmkrc");
+}
+
+/** Git metadata and hooks run on the next git command. */
+export function isGitMetadataPath(relativePath: string): boolean {
+  const n = normalizeRelativePath(relativePath).toLowerCase();
+  return n === ".git" || n.startsWith(".git/");
+}
+
 /**
- * Paths guests must not create, overwrite, rename, or delete via /files or /fs.
+ * Paths guests and AI links must not create, overwrite, rename, or delete.
  * comments.json is mutated through the comments API (with author checks) instead.
  */
 export function isGuestForbiddenWritePath(relativePath: string): boolean {
   if (isHostMetadataPath(relativePath)) return true;
+  if (isLatexmkrcPath(relativePath) || isGitMetadataPath(relativePath)) return true;
   return normalizeRelativePath(relativePath).toLowerCase() === "comments.json";
 }
 

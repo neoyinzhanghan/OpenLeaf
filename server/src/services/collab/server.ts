@@ -8,6 +8,7 @@ import * as syncProtocol from "y-protocols/sync";
 import type { Identity } from "../../config.js";
 import { getProjectIdentity, projectDir } from "../projectFs.js";
 import { verifyHostCookie } from "../hostAuth.js";
+import { hostHeaderAllowed, isLoopbackOwner, lanAuthIsOpen, originAllowed } from "../requestGuard.js";
 import { requestLane, resolveGuest } from "../shareAuth.js";
 import { getOrCreateRoom, releaseRoomIfEmpty, type ProjectRoom } from "./room.js";
 
@@ -92,6 +93,11 @@ export function attachCollabServer(httpServer: HttpServer): WebSocketServer {
 
   httpServer.on("upgrade", (req, socket, head) => {
     void (async () => {
+      if (!hostHeaderAllowed(req) || !originAllowed(req)) {
+        rejectUpgrade(socket, 403, "Forbidden");
+        return;
+      }
+
       const parsed = parseCollabUrl(req);
       if (!parsed) {
         if ((req.url ?? "").startsWith("/collab")) {
@@ -140,6 +146,10 @@ export function attachCollabServer(httpServer: HttpServer): WebSocketServer {
         }
         identity = await getProjectIdentity(parsed.projectId, parsed.identityId);
       } else if (lane.kind === "local") {
+        if (!isLoopbackOwner(req) && !lanAuthIsOpen() && !verifyHostCookie(req)) {
+          rejectUpgrade(socket, 401, "Unauthorized");
+          return;
+        }
         identity = await getProjectIdentity(parsed.projectId, parsed.identityId);
       } else {
         rejectUpgrade(socket, 401, "Unauthorized");

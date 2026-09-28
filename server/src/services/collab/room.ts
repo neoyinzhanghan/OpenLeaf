@@ -906,6 +906,10 @@ export async function getOrCreateRoom(
   return creating;
 }
 
+export async function flushAllOpenRooms(): Promise<void> {
+  await Promise.all([...rooms.values()].map((room) => room.flushNow({ commit: false })));
+}
+
 export async function flushProjectRoom(
   projectId: string,
   opts?: { author?: GitAuthor; message?: string; commit?: boolean; branchId?: string },
