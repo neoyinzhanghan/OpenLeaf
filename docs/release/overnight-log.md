@@ -38,3 +38,10 @@ Isolated instances only (`OPENLEAF_PORT` not 8787, separate config and projects 
 - `npm run build` pass.
 - `npm run e2e`: 4 pass (undo, two-tab presence with an idle second tab, compile badge, phone link + fake tunnel).
 - A second editor that types before it has the first editor's insert can still replace that insert on disk. Recorded under known issues. Exact markers are in `.cursor/private-notes.md` (not committed).
+
+## 2026-09-28T16:00Z — macOS CI
+
+- Actions run 36402259761: `test (ubuntu-latest)` passed. `test (macos-latest)` failed 4 server tests, CLI 19 passed.
+- Each failure was `spawn pdflatex ENOENT`. The workflow installs TeX only on Ubuntu.
+- Compile-safety and historical-checkpoint tests now skip when `pdflatex` is missing. The latexmkrc case also skips when `latexmk` is missing, so a pdflatex fallback cannot count as proof that project rc files stay off.
+- Track-changes compile cases already skipped without latexdiff.

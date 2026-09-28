@@ -68,7 +68,7 @@ Run on this WSL machine with Playwright Chromium. Desktop 1440×900. Phone conte
 | State machines | Pairing single use, expiry, and rate limit are unit-tested. The browser reused a link and saw the expired page. | — |
 | Error messages | Crossref failures now say to check the connection or paste BibTeX. | A full grep of every `throw` was not turned into copy edits. |
 | Docs vs behavior | README quick start, phone pairing, and SECURITY.md match the new defaults. | Older README paragraphs still describe localhost as open to anyone who can reach the port. The new top section is the one to trust. |
-| Cross-platform | CI workflow added for Ubuntu and macOS, Node 22. Not executed from this machine. | — |
+| Cross-platform | GitHub Actions on `release/ship-ready`. Ubuntu installs TeX and runs the compile tests. macOS does not install TeX; those tests skip when `pdflatex` is absent. | Run 36402259761: ubuntu passed, macos failed four compile tests with `spawn pdflatex ENOENT`. |
 | Console hygiene | Nested library tests, now that they run, print minted link URLs to the test log. | Pre-existing. Not changed. |
 | Visual | Playwright at 1440×900 and 390×844 for the flows above. Light/dark of every screen was not reviewed. | Library header uses "Lit review" and "Add paper" so the two Review actions are not the same label. |
 | Code smell | Test glob. | Unquoted `src/**/*.test.ts` skipped `server/src/services/library/**`. Quoted it. |
@@ -117,7 +117,7 @@ Run on this WSL machine with Playwright Chromium. Desktop 1440×900. Phone conte
 
 - Two editors: the second person to type can replace the first person's insert on disk. An idle second tab does not. Details are in `.cursor/private-notes.md`, which is not in git.
 - Drawer focus traps and code-splitting pdf.js are not done.
-- CI on GitHub has not been observed from this machine.
+- macOS CI does not install TeX. Compile tests that need `pdflatex` skip there. Ubuntu still runs them.
 
 ## Only Neo can do these
 

@@ -18,6 +18,17 @@ const { ensureProjectGit } = await import("./projectGit.js");
 const { compileProject } = await import("./compiler.js");
 const { ensureSnapshotRoot, snapshotRootIfPresent } = await import("./timeline.js");
 
+async function commandOnPath(bin: string, args: string[]): Promise<boolean> {
+  try {
+    await execFileAsync(bin, args, { timeout: 8000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const pdflatexInstalled = await commandOnPath("pdflatex", ["-version"]);
+
 async function git(cwd: string, args: string[]): Promise<string> {
   const { stdout } = await execFileAsync("git", args, {
     cwd,
@@ -71,7 +82,10 @@ describe("historical checkpoint compile", () => {
     fs.rmSync(projectsRoot, { recursive: true, force: true });
   });
 
-  it("compiles a prior commit without changing the tip worktree", async () => {
+  it(
+    "compiles a prior commit without changing the tip worktree",
+    { skip: pdflatexInstalled ? false : "pdflatex is not installed" },
+    async () => {
     const tipBefore = fs.readFileSync(path.join(dir, "main.tex"), "utf8");
     assert.match(tipBefore, /NEW/);
 

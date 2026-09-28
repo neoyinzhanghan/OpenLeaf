@@ -1,9 +1,31 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
+
+async function commandOnPath(bin: string, args: string[]): Promise<boolean> {
+  try {
+    await execFileAsync(bin, args, { timeout: 8000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const pdflatexInstalled = await commandOnPath("pdflatex", ["-version"]);
+const latexmkInstalled = await commandOnPath("latexmk", ["-v"]);
+const needsEngine = pdflatexInstalled ? false : "pdflatex is not installed";
+const needsLatexmk = !pdflatexInstalled
+  ? "pdflatex is not installed"
+  : !latexmkInstalled
+    ? "latexmk is not installed"
+    : false;
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), "openleaf-compile-"));
@@ -38,7 +60,7 @@ describe("compile safety", () => {
     fs.rmSync(sandbox, { recursive: true, force: true });
   });
 
-  it("does not run a project latexmkrc", async () => {
+  it("does not run a project latexmkrc", { skip: needsLatexmk }, async () => {
     const marker = path.join(sandbox, "rc-marker");
     writeProject(
       "rc-case",
@@ -51,7 +73,7 @@ describe("compile safety", () => {
     assert.equal(result.issues.some((issue) => issue.severity === "error"), false);
   });
 
-  it("refuses to read a file outside the project", async () => {
+  it("refuses to read a file outside the project", { skip: needsEngine }, async () => {
     writeProject(
       "paranoid-case",
       "\\documentclass{article}\n\\begin{document}\n\\input{/etc/hostname}\n\\end{document}\n",
@@ -62,7 +84,7 @@ describe("compile safety", () => {
     assert.match(result.log, /! /);
   });
 
-  it("reports an undefined control sequence as a failed compile", async () => {
+  it("reports an undefined control sequence as a failed compile", { skip: needsEngine }, async () => {
     writeProject(
       "error-case",
       "\\documentclass{article}\n\\begin{document}\n\\thisisnotamacro{oops}\n\\end{document}\n",
