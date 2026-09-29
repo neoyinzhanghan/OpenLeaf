@@ -1,3 +1,5 @@
+import { noteHostAuth } from "./hostAuthBus";
+
 export type ShareSettings = {
   /** null = no automatic expiry. */
   expiresAt: number | null;
@@ -138,8 +140,9 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     let message = res.statusText;
     try {
-      const body = (await res.json()) as { error?: string };
+      const body = (await res.json()) as { error?: string; code?: string };
       if (body.error) message = body.error;
+      noteHostAuth(res.status, body.code);
     } catch {
       /* ignore */
     }

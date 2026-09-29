@@ -42,10 +42,12 @@ export async function startInstance(): Promise<Instance> {
       access: "localhost",
       projectsRoot: projects,
       libraryRoot: path.join(sandbox, "library"),
+      allowedHosts: ["127.0.0.2"],
     })}\n`,
   );
   const child: ChildProcess = spawn("npx", ["tsx", "server/src/index.ts"], {
     cwd: repo,
+    detached: true,
     env: {
       ...process.env,
       NODE_ENV: "production",
@@ -57,6 +59,7 @@ export async function startInstance(): Promise<Instance> {
       OPENLEAF_HOST_GATEWAY: "0",
       OPENLEAF_TUNNEL_SKIP_DNS: "1",
       OPENLEAF_CLOUDFLARED: path.join(repo, "e2e/fake-cloudflared.sh"),
+      OPENLEAF_E2E_LAN_ADDRESS: "127.0.0.2",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -95,9 +98,22 @@ export async function startInstance(): Promise<Instance> {
           fs.rmSync(sandbox, { recursive: true, force: true });
           resolve();
         });
-        child.kill("SIGTERM");
+        const pid = child.pid;
+        if (pid) {
+          try {
+            process.kill(-pid, "SIGTERM");
+          } catch {
+            child.kill("SIGTERM");
+          }
+        }
         setTimeout(() => {
-          child.kill("SIGKILL");
+          if (pid) {
+            try {
+              process.kill(-pid, "SIGKILL");
+            } catch {
+              /* already gone */
+            }
+          }
           resolve();
         }, 4000).unref();
       }),

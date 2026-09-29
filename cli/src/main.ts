@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -64,10 +65,19 @@ const HELP = `OpenLeaf commands
 
   openleaf account reset-password
       Set a new host password and sign out phones and other devices.
-      Localhost on this computer does not use that password.
+      The computer itself stays signed in. Other devices use that password.
       --generate writes a new password into the credentials file.
       --password-stdin reads the new password from stdin.
       The password is never accepted as a command-line argument.
+
+  openleaf install-cli
+      Put the openleaf command on PATH for this checkout.
+      --force replaces a command that already points at another checkout.
+      --add-to-path writes a PATH line into the shell startup file.
+      npm ci does not edit shell startup files and does not replace another checkout.
+
+  openleaf uninstall-cli
+      Remove the openleaf command if it points at this checkout.
 
 Setup flags:
   --display-name NAME
@@ -85,6 +95,12 @@ npm ci installs this command onto PATH. From inside the checkout,
 node cli/bin/openleaf.js is the same program.
 Contributors run the live editor with: npm run dev
 `;
+
+function runInstaller(args: string[]): number {
+  const script = path.join(REPO_ROOT, "scripts", "install-cli-bin.mjs");
+  const result = spawnSync(process.execPath, [script, ...args], { stdio: "inherit" });
+  return result.status ?? 1;
+}
 
 function nonInteractive(flags: Map<string, string | true>): boolean {
   return flagBool(flags, "non-interactive") || !isInteractive();
@@ -117,6 +133,14 @@ async function dispatch(positionals: string[], flags: Map<string, string | true>
   if (command === "doctor") return cmdDoctor(flags);
   if (command === "support-report") return cmdSupport(flags);
   if (command === "account" && sub === "reset-password") return cmdReset(flags);
+  if (command === "install-cli") {
+    const args = [
+      ...(flagBool(flags, "force") ? ["--force"] : []),
+      ...(flagBool(flags, "add-to-path") ? ["--add-to-path"] : []),
+    ];
+    return runInstaller(args);
+  }
+  if (command === "uninstall-cli") return runInstaller(["--uninstall"]);
   throw new CliError(`Unknown command.\n${HELP}`, 2);
 }
 

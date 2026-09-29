@@ -204,11 +204,12 @@ export async function ensureAiGateway(projectId: string): Promise<AiGateway> {
   };
   byProject.set(projectId, g);
 
-  const proc = spawn(
-    bin,
-    ["tunnel", "--url", `http://127.0.0.1:${port}`, "--no-autoupdate", "--protocol", "quic"],
-    { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, NO_COLOR: "1" } },
-  );
+  const tunnelArgs = ["tunnel", "--url", `http://127.0.0.1:${port}`, "--no-autoupdate", "--protocol", "quic"];
+  const shellScript = bin.endsWith(".sh");
+  const proc = spawn(shellScript ? "sh" : bin, shellScript ? [bin, ...tunnelArgs] : tunnelArgs, {
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, NO_COLOR: "1" },
+  });
   g.proc = proc;
 
   const ready = new Promise<void>((resolve, reject) => {

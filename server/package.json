@@ -9,7 +9,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "NODE_ENV=production node dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test \"src/**/*.test.ts\""
+    "test": "tsx --test --test-force-exit \"src/**/*.test.ts\""
   },
   "dependencies": {
     "archiver": "^7.0.1",

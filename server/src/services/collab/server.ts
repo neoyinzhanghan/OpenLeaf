@@ -179,13 +179,31 @@ export function attachCollabServer(httpServer: HttpServer): WebSocketServer {
         readOnly: boolean;
       },
     ) => {
+      // The client sends sync step 1 in the same turn as the upgrade. Messages
+      // that arrive while the room is opening must be kept — dropping them means
+      // this socket never receives the server document.
+      const pending: WebSocket.RawData[] = [];
+      const bufferMessage = (data: WebSocket.RawData) => {
+        pending.push(data);
+      };
+      conn.on("message", bufferMessage);
+
       let room: ProjectRoom;
       try {
         room = await getOrCreateRoom(parsed.projectId, parsed.branchId || "main");
       } catch (err) {
         console.error("[collab] room open failed", err);
+        conn.off("message", bufferMessage);
         conn.close();
         return;
+      }
+      if (conn.readyState !== WebSocket.OPEN) {
+        conn.off("message", bufferMessage);
+        await releaseRoomIfEmpty(parsed.projectId, parsed.branchId || "main");
+        return;
+      }
+      if (room.isDead) {
+        room = await getOrCreateRoom(parsed.projectId, parsed.branchId || "main");
       }
 
       const hub = getHub(room);
@@ -222,7 +240,7 @@ export function attachCollabServer(httpServer: HttpServer): WebSocketServer {
         }
       }
 
-      conn.on("message", (data: WebSocket.RawData) => {
+      const onMessage = (data: WebSocket.RawData) => {
         try {
           const buf =
             data instanceof ArrayBuffer
@@ -261,7 +279,10 @@ export function attachCollabServer(httpServer: HttpServer): WebSocketServer {
         } catch (err) {
           console.error("[collab] message error", err);
         }
-      });
+      };
+      conn.off("message", bufferMessage);
+      conn.on("message", onMessage);
+      for (const data of pending) onMessage(data);
 
       const onAwarenessTrack = (
         { added, removed }: { added: number[]; updated: number[]; removed: number[] },

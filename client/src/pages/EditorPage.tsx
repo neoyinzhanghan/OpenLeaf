@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useParams } from "react-router-dom";
 import type * as Y from "yjs";
@@ -48,7 +48,8 @@ import { AiLinkPanel } from "../components/AiLinkPanel";
 import { AiSuggestionCard } from "../components/AiSuggestionCard";
 import { isAiBranch } from "../components/timelineLayout";
 import { MergePanel } from "../components/MergePanel";
-import { PdfViewer, type PdfDiffOverlay, type PdfHighlight } from "../components/PdfViewer";
+import type { PdfDiffOverlay, PdfHighlight } from "../components/PdfViewer";
+const PdfViewer = lazy(() => import("../components/PdfViewer").then((mod) => ({ default: mod.PdfViewer })));
 import { HostAccessPanel } from "../components/HostAccessPanel";
 import { SharePanel } from "../components/SharePanel";
 import { SplitPane } from "../components/SplitPane";
@@ -2201,7 +2202,10 @@ export function EditorPage() {
                 className="status-pill err"
                 onClick={() => setLogOpen(true)}
               >
-                {compileIssues.filter((issue) => issue.severity === "error").length} errors
+                {(() => {
+                  const count = compileIssues.filter((issue) => issue.severity === "error").length;
+                  return `${count} error${count === 1 ? "" : "s"}`;
+                })()}
               </button>
             )}
             {editMode === "base64" && <span className="status-pill warn">base64</span>}
@@ -2564,7 +2568,7 @@ export function EditorPage() {
                   </>
                 )}
                 {narrow && (canHistory || !isGuest) && <div className="toolbar-menu-sep" />}
-                {!isGuest && (
+                {!isGuest && !(session.kind === "host" && session.remote) && (
                   <button
                     type="button"
                     role="menuitem"
@@ -3014,6 +3018,7 @@ export function EditorPage() {
                 </div>
               }
               right={
+                <Suspense fallback={<div className="pdf-empty">Loading PDF viewer…</div>}>
                 <PdfViewer
                   url={pdfViewerUrl}
                   emptyHint={pdfEmptyHint}
@@ -3047,6 +3052,7 @@ export function EditorPage() {
                         }
                   }
                 />
+                </Suspense>
               }
             />
           </div>

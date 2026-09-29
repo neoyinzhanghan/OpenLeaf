@@ -41,7 +41,7 @@ If you accidentally commit a secret, rotate it immediately (delete the relevant 
 
 Project `latexmkrc` files are not loaded unless `latex.allowProjectLatexmkrc` is true, and they stay off while a share or AI link is live on that project. Paranoid TeX file access is on by default (`openin_any=p`, `openout_any=p`, restricted shell escape). Compiles never pass `-shell-escape`.
 
-The API does not send a global CORS header. Bearer clients may call `/api/ai/` and `/api/library-ai/v1` from another origin without cookies. Other state-changing requests must come from the page's own origin. WebSocket upgrades use the same host and origin checks. A `Host` header that is not this machine is rejected.
+The API does not send a global CORS header. Bearer clients may call `/api/ai/` and `/api/library-ai/v1` from another origin without cookies. Other state-changing requests must come from the page's own origin. WebSocket upgrades use the same host and origin checks. A `Host` header that is not this machine is rejected. `OPENLEAF_HOST_PUBLIC_HOSTNAME` is added to that allowlist automatically. A pairing link shows a confirmation page; the session cookie is set only by the button on that page.
 
 ## Reporting a vulnerability
 

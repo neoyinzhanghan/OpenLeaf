@@ -173,7 +173,7 @@ async function main() {
     }
   }
 
-  for (const id of ["Tj_label_shift_notes", "Label-free_correction_for_label_shift"]) {
+  for (const id of projectDirs(projectsRoot)) {
     const mainPath = path.join(projectsRoot, id, "main.tex");
     if (!fs.existsSync(mainPath)) continue;
     const tex = fs.readFileSync(mainPath, "utf8");

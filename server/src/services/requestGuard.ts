@@ -16,10 +16,17 @@ export function isLoopbackAddress(address: string): boolean {
 /** Client IP. Forwarded headers count only when the socket peer is loopback (Vite, cloudflared). */
 export function effectiveClientIp(req: IncomingMessage): string {
   if (socketIsLoopback(req)) {
-    const cf = headerOne(req.headers["cf-connecting-ip"]);
-    if (cf) return cf;
+    // Cloudflare sets this. A dev proxy must not let a caller invent it.
+    if (isKnownTunnelHost(hostnameOf(req))) {
+      const cf = headerOne(req.headers["cf-connecting-ip"]);
+      if (cf) return cf;
+    }
     const xff = headerOne(req.headers["x-forwarded-for"]);
-    if (xff) return xff.split(",")[0]!.trim();
+    if (xff) {
+      const hops = xff.split(",").map((part) => part.trim()).filter(Boolean);
+      const last = hops[hops.length - 1];
+      if (last) return last;
+    }
   }
   const raw = req.socket?.remoteAddress ?? "unknown";
   return raw.replace(/^::ffff:/i, "");
@@ -62,6 +69,8 @@ export function allowedHostNames(): Set<string> {
     const name = extra.trim().toLowerCase();
     if (name) names.add(name);
   }
+  const published = process.env.OPENLEAF_HOST_PUBLIC_HOSTNAME?.trim().toLowerCase();
+  if (published) names.add(published.split(":")[0] ?? published);
   return names;
 }
 

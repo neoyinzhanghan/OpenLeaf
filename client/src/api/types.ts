@@ -128,6 +128,7 @@ export type TexIssue = {
 export type CompileResult = {
   ok: boolean;
   pdfUpdated?: boolean;
+  upToDate?: boolean;
   issues?: TexIssue[];
   engine: LatexEngine;
   usedLatexmk: boolean;

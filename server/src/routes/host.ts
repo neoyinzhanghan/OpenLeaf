@@ -1,4 +1,5 @@
-import { Router } from "express";
+import crypto from "node:crypto";
+import express, { Router } from "express";
 import type { NextFunction, Request, Response } from "express";
 import { z, ZodError } from "zod";
 import { loadConfig } from "../config.js";
@@ -23,7 +24,7 @@ import {
   revokeDevice,
 } from "../services/hostDevices.js";
 import { hostGatewayPublicView, startHostGateway, stopHostGateway } from "../services/hostGateway.js";
-import { lanAddresses, startLanAccess, stopLanAccess } from "../services/lanAccess.js";
+import { lanAccessRunning, lanAddresses, startLanAccess, stopLanAccess } from "../services/lanAccess.js";
 import { isLoopbackOwner } from "../services/requestGuard.js";
 import { clientIp } from "../services/shareAuth.js";
 
@@ -191,7 +192,7 @@ hostRouter.post("/devices/revoke-all", requireLoopback, (_req, res) => {
 });
 
 hostRouter.get("/lan-addresses", requireLoopback, (_req, res) => {
-  res.json(lanAddresses());
+  res.json({ ...lanAddresses(), running: lanAccessRunning() });
 });
 
 hostRouter.post("/remote", requireLoopback, async (req, res) => {
@@ -240,9 +241,71 @@ hostRouter.post("/password/reset", requireLoopback, (req, res) => {
 });
 
 export const pairRouter = Router();
+pairRouter.use(express.urlencoded({ extended: false }));
+
+const pairNonces = new Map<string, { nonce: string; expiresAt: number }>();
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (ch) => {
+    if (ch === "&") return "&amp;";
+    if (ch === "<") return "&lt;";
+    if (ch === ">") return "&gt;";
+    if (ch === '"') return "&quot;";
+    return "&#39;";
+  });
+}
+
+function deviceLabel(userAgent: string): string {
+  const ua = userAgent || "this device";
+  return ua.length > 80 ? `${ua.slice(0, 80)}…` : ua;
+}
 
 pairRouter.get("/:token", (req, res) => {
-  const redeemed = redeemPairing(String(req.params.token), {
+  const token = String(req.params.token);
+  const nonce = crypto.randomBytes(24).toString("base64url");
+  pairNonces.set(token, { nonce, expiresAt: Date.now() + 10 * 60_000 });
+  const label = escapeHtml(deviceLabel(req.get("user-agent") ?? ""));
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Robots-Tag", "noindex");
+  res.type("html").send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Sign in to OpenLeaf</title>
+</head>
+<body>
+<main>
+<h1>Sign in to OpenLeaf on this device?</h1>
+<p>${label}</p>
+<form method="post">
+<input type="hidden" name="nonce" value="${nonce}">
+<button type="submit">Sign in</button>
+</form>
+</main>
+</body>
+</html>`);
+});
+
+pairRouter.post("/:token", (req, res) => {
+  const origin = req.get("origin") ?? "";
+  const host = (req.get("host") ?? "").toLowerCase();
+  let originHost = "";
+  try {
+    originHost = new URL(origin).host.toLowerCase();
+  } catch {
+    originHost = "";
+  }
+  const token = String(req.params.token);
+  const row = pairNonces.get(token);
+  const nonce = typeof req.body?.nonce === "string" ? req.body.nonce : "";
+  if (!origin || originHost !== host || !row || row.expiresAt < Date.now() || nonce !== row.nonce) {
+    res.status(403).type("text/plain").send("Forbidden");
+    return;
+  }
+  pairNonces.delete(token);
+  const redeemed = redeemPairing(token, {
     userAgent: req.get("user-agent") ?? "",
     ip: clientIp(req),
   });

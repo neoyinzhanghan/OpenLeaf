@@ -34,6 +34,7 @@ type Pairing = {
   redeemedDeviceId?: string;
 };
 
+const REVOKED_KEEP_MS = 90 * 24 * 3600_000;
 const PAIRING_TTL_MS = 10 * 60_000;
 const MAX_OUTSTANDING = 5;
 const DEVICE_TTL_MS = 30 * 24 * 3600_000;
@@ -63,17 +64,38 @@ function cookieSecret(): string | null {
   }
 }
 
+let deviceCache: { path: string; mtimeMs: number; devices: HostDevice[] } | null = null;
+
 function loadDevices(): HostDevice[] {
+  const file = devicesPath();
   try {
-    const raw = JSON.parse(fs.readFileSync(devicesPath(), "utf8")) as DeviceFile;
-    return Array.isArray(raw.devices) ? raw.devices : [];
+    const stat = fs.statSync(file);
+    if (deviceCache && deviceCache.path === file && deviceCache.mtimeMs === stat.mtimeMs) {
+      return deviceCache.devices.map((device) => ({ ...device }));
+    }
+    const raw = JSON.parse(fs.readFileSync(file, "utf8")) as DeviceFile;
+    const loaded = Array.isArray(raw.devices) ? raw.devices : [];
+    const cutoff = Date.now() - REVOKED_KEEP_MS;
+    const devices = loaded.filter((device) => !device.revokedAt || device.revokedAt >= cutoff);
+    if (devices.length !== loaded.length) {
+      saveDevices(devices);
+      return devices.map((device) => ({ ...device }));
+    }
+    deviceCache = { path: file, mtimeMs: stat.mtimeMs, devices };
+    return devices.map((device) => ({ ...device }));
   } catch {
     return [];
   }
 }
 
 function saveDevices(devices: HostDevice[]): void {
+  const file = devicesPath();
   writeFileAtomic(devicesPath(), `${JSON.stringify({ devices }, null, 2)}\n`, 0o600);
+  try {
+    deviceCache = { path: file, mtimeMs: fs.statSync(file).mtimeMs, devices };
+  } catch {
+    deviceCache = null;
+  }
 }
 
 function hashToken(token: string): string {

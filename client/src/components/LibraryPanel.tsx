@@ -636,10 +636,11 @@ export function LibraryPanel({
           <button
             type="button"
             className="btn btn-ghost btn-icon"
+            aria-label={density === "compact" ? "Comfortable density" : "Compact density"}
             title={density === "compact" ? "Comfortable density" : "Compact density"}
             onClick={() => setDensity((d) => (d === "compact" ? "comfortable" : "compact"))}
           >
-            {density === "compact" ? "▦" : "▤"}
+            {density === "compact" ? "Comfortable" : "Compact"}
           </button>
           <button
             type="button"

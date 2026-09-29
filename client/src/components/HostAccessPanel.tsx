@@ -15,7 +15,9 @@ import {
   type HostDevice,
   type LanAddress,
 } from "../api/host";
+import { hostGateway } from "../api/share";
 import { copyText } from "../lib/clipboard";
+import { useFocusTrap } from "../ui/useFocusTrap";
 
 type Props = {
   open: boolean;
@@ -38,7 +40,11 @@ export function HostAccessPanel({ open, onClose, nextPath = "/" }: Props) {
   const [now, setNow] = useState(Date.now());
   const [devices, setDevices] = useState<HostDevice[]>([]);
   const [password, setPassword] = useState<string | null>(null);
+  const [phoneOn, setPhoneOn] = useState<string | null>(null);
+  const [remoteOn, setRemoteOn] = useState(false);
   const routeTouched = useRef(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(open, dialogRef);
 
   useEffect(() => {
     if (!open) return;
@@ -60,12 +66,16 @@ export function HostAccessPanel({ open, onClose, nextPath = "/" }: Props) {
         setWsl(result.wsl);
         const first = result.addresses.find((item) => item.kind === "wifi") ?? result.addresses[0];
         setPicked(first?.address ?? "");
+        setPhoneOn(result.running?.address ?? null);
         if (!routeTouched.current) setRoute(result.wsl || !first ? "tunnel" : "lan");
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : "Could not list network addresses"));
     void fetchHostDevices()
       .then((result) => setDevices(result.devices.filter((device) => !device.revokedAt)))
       .catch(() => setDevices([]));
+    void hostGateway()
+      .then((gateway) => setRemoteOn(gateway.status === "active" || gateway.status === "starting"))
+      .catch(() => setRemoteOn(false));
   }, [open]);
 
   useEffect(() => {
@@ -116,6 +126,7 @@ export function HostAccessPanel({ open, onClose, nextPath = "/" }: Props) {
   return (
     <div className="host-access-backdrop" onMouseDown={onClose}>
       <div
+        ref={dialogRef}
         className="host-access-modal"
         role="dialog"
         aria-modal="true"
@@ -189,6 +200,7 @@ export function HostAccessPanel({ open, onClose, nextPath = "/" }: Props) {
           <div className="host-access-link">
             <div className="host-access-qr" dangerouslySetInnerHTML={{ __html: qr }} />
             <code>{link.url}</code>
+            <p>Scan the QR code on your phone. If you paste the link into a chat, the preview may not work.</p>
             <p>
               Single use · expires in {mm}:{ss}
             </p>
@@ -247,12 +259,22 @@ export function HostAccessPanel({ open, onClose, nextPath = "/" }: Props) {
           <button type="button" className="btn" onClick={() => void revokeAllHostDevices().then(() => setDevices([]))}>
             Sign out all devices
           </button>
-          <button type="button" className="btn" onClick={() => void stopPhoneAccess()}>
-            Stop phone access
-          </button>
-          <button type="button" className="btn" onClick={() => void stopRemoteAccess()}>
-            Stop remote access
-          </button>
+          {phoneOn && <p>Phone access on {phoneOn}</p>}
+          {remoteOn && <p>Public link active</p>}
+          {phoneOn && (
+            <button type="button" className="btn" onClick={() => void stopPhoneAccess().then(() => setPhoneOn(null))}>
+              Stop phone access
+            </button>
+          )}
+          {remoteOn && (
+            <button
+              type="button"
+              className="btn"
+              onClick={() => void stopRemoteAccess().then(() => setRemoteOn(false))}
+            >
+              Stop remote access
+            </button>
+          )}
           <button
             type="button"
             className="btn"

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import {
   createLibraryAnnotation,
   deleteLibraryAnnotation,
@@ -7,13 +7,8 @@ import {
   patchLibraryAnnotation,
 } from "../api/client";
 import type { PaperAnnotation, PaperRecord } from "../api/types";
-import {
-  PdfViewer,
-  type PdfAnnotationMark,
-  type PdfAreaRect,
-  type PdfHighlight,
-  type PdfInteractionMode,
-} from "./PdfViewer";
+import type { PdfAnnotationMark, PdfAreaRect, PdfHighlight, PdfInteractionMode } from "./PdfViewer";
+const PdfViewer = lazy(() => import("./PdfViewer").then((mod) => ({ default: mod.PdfViewer })));
 
 const COLORS = [
   "#facc15",
@@ -353,6 +348,7 @@ export function LibraryPdfNotes({ paper, onError }: Props) {
 
       {pdfOpen ? (
         <div className="library-pdf-frame">
+          <Suspense fallback={<p className="muted">Loading PDF viewer…</p>}>
           <PdfViewer
             url={pdfUrl}
             shiftClickHint={null}
@@ -367,6 +363,7 @@ export function LibraryPdfNotes({ paper, onError }: Props) {
             }}
             onVisiblePageChange={setVisiblePage}
           />
+          </Suspense>
         </div>
       ) : null}
 

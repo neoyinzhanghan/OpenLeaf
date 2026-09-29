@@ -59,6 +59,10 @@ export function lanAddresses(): { wsl: boolean; addresses: LanAddress[] } {
       addresses.push({ address: net.address, name, kind, label });
     }
   }
+  const fixture = process.env.OPENLEAF_E2E_LAN_ADDRESS?.trim();
+  if (fixture && !addresses.some((item) => item.address === fixture)) {
+    addresses.unshift({ address: fixture, name: "e2e", kind: "wifi", label: `e2e · ${fixture}` });
+  }
   addresses.sort((a, b) => rank(a.kind) - rank(b.kind) || privateRank(a.address) - privateRank(b.address));
   let wsl = false;
   try {

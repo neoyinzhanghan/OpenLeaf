@@ -28,19 +28,6 @@ function normalizeText(text: string): string {
   return text.replace(/\r\n/g, "\n").replace(/\r/g, "");
 }
 
-/** Insert where the stale model's prefix still matches the shared text. */
-function indexAfterPrefix(shared: string, prefix: string): number {
-  if (!prefix) return 0;
-  let at = shared.lastIndexOf(prefix);
-  if (at >= 0) return at + prefix.length;
-  for (let i = 1; i < prefix.length; i += 1) {
-    const slice = prefix.slice(i);
-    at = shared.lastIndexOf(slice);
-    if (at >= 0) return at + slice.length;
-  }
-  return shared.length;
-}
-
 function yOffsetAt(model: monaco.editor.ITextModel, pos: monaco.IPosition): number {
   const line = Math.min(Math.max(1, pos.lineNumber), model.getLineCount());
   let offset = 0;
@@ -170,22 +157,10 @@ export function bindYTextToMonaco(
         // IMPORTANT: do not pushEOL before reading offsets — that rewrites the
         // model under the event and desyncs the local caret from keystrokes.
         const eol = model.getEOL();
-        const now = normalizeText(model.getValue());
-        let net = 0;
-        for (const change of event.changes) net += normalizeText(change.text).length - change.rangeLength;
-        const shared = yText.toString();
-        const stale = shared.length !== now.length - net;
         doc.transact(() => {
           const changes = [...event.changes].sort((a, b) => b.rangeOffset - a.rangeOffset);
           for (const change of changes) {
             const text = normalizeText(change.text);
-            if (stale) {
-              // The model missed a remote edit. A raw offset would delete that edit.
-              if (!text || change.rangeLength > 0) continue;
-              const prefix = now.slice(0, change.rangeOffset);
-              yText.insert(indexAfterPrefix(yText.toString(), prefix), text);
-              continue;
-            }
             let startOff = change.rangeOffset;
             let deleteLen = change.rangeLength;
             if (eol !== "\n") {
@@ -202,9 +177,6 @@ export function bindYTextToMonaco(
             if (text) yText.insert(startOff, text);
           }
         }, "monaco");
-        if (normalizeText(model.getValue()) !== yText.toString()) {
-          model.setValue(yText.toString());
-        }
         forceLf(model);
       });
     }),

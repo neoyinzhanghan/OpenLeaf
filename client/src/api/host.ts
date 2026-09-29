@@ -1,3 +1,5 @@
+import { noteHostAuth } from "./hostAuthBus";
+
 export type HostDevice = {
   id: string;
   label: string;
@@ -25,8 +27,9 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     let message = `Request failed (${res.status})`;
     try {
-      const body = (await res.json()) as { error?: string };
+      const body = (await res.json()) as { error?: string; code?: string };
       if (body.error) message = body.error;
+      noteHostAuth(res.status, body.code);
     } catch {
       /* keep message */
     }
@@ -35,7 +38,11 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
-export function fetchLanAddresses(): Promise<{ wsl: boolean; addresses: LanAddress[] }> {
+export function fetchLanAddresses(): Promise<{
+  wsl: boolean;
+  addresses: LanAddress[];
+  running: { address: string; port: number } | null;
+}> {
   return request("/api/host/lan-addresses");
 }
 

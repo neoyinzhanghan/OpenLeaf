@@ -40,8 +40,9 @@ function lineNumberNear(lines: string[], index: number): number | null {
 /**
  * Pull errors, warnings, and box messages out of a TeX / latexmk log.
  * Errors are lines that start with `! `. The line number is the following `l.<n>`.
+ * `defaultFile` is used when TeX has not opened a file yet (errors in the main file).
  */
-export function parseTexLog(log: string): TexIssue[] {
+export function parseTexLog(log: string, opts?: { defaultFile?: string }): TexIssue[] {
   const lines = log.split(/\r?\n/);
   const stack: string[] = [];
   const issues: TexIssue[] = [];
@@ -49,7 +50,7 @@ export function parseTexLog(log: string): TexIssue[] {
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i] ?? "";
     scanFileStack(line, stack);
-    const file = currentFile(stack);
+    const file = currentFile(stack) ?? opts?.defaultFile ?? null;
 
     if (line.startsWith("! ")) {
       const message = line.slice(2).trim() || "TeX error";
@@ -93,7 +94,19 @@ export function parseTexLog(log: string): TexIssue[] {
     }
   }
 
-  return issues;
+  return dedupeIssues(issues);
+}
+
+function dedupeIssues(issues: TexIssue[]): TexIssue[] {
+  const seen = new Set<string>();
+  const unique: TexIssue[] = [];
+  for (const issue of issues) {
+    const key = `${issue.severity}\0${issue.file ?? ""}\0${issue.line ?? ""}\0${issue.message}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(issue);
+  }
+  return unique;
 }
 
 export function texErrorCount(issues: TexIssue[]): number {

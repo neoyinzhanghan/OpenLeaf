@@ -19,13 +19,6 @@ const SKIP_TEX = new Set(["aoas-sample.tex", "aoas-template.tex"]);
 const CITEKEY_OK = /^[A-Za-z][A-Za-z0-9_.:-]*$/;
 
 const PROJECT_NAMES: Record<string, string> = {
-  DeepHeme_CompBio_Retreat_Talk: "DeepHeme CompBio Retreat",
-  Inference_Powered_Prediction: "Inference Powered Prediction",
-  "Label-free_correction_for_label_shift": "Label-free Correction",
-  PBS_thumbnail_specimen_clf: "PBS Thumbnail Classifier",
-  Tj_label_shift_notes: "Tj Label Shift Notes",
-  USCAP2027_DeepHeme_Monitoring: "USCAP 2027 DeepHeme Monitoring",
-  "deepheme-msk-natmed": "DeepHeme MSK NatMed",
   "example-article": "Example Article",
   test_project: "Test Project",
 };

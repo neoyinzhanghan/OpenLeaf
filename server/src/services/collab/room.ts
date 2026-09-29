@@ -19,6 +19,14 @@ import { patchYText, threeWayMerge } from "./textMerge.js";
 const FILES_MAP = "files";
 const META_MAP = "meta";
 
+function collabDebug(message: string): void {
+  const flag = process.env.OPENLEAF_DEBUG ?? "";
+  const nodeDebug = process.env.DEBUG ?? "";
+  if (flag === "1" || flag.includes("collab") || nodeDebug.includes("openleaf:collab")) {
+    console.error(`[collab] ${message}`);
+  }
+}
+
 /** Keep collab sync responsive — large CSVs/JSON under data/ must not enter the Y.Doc. */
 const MAX_COLLAB_FILE_BYTES = 256 * 1024;
 const MAX_COLLAB_SNAPSHOT_BYTES = 2 * 1024 * 1024;
@@ -782,6 +790,7 @@ export class ProjectRoom {
       }
     }
     this.destroyed = true;
+    collabDebug(`room destroy ${this.key}`);
     this.doc.off("update", this.updateHandler);
     this.doc.destroy();
   }
@@ -899,6 +908,7 @@ export async function getOrCreateRoom(
       }
       rooms.set(key, room);
       roomCreating.delete(key);
+      collabDebug(`room create ${key}`);
       return room;
     })();
     roomCreating.set(key, creating);

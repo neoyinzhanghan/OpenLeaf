@@ -66,4 +66,36 @@ describe("parseTexLog", () => {
     assert.match(error.message, /scanning use/);
     assert.equal(error.line, 20);
   });
+
+  it("keeps a single copy when the same error is printed twice", () => {
+    const issues = parseTexLog(`${undefinedControl}\n${undefinedControl}`);
+    const errors = issues.filter(
+      (issue) => issue.severity === "error" && /Undefined control sequence/.test(issue.message),
+    );
+    assert.equal(errors.length, 1);
+  });
+
+  it("attributes an error inside an input file", () => {
+    const log = `
+(./main.tex
+(./sections/body.tex
+! Undefined control sequence.
+l.3 \\nope
+)
+)
+`;
+    const issues = parseTexLog(log);
+    const error = issues.find((issue) => issue.severity === "error");
+    assert.ok(error);
+    assert.equal(error.file, "sections/body.tex");
+    assert.equal(error.line, 3);
+  });
+
+  it("uses the main file when the log has not opened a file yet", () => {
+    const issues = parseTexLog("! Emergency stop.\nl.1 \\stop\n", { defaultFile: "main.tex" });
+    const error = issues.find((issue) => issue.severity === "error");
+    assert.ok(error);
+    assert.equal(error.file, "main.tex");
+    assert.equal(error.line, 1);
+  });
 });

@@ -17,6 +17,8 @@ const execFileAsync = promisify(execFile);
 export type CompileResult = {
   ok: boolean;
   pdfUpdated: boolean;
+  /** Exit 0, no log errors, PDF already on disk, and this run did not rewrite it. */
+  upToDate: boolean;
   issues: TexIssue[];
   engine: LatexEngine;
   usedLatexmk: boolean;
@@ -271,21 +273,35 @@ async function compileProjectUnlocked(
   } catch {
     pdfMtime = 0;
   }
+  // latexmk prints "Nothing to do" and does not repeat an earlier failed run.
+  // The engine log on disk is the record of whether that PDF is actually clean.
+  const jobname = path.basename(projectCfg.mainFile, path.extname(projectCfg.mainFile));
+  let diskLog = "";
+  try {
+    diskLog = fs.readFileSync(path.join(outAbs, `${jobname}.log`), "utf8");
+  } catch {
+    diskLog = "";
+  }
   // Coarse filesystem timestamps can land in the second before Date.now().
-  const pdfUpdated = pdfMtime > 0 && pdfMtime >= started - 2000;
-  const issues = parseTexLog(result.log);
-  const ok = result.code === 0 && texErrorCount(issues) === 0 && pdfUpdated;
-  const pdfRelative = pdfMtime > 0 ? path.relative(cwd, pdfAbs).replace(/\\/g, "/") : null;
+  const pdfExists = pdfMtime > 0;
+  const pdfUpdated = pdfExists && pdfMtime >= started - 2000;
+  const issues = parseTexLog(`${result.log}\n${diskLog}`, { defaultFile: projectCfg.mainFile });
+  const ok = result.code === 0 && texErrorCount(issues) === 0 && pdfExists;
+  const upToDate = ok && !pdfUpdated;
+  const pdfRelative = pdfExists ? path.relative(cwd, pdfAbs).replace(/\\/g, "/") : null;
 
-  if (!pdfUpdated) {
-    onChunk?.("\n[openleaf] compile finished without a new PDF (check log for errors)\n");
-  } else if (!ok) {
-    onChunk?.("\n[openleaf] PDF was not updated cleanly — see the issues in the log\n");
+  if (!ok) {
+    onChunk?.(
+      pdfExists
+        ? "\n[openleaf] PDF was not updated cleanly — see the issues in the log\n"
+        : "\n[openleaf] compile finished without a new PDF (check log for errors)\n",
+    );
   }
 
   return {
     ok,
     pdfUpdated,
+    upToDate,
     issues,
     engine,
     usedLatexmk: useMk,

@@ -3,6 +3,7 @@ import { z, ZodError } from "zod";
 import { getProject } from "../services/projectFs.js";
 import { getShareByHost, guestLogin, guestLogout, guestView, isExpired, verifyLinkToken } from "../services/share.js";
 import { verifyHostCookie } from "../services/hostAuth.js";
+import { isLoopbackOwner, lanAuthIsOpen } from "../services/requestGuard.js";
 import { publicErrorMessage } from "../http/jsonErrors.js";
 import {
   clearCookieHeader,
@@ -32,7 +33,17 @@ export const guestRouter = Router();
 guestRouter.get("/me", async (req, res) => {
   const lane = requestLane(req);
   if (lane.kind === "local") {
-    res.json({ mode: "host", remote: false });
+    const owner = isLoopbackOwner(req);
+    const device = verifyHostCookie(req);
+    if (!owner && !lanAuthIsOpen() && !device) {
+      res.json({ mode: "host-login", remote: true });
+      return;
+    }
+    res.json({
+      mode: "host",
+      remote: !owner,
+      ...(device ? { username: device.username } : {}),
+    });
     return;
   }
   if (lane.kind === "host-gateway") {

@@ -93,7 +93,8 @@ test("a broken compile shows an error badge", async ({ page }) => {
   await page.goto(`${instance.baseURL}/p/bad-paper`);
   await expect(page.locator(".monaco-editor").first()).toBeVisible();
   await page.getByRole("button", { name: "Recompile" }).click();
-  await expect(page.getByRole("button", { name: /errors/ })).toBeVisible();
-  await page.getByRole("button", { name: /errors/ }).click();
+  const badge = page.getByRole("button", { name: "1 error" });
+  await expect(badge).toBeVisible();
+  await badge.click();
   await expect(page.locator(".compile-issue.is-error").first()).toBeVisible();
 });

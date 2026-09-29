@@ -42,3 +42,6 @@ projects/**/.git/
 *~
 # Personal citation library root (runtime data; not the server/src/services/library/ code)
 /library/
+
+# Local agent notes. Never commit.
+.cursor/private-notes.md

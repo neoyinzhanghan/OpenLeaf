@@ -10,11 +10,11 @@
 git clone https://github.com/neoyinzhanghan/OpenLeaf.git
 cd OpenLeaf
 npm ci
-openleaf setup --non-interactive --display-name "Your Name"
-openleaf open
+node cli/bin/openleaf.js setup --non-interactive --display-name "Your Name"
+node cli/bin/openleaf.js open
 ```
 
-`npm ci` installs the `openleaf` command on your PATH, next to Node. `openleaf help` lists every command. If a terminal that was already open cannot find `openleaf`, open a new one. From inside this checkout, `node cli/bin/openleaf.js` is the same program.
+`npm ci` installs the `openleaf` command on your PATH, next to Node. The same terminal may not see that directory yet, so the first setup uses `node cli/bin/openleaf.js`. A new terminal can run `openleaf help`. `openleaf install-cli --add-to-path` writes a PATH line into the shell startup file. `openleaf uninstall-cli` removes the command when it points at this checkout.
 
 On the project list, **Open on your phone** makes a one-time link. Same Wi-Fi is the default when a LAN address exists; each phone is paired. From anywhere starts a tunnel only when you ask. Update with `git pull && npm ci && openleaf restart`, and run `npm run build` when `openleaf doctor` says the editor build is stale.
 
@@ -26,7 +26,7 @@ OpenLeaf is a **local-first LaTeX editor built for hackers and AI**.
 
 It gives you the Overleaf-style experience—split source and PDF, compile in the browser, realtime collab on your LAN—without locking your paper inside someone else’s cloud. Every project is a normal folder on disk. The UI is just a thin window onto files you already own.
 
-Localhost is open on purpose. A public link uses a separate host login. Your collaboration display name is not that login.
+This computer is the owner. A phone or another machine needs a paired device or the host password. Your collaboration display name is not that login.
 
 That is the point. You are not a tenant in a black-box editor. You control **everything**:
 
@@ -44,7 +44,7 @@ Want a custom macro workflow, a metrics file your agent updates, a one-off scrip
 4. Review the PDF, SyncTeX-jump from preview to source, download PDF or ZIP.
 5. Co-edit on the LAN with preset identities; use **History** for per-project git backups.
 
-OpenLeaf is for trusted local or LAN use. Localhost does not ask you to sign in. The public host link does.
+This computer does not ask you to sign in. A phone on the same Wi-Fi, and a public tunnel, both do.
 
 ## Prerequisites
 
@@ -302,7 +302,7 @@ New `trycloudflare.com` hostnames often take 30–90 s (sometimes a couple of mi
 
 ## Security note
 
-OpenLeaf is meant for trusted local or LAN use. On the local port there is **no authentication**: anyone who can reach the host directly can read and write project files and trigger compiles. Do not port-forward it; use the Share feature above (which adds sign-in, project scoping and limits) when someone remote needs access, and only give the credentials to people you trust — a guest with write access can still put arbitrary files into the shared project and run `latexmk` on your machine.
+Loopback on this computer is the owner. Any other device needs a paired session, or the host password. `lanAuth` defaults to `device`. A public tunnel uses pairing or that password. A share guest is confined to one project. Do not port-forward the editor. A guest with write access can still put files into that one project and run `latexmk` there. Machine settings (`projectsRoot`, `lanAuth`, project `latexmkrc`, and the rest of the security switches) can be changed only from this computer.
 
 **OpenLeaf contributors are not responsible for the security, privacy, or integrity of your data.** Public Share links, AI collaborator tokens, host-gateway tunnels, and anything a guest or external model does with access you grant are your responsibility. Before creating a public Share or AI link, the UI requires you to check an acknowledgment of these risks. See [SECURITY.md](SECURITY.md) for the full disclaimer and secret-handling guidance.
 

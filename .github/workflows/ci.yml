@@ -24,3 +24,17 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - name: End-to-end tests
+        if: runner.os == 'Linux'
+        run: |
+          npx playwright install --with-deps chromium
+          npm run e2e
+      - name: Playwright traces
+        if: failure() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: |
+            test-results
+            playwright-report
+          if-no-files-found: ignore

@@ -30,9 +30,20 @@ const apiTarget = `http://127.0.0.1:${apiPort}`;
 function apiProxy(ws = false) {
   return {
     target: ws ? `ws://127.0.0.1:${apiPort}` : apiTarget,
-    changeOrigin: true,
+    changeOrigin: false,
     xfwd: true,
     ws,
+    configure: (proxy: { on: (event: string, handler: (...args: unknown[]) => void) => void }) => {
+      proxy.on("proxyReq", (proxyReq: { removeHeader: (name: string) => void; setHeader: (name: string, value: string) => void }, req: { socket?: { remoteAddress?: string }; headers: { host?: string } }) => {
+        // Drop caller-supplied forwarding headers, then record only this hop.
+        for (const name of ["x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "cf-connecting-ip"]) {
+          proxyReq.removeHeader(name);
+        }
+        const peer = req.socket?.remoteAddress ?? "";
+        if (peer) proxyReq.setHeader("x-forwarded-for", peer);
+        if (req.headers.host) proxyReq.setHeader("x-forwarded-host", req.headers.host);
+      });
+    },
   };
 }
 

@@ -279,7 +279,8 @@ export async function startHostGateway(opts?: { demand?: boolean }): Promise<Hos
     ? ["tunnel", "--no-autoupdate", "run", "--token", token]
     : ["tunnel", "--url", `http://127.0.0.1:${port}`, "--no-autoupdate", "--protocol", "quic"];
 
-  const proc = spawn(bin, args, {
+  const shellScript = bin.endsWith(".sh");
+  const proc = spawn(shellScript ? "sh" : bin, shellScript ? [bin, ...args] : args, {
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, NO_COLOR: "1" },
   });
@@ -343,11 +344,17 @@ export async function startHostGateway(opts?: { demand?: boolean }): Promise<Hos
     await ready;
   } catch (err) {
     g.status = "error";
-    g.error = err instanceof Error ? err.message : String(err);
+    const code = err && typeof err === "object" && "code" in err ? String((err as { code?: unknown }).code) : "";
+    g.error =
+      code === "EACCES"
+        ? "cloudflared could not be started (permission denied). Reinstall it or check OPENLEAF_CLOUDFLARED."
+        : err instanceof Error
+          ? err.message
+          : String(err);
     killProc(g);
     teardown(g);
     persist();
-    console.warn(`[host-gateway] tunnel failed (${g.error})`);
+    console.warn(`[host-gateway] tunnel failed (${g.error})`, code === "EACCES" ? err : "");
     scheduleRestart();
     return g;
   }

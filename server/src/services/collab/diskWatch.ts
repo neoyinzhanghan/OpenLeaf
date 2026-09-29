@@ -103,6 +103,9 @@ export class ProjectDiskWatch {
     watcher.on("error", (err) => {
       console.error(`[collab] disk watch error ${this.projectId}`, err);
     });
+    // The HTTP server keeps the process alive. A watch must not, or tests and
+    // shutdown wait on inotify after the listener is gone.
+    watcher.unref();
     this.watchers.set(dir, watcher);
   }
 

@@ -7186,7 +7186,11 @@ button.lib-badge:hover {
   .guest-field input,
   .home-actions input {
     font-size: 16px;
+    flex: 0 0 auto;
+    width: 100%;
+    height: auto;
     min-height: 44px;
+    max-height: 3rem;
   }
 
   .home {

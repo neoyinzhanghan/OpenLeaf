@@ -431,6 +431,7 @@ async function generateTrackChangesUnlocked(
     return {
       ok: true,
       pdfUpdated: true,
+      upToDate: false,
       issues: [],
       engine: projectCfg.engine ?? "pdflatex",
       usedLatexmk: false,

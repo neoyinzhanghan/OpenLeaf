@@ -6,10 +6,10 @@ import { getConfigDir, loadConfig } from "../config.js";
 import { createPasswordDevice, revokeAllDevices, verifyDeviceToken } from "./hostDevices.js";
 
 /**
- * Password gate for the public host Cloudflare URL.
- * LAN / localhost stays unauthenticated; only the host-gateway hostname
- * requires this cookie. Credentials are generated once and stored locally
- * (never in git, never in the public config PATCH surface).
+ * Password gate for devices that are not the loopback owner.
+ * Loopback is the owner. A paired device cookie or this password is required
+ * everywhere else, unless lanAuth is "open". Credentials are generated once
+ * and stored locally (never in git, never in the public config PATCH surface).
  */
 
 export const HOST_COOKIE = "openleaf_host";

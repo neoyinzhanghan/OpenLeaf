@@ -9,3 +9,5 @@
 | `host-gateway.json` | no | Live host Cloudflare tunnel metadata |
 
 Copy `local.json.example` to `local.json` only if you need overrides. Never commit the `host-*` files.
+
+`OPENLEAF_HOST_PUBLIC_HOSTNAME` is accepted as a Host header without adding it to `allowedHosts`. Loopback is the owner. Other devices need pairing or the host password unless `lanAuth` is `open`.

@@ -136,8 +136,11 @@ function nvmBinDir() {
 
 function writable(dir) {
   try {
-    fs.mkdirSync(dir, { recursive: true });
-    fs.accessSync(dir, fs.constants.W_OK);
+    if (fs.existsSync(dir)) {
+      fs.accessSync(dir, fs.constants.W_OK);
+      return true;
+    }
+    fs.accessSync(path.dirname(dir), fs.constants.W_OK);
     return true;
   } catch {
     return false;
@@ -152,12 +155,16 @@ function linkTarget(linkPath) {
   }
 }
 
-function installUnix(dir) {
+function installUnix(dir, force) {
   const link = path.join(dir, "openleaf");
   const current = linkTarget(link);
   if (current !== null) {
     const resolved = path.resolve(dir, current);
     if (resolved === entry) return link;
+    if (fs.existsSync(resolved) && !force) {
+      console.error(`openleaf already points to ${resolved}; run openleaf install-cli --force here to switch.`);
+      return null;
+    }
     fs.unlinkSync(link);
     fs.symlinkSync(entry, link);
     return link;
@@ -211,7 +218,35 @@ function ensureShellPath(binDir) {
   }
 }
 
+function uninstall(dir) {
+  if (process.platform === "win32") {
+    for (const name of ["openleaf.cmd", "openleaf"]) {
+      const file = path.join(dir, name);
+      if (fs.existsSync(file)) fs.unlinkSync(file);
+    }
+    console.log(`Removed openleaf commands from ${dir}`);
+    return;
+  }
+  const link = path.join(dir, "openleaf");
+  const current = linkTarget(link);
+  if (current === null) {
+    console.error(`No openleaf command in ${dir}`);
+    return;
+  }
+  const resolved = path.resolve(dir, current);
+  if (resolved !== entry) {
+    console.error(`openleaf at ${link} points to ${resolved}, not this checkout. Not removed.`);
+    return;
+  }
+  fs.unlinkSync(link);
+  console.log(`Removed ${link}`);
+}
+
 function main() {
+  const force = process.argv.includes("--force");
+  const addToPath = process.argv.includes("--add-to-path");
+  const removing = process.argv.includes("--uninstall");
+  if ((process.env.CI || process.env.OPENLEAF_SKIP_BIN === "1") && !force && !addToPath && !removing) return;
   if (!fs.existsSync(entry)) {
     console.error(`openleaf launcher not found at ${entry}`);
     return;
@@ -228,12 +263,15 @@ function main() {
     console.error("Could not install the openleaf command onto PATH. From the repository, run: node cli/bin/openleaf.js");
     return;
   }
-  const installed = process.platform === "win32" ? installWindows(dir) : installUnix(dir);
-  if (!installed) {
-    console.error(`A different openleaf command is already in ${dir}. From the repository, run: node cli/bin/openleaf.js`);
+  if (removing) {
+    uninstall(dir);
     return;
   }
+  fs.mkdirSync(dir, { recursive: true });
+  const installed = process.platform === "win32" ? installWindows(dir) : installUnix(dir, force);
+  if (!installed) return;
   console.log(`openleaf command: ${installed}`);
+  if (!addToPath) return;
   const rc = ensureShellPath(dir);
   if (rc) console.log(`PATH updated in ${rc}. Open a new terminal, then run: openleaf help`);
 }

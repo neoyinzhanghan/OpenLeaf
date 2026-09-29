@@ -66,9 +66,7 @@ describe("openleaf cli", { concurrency: 1 }, () => {
     assert.equal(fs.existsSync(link), true, result.stdout + result.stderr);
     if (process.platform !== "win32") {
       assert.equal(fs.readlinkSync(link), path.join(repoRoot, "cli", "bin", "openleaf.js"));
-      const rc = fs.readFileSync(path.join(home, ".bashrc"), "utf8");
-      assert.match(rc, /# openleaf-cli/);
-      assert.match(rc, /bin-dir/);
+      assert.equal(fs.existsSync(path.join(home, ".bashrc")), false);
     }
     const again = spawnSync(process.execPath, [path.join(repoRoot, "scripts", "install-cli-bin.mjs")], {
       env,
@@ -76,8 +74,8 @@ describe("openleaf cli", { concurrency: 1 }, () => {
     });
     assert.equal(again.status, 0, again.stderr);
     if (process.platform !== "win32") {
-      const rc = fs.readFileSync(path.join(home, ".bashrc"), "utf8");
-      assert.equal(rc.split("# openleaf-cli").length, 2);
+      assert.equal(fs.readlinkSync(link), path.join(repoRoot, "cli", "bin", "openleaf.js"));
+      assert.equal(fs.existsSync(path.join(home, ".bashrc")), false);
     }
   });
 
@@ -95,6 +93,8 @@ describe("openleaf cli", { concurrency: 1 }, () => {
       "openleaf doctor",
       "openleaf support-report",
       "openleaf account reset-password",
+      "openleaf install-cli",
+      "openleaf uninstall-cli",
       "host password",
     ]) {
       assert.match(result.stdout, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
@@ -443,10 +443,10 @@ describe("openleaf cli", { concurrency: 1 }, () => {
       `https://example.trycloudflare.com/join/vega-callisto-418`,
       `openleaf_host=${cookie}`,
       "OPENLEAF_HOST_TUNNEL_TOKEN=named-tunnel-token-value-123456",
-      "manuscript /home/yinzh/papers/secret/main.tex",
+      "manuscript /home/ada/papers/secret/main.tex",
     ].join("\n");
     const cleaned = redactText(sample);
-    for (const secret of [hostPassword, guestPassword, aiToken, libraryToken, cookie, "named-tunnel-token-value-123456", "/home/yinzh/papers/secret/main.tex"]) {
+    for (const secret of [hostPassword, guestPassword, aiToken, libraryToken, cookie, "named-tunnel-token-value-123456", "/home/ada/papers/secret/main.tex"]) {
       assert.equal(cleaned.includes(secret), false, secret);
     }
 
