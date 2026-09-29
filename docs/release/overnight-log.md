@@ -45,3 +45,44 @@ Isolated instances only (`OPENLEAF_PORT` not 8787, separate config and projects 
 - Each failure was `spawn pdflatex ENOENT`. The workflow installs TeX only on Ubuntu.
 - Compile-safety and historical-checkpoint tests now skip when `pdflatex` is missing. The latexmkrc case also skips when `latexmk` is missing, so a pdflatex fallback cannot count as proof that project rc files stay off.
 - Track-changes compile cases already skipped without latexdiff.
+
+## 2026-09-29T09:50Z — night 2, P0 fixes pushed
+
+- Tip before this night's commits: `82c3745`.
+- `5e151ad` keeps both editors' text, treats an unchanged PDF as success, confines machine settings to the loopback owner, makes pairing a POST with a nonce, and shows the sign-in page to an unpaired LAN visitor.
+- Red runs before those fixes, then green after:
+  - Two `y-websocket` clients: sync timed out around 8s, `synced` stayed false. After the message buffer, they converge.
+  - Second compile after the PDF was aged 10 seconds: `ok` false, log ended with "Latexmk: Nothing to do". After the log-and-file rule, `ok` and `upToDate` are true.
+  - Paired device PATCH of a protected key returned 200. After the loopback guard, 403. Pairing GET returned 302. After the confirmation page, 200. Unpaired `/me` was `host`. After the lane check, `host-login`.
+  - Forged `X-Forwarded-For` through a stand-in on `127.0.0.2` with `localAddress` set returned 200. After the last-hop rule, 401.
+  - Tex log dedupe: 2 !== 1. `defaultFile`: null !== `main.tex`.
+  - A device revoked 100 days ago was still listed. After the 90-day prune, it is gone.
+- The installer behavior change did not have its own red run that night. The red run is below.
+- Stash `stash@{0}` was not applied, popped, or dropped. Port 8787 pid 284922 was not restarted.
+
+## 2026-09-29T09:52Z — CI run 36552003573 on `5e151ad` failed
+
+- Ubuntu: server 203 pass, 4 skip, 0 fail. CLI "installs the openleaf command" `false !== true` at `cli.test.ts:66`.
+- macOS: that same installer failure, plus `listen EADDRNOTAVAIL: address not available 127.0.0.2`, plus status exit 1 ("not this OpenLeaf install").
+- Fresh clone of `5e151ad` on this machine: installer 1, server 207 pass / 0 skip, CLI 23 pass / 0 skip, e2e 18 passed. `setup` exit 3 because port 8787 is taken. Global `openleaf` unchanged.
+
+## 2026-09-29T10:02Z — installer and macOS listener
+
+- Red: `CI=1` with `OPENLEAF_BIN_DIR` set to an empty temp directory. The script exited 0 and created no symlink. Cause: every `CI` process returned immediately, including an explicit install. GitHub Actions sets `CI` for `npm test`.
+- Green after: the same command creates the symlink. `CI=1` and `npm_lifecycle_event=postinstall` still creates nothing.
+- macOS listener lookup is `lsof -nP -iTCP:PORT -sTCP:LISTEN -t`. The proxy test binds `127.0.0.2` when that address exists.
+- Commit `bc42f0b`.
+
+## 2026-09-29T10:03Z — CI run 36553071615 on `bc42f0b`
+
+- macOS unit tests got past the listener. Status printed a healthy process and port, then exited 1. Cause: a missing `pdflatex` is an error, and status did not print that check. Ubuntu on this run was still going when the next commit was pushed.
+
+## 2026-09-29T10:07Z — status exit matches the lines it prints
+
+- `openleaf status` now exits from process, port, API, app, and tunnel. `openleaf doctor` still reports a missing engine.
+- Local proof: the checkout-server test passed with `PATH` set to a directory that does not contain `pdflatex`.
+- Commit `fed77e7`. Fresh clone fast-forwarded to that SHA and `npm run e2e` passed again (18, 36.0s).
+- CI run 36553599677 on `fed77e7`: macOS passed. Ubuntu e2e failed two tests. The example uses `booktabs`, which is not in `texlive-latex-base`, so compile returned 422, the PDF download was 404, and the editor pill stayed "Error". The collab test was waiting on that pill.
+- `54cccb1` installs `texlive-latex-recommended` on Ubuntu, waits for the collab sync flag, and requires compile HTTP 200 before the PDF download.
+- CI run 36554366160 on `54cccb1` is green. Ubuntu ran e2e. macOS ran unit tests and build, and skipped e2e and TeX.
+
