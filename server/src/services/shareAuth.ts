@@ -193,6 +193,9 @@ export function guestRouteDenial(req: Request, session: ShareSession): { status:
     if (!s.allowDownload) return { status: 403, error: "Downloads are disabled for this link" };
     return null;
   }
+  if (sub === "/file-access/rules" && m !== "GET") {
+    return { status: 403, error: "Only the host can change file access" };
+  }
 
   if (m !== "GET" && guestTouchesProtectedPath(req, sub)) {
     return { status: 403, error: "This path is not writable through a share link" };

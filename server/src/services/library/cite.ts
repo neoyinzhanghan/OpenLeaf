@@ -174,7 +174,13 @@ export async function rewriteProjectBibFromLibrary(
 export async function citeIntoProject(
   projectId: string,
   opts: { citekey: string; file?: string; line?: number },
+  actor?: import("../fileAccess.js").FileAccessActor,
 ): Promise<{ bibFile: string; inserted: boolean }> {
+  if (actor) {
+    const { assertCanWrite } = await import("../fileAccess.js");
+    await assertCanWrite(projectId, findBibFile(projectId), actor);
+    if (opts.file) await assertCanWrite(projectId, opts.file, actor);
+  }
   const { bibFile } = await syncCitekeyToBib(projectId, opts.citekey);
   let inserted = false;
   if (opts.file && opts.line && opts.line > 0) {

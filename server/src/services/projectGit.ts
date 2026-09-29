@@ -272,6 +272,15 @@ export async function listProjectCommits(
  * Restore project working tree files from a commit (does not move HEAD).
  * Also removes working-tree files that are absent from that commit (except .openleaf / .git).
  */
+/** Paths a restore would overwrite or remove, so a non-local actor can be checked first. */
+export async function restoreTouchPaths(id: string, hash: string): Promise<string[]> {
+  const diff = await runGit(id, ["diff", "--name-only", hash], { allowFailure: true });
+  return diff.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
 export async function restoreProjectCommit(id: string, hash: string): Promise<void> {
   if (!isGitEnabled()) {
     throw Object.assign(new Error("Git backups are disabled"), { status: 400 });

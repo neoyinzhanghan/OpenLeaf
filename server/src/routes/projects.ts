@@ -35,7 +35,6 @@ import {
   getProjectIdentities,
   getProjectIdentity,
   getTree,
-  isGuestForbiddenWritePath,
   listProjects,
   mkdirPath,
   pdfPathAbs,
@@ -57,6 +56,13 @@ import { projectShareRouter } from "./share.js";
 import { projectAiRouter, projectAiShareRouter } from "./ai.js";
 import { citeIntoProject } from "../services/library/cite.js";
 import {
+  annotateTreeAccess,
+  assertCanWrite,
+  listFileAccess,
+  putFileAccessRules,
+  resolveActor,
+} from "../services/fileAccess.js";
+import {
   checkProjectCitationIntegrity,
   listCitationInstances,
   scanProjectCitations,
@@ -77,12 +83,15 @@ function statusOf(err: unknown): number {
   return 500;
 }
 
-function rejectGuestProtectedWrite(req: { access?: Access }, rel: string, res: { status: (code: number) => { json: (body: unknown) => void } }): boolean {
-  if (req.access?.mode === "guest" && isGuestForbiddenWritePath(rel)) {
-    res.status(403).json({ error: "This path is not writable through a share link" });
-    return true;
+function errorBody(err: unknown): Record<string, unknown> {
+  const body: Record<string, unknown> = { error: publicErrorMessage(err) };
+  if (err && typeof err === "object") {
+    const extra = err as { code?: unknown; path?: unknown; reason?: unknown };
+    if (typeof extra.code === "string") body.code = extra.code;
+    if (typeof extra.path === "string") body.path = extra.path;
+    if (typeof extra.reason === "string") body.reason = extra.reason;
   }
-  return false;
+  return body;
 }
 
 async function authorFromRequest(
@@ -176,12 +185,14 @@ projectsRouter.get("/:id/tree", async (req, res) => {
     const at = typeof req.query.at === "string" ? req.query.at : undefined;
     if (at) {
       const { listTreeAtCommit } = await import("../services/timeline.js");
-      res.json(await listTreeAtCommit(req.params.id, at));
+      const tree = await listTreeAtCommit(req.params.id, at);
+      res.json(await annotateTreeAccess(req.params.id, tree, resolveActor(req)));
       return;
     }
     const branchId = await resolveBranchIdWithActive(req, req.params.id);
     const root = await branchRoot(req.params.id, branchId);
-    res.json(await getTree(req.params.id, root));
+    const tree = await getTree(req.params.id, root);
+    res.json(await annotateTreeAccess(req.params.id, tree, resolveActor(req)));
   } catch (err) {
     res.status(statusOf(err)).json({ error: publicErrorMessage(err) });
   }
@@ -225,7 +236,7 @@ filesRouter.put(/.*/, async (req, res) => {
       res.status(400).json({ error: "Missing file path" });
       return;
     }
-    if (rejectGuestProtectedWrite(req, rel, res)) return;
+    await assertCanWrite(id, rel, resolveActor(req));
     const branchId = await resolveBranchIdWithActive(req, id, { mutate: true });
     const root = await branchRoot(id, branchId);
     await writeFile(id, rel, body.content, body.encoding ?? "utf8", root);
@@ -235,7 +246,7 @@ filesRouter.put(/.*/, async (req, res) => {
     const git = await commitAfterChange(id, `Save ${rel}`, req);
     res.json({ ok: true, path: rel, git });
   } catch (err) {
-    res.status(statusOf(err)).json({ error: publicErrorMessage(err) });
+    res.status(statusOf(err)).json(errorBody(err));
   }
 });
 
@@ -247,7 +258,7 @@ filesRouter.delete(/.*/, async (req, res) => {
       res.status(400).json({ error: "Missing file path" });
       return;
     }
-    if (rejectGuestProtectedWrite(req, rel, res)) return;
+    await assertCanWrite(id, rel, resolveActor(req));
     const branchId = await resolveBranchIdWithActive(req, id, { mutate: true });
     const root = await branchRoot(id, branchId);
     await deletePath(id, rel, root);
@@ -255,7 +266,37 @@ filesRouter.delete(/.*/, async (req, res) => {
     const git = await commitAfterChange(id, `Delete ${rel}`, req);
     res.json({ ok: true, path: rel, git });
   } catch (err) {
-    res.status(statusOf(err)).json({ error: publicErrorMessage(err) });
+    res.status(statusOf(err)).json(errorBody(err));
+  }
+});
+
+projectsRouter.get("/:id/file-access", async (req, res) => {
+  try {
+    res.json(await listFileAccess(req.params.id));
+  } catch (err) {
+    res.status(statusOf(err)).json(errorBody(err));
+  }
+});
+
+projectsRouter.put("/:id/file-access/rules", async (req, res) => {
+  const schema = z.object({
+    upsert: z
+      .array(
+        z.object({
+          path: z.string().min(1),
+          level: z.enum(["everyone", "host", "local"]),
+        }),
+      )
+      .optional(),
+    delete: z.array(z.string().min(1)).optional(),
+  });
+  try {
+    const body = schema.parse(req.body ?? {});
+    const view = await putFileAccessRules(req.params.id, resolveActor(req), body);
+    notifyProjectTreeChange(req.params.id, { op: "bump" });
+    res.json(view);
+  } catch (err) {
+    res.status(statusOf(err)).json(errorBody(err));
   }
 });
 
@@ -308,7 +349,7 @@ projectsRouter.post("/:id/library/cite", async (req, res) => {
       return;
     }
     const body = schema.parse(req.body);
-    const result = await citeIntoProject(req.params.id, body);
+    const result = await citeIntoProject(req.params.id, body, resolveActor(req));
     notifyProjectTreeChange(req.params.id, { op: "write", path: result.bibFile });
     if (result.inserted && body.file) {
       notifyProjectTreeChange(req.params.id, { op: "write", path: body.file });
@@ -600,6 +641,13 @@ projectsRouter.post("/:id/history/restore", async (req, res) => {
   try {
     const body = schema.parse(req.body);
     const author = await authorFromRequest(req.params.id, req);
+    const actor = resolveActor(req);
+    if (actor !== "local") {
+      const { restoreTouchPaths } = await import("../services/projectGit.js");
+      for (const rel of await restoreTouchPaths(req.params.id, body.hash)) {
+        await assertCanWrite(req.params.id, rel, actor);
+      }
+    }
     await flushProjectRoom(req.params.id, {
       author,
       message: "Pre-restore save",
@@ -612,7 +660,7 @@ projectsRouter.post("/:id/history/restore", async (req, res) => {
     notifyProjectTreeChange(req.params.id, { op: "bump" });
     res.json({ ok: true });
   } catch (err) {
-    res.status(statusOf(err)).json({ error: publicErrorMessage(err) });
+    res.status(statusOf(err)).json(errorBody(err));
   }
 });
 
@@ -853,6 +901,17 @@ projectsRouter.post("/:id/timeline/merge/start", async (req, res) => {
       commitDirtyTarget: body.commitDirtyTarget,
       preMergeMessage: body.preMergeMessage,
     });
+    const actor = resolveActor(req);
+    if (actor !== "local") {
+      const paths = [...session.conflicts.map((c) => c.path), ...session.autoMerged];
+      try {
+        for (const rel of paths) await assertCanWrite(req.params.id, rel, actor);
+      } catch (err) {
+        const { abortBranchMerge } = await import("../services/branchMerge.js");
+        await abortBranchMerge(req.params.id);
+        throw err;
+      }
+    }
     // Disk now has merge state / conflict markers — refresh live collab from disk.
     await clearCollabSnapshot(req.params.id, targetBranchId);
     await reseedProjectRoom(req.params.id, targetBranchId);
@@ -911,6 +970,7 @@ projectsRouter.post("/:id/timeline/merge/resolve", async (req, res) => {
       return;
     }
     const body = schema.parse(req.body);
+    await assertCanWrite(req.params.id, body.path, resolveActor(req));
     const { resolveMergeConflict } = await import("../services/branchMerge.js");
     const session = await resolveMergeConflict(req.params.id, body);
     await clearCollabSnapshot(req.params.id, session.targetBranchId);
@@ -967,7 +1027,7 @@ projectsRouter.post("/:id/fs/mkdir", async (req, res) => {
   const schema = z.object({ path: z.string().min(1) });
   try {
     const body = schema.parse(req.body);
-    if (rejectGuestProtectedWrite(req, body.path, res)) return;
+    await assertCanWrite(req.params.id, body.path, resolveActor(req));
     const branchId = await resolveBranchIdWithActive(req, req.params.id, { mutate: true });
     const root = await branchRoot(req.params.id, branchId);
     await mkdirPath(req.params.id, body.path, root);
@@ -975,7 +1035,7 @@ projectsRouter.post("/:id/fs/mkdir", async (req, res) => {
     const git = await commitAfterChange(req.params.id, `mkdir ${body.path}`, req);
     res.status(201).json({ ok: true, path: body.path, git });
   } catch (err) {
-    res.status(statusOf(err)).json({ error: publicErrorMessage(err) });
+    res.status(statusOf(err)).json(errorBody(err));
   }
 });
 
@@ -986,7 +1046,7 @@ projectsRouter.post("/:id/fs/create", async (req, res) => {
   });
   try {
     const body = schema.parse(req.body);
-    if (rejectGuestProtectedWrite(req, body.path, res)) return;
+    await assertCanWrite(req.params.id, body.path, resolveActor(req));
     const branchId = await resolveBranchIdWithActive(req, req.params.id, { mutate: true });
     const root = await branchRoot(req.params.id, branchId);
     await createEmptyFile(req.params.id, body.path, body.content ?? "", root);
@@ -994,7 +1054,7 @@ projectsRouter.post("/:id/fs/create", async (req, res) => {
     const git = await commitAfterChange(req.params.id, `Create ${body.path}`, req);
     res.status(201).json({ ok: true, path: body.path, git });
   } catch (err) {
-    res.status(statusOf(err)).json({ error: publicErrorMessage(err) });
+    res.status(statusOf(err)).json(errorBody(err));
   }
 });
 
@@ -1005,7 +1065,9 @@ projectsRouter.post("/:id/fs/rename", async (req, res) => {
   });
   try {
     const body = schema.parse(req.body);
-    if (rejectGuestProtectedWrite(req, body.from, res) || rejectGuestProtectedWrite(req, body.to, res)) return;
+    const actor = resolveActor(req);
+    await assertCanWrite(req.params.id, body.from, actor);
+    await assertCanWrite(req.params.id, body.to, actor);
     const branchId = await resolveBranchIdWithActive(req, req.params.id, { mutate: true });
     const root = await branchRoot(req.params.id, branchId);
     await renamePath(req.params.id, body.from, body.to, root);
@@ -1013,7 +1075,7 @@ projectsRouter.post("/:id/fs/rename", async (req, res) => {
     const git = await commitAfterChange(req.params.id, `Rename ${body.from} → ${body.to}`, req);
     res.json({ ok: true, from: body.from, to: body.to, git });
   } catch (err) {
-    res.status(statusOf(err)).json({ error: publicErrorMessage(err) });
+    res.status(statusOf(err)).json(errorBody(err));
   }
 });
 

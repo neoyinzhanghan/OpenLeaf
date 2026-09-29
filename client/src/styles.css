@@ -7584,5 +7584,98 @@ button.lib-badge:hover {
   }
 }
 
+.tree-access {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  margin-left: 0.35rem;
+  color: var(--muted, #667);
+  vertical-align: middle;
+}
+
+.tree-access-label {
+  font-size: 0.68rem;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+}
+
+.file-access-banner {
+  padding: 0.3rem 0.75rem;
+  font-size: 0.82rem;
+  background: color-mix(in srgb, var(--warn, #b86e00) 12%, transparent);
+  border-bottom: 1px solid var(--line);
+}
+
+.context-menu-access {
+  border: 0;
+  margin: 0.25rem 0;
+  padding: 0.15rem 0.6rem 0.35rem;
+  min-width: 14rem;
+}
+
+.context-menu-access legend {
+  font-size: 0.75rem;
+  padding: 0;
+}
+
+.context-menu-access label {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  font-size: 0.85rem;
+  padding: 0.15rem 0;
+}
+
+.context-menu-access label.is-disabled,
+.context-menu-access button:disabled {
+  opacity: 0.55;
+}
+
+.context-menu-access-reason {
+  margin: 0.2rem 0 0;
+  font-size: 0.75rem;
+  color: var(--muted, #667);
+}
+
+.file-access-rules {
+  list-style: none;
+  margin: 0;
+  padding: 0 1rem;
+}
+
+.file-access-rules li {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.file-access-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: end;
+  padding: 0.75rem 1rem;
+}
+
+.file-access-add label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.8rem;
+}
+
+.file-access-protected {
+  padding: 0 1rem 1rem;
+}
+
+.file-access-protected li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin: 0.4rem 0;
+}
+
 
 

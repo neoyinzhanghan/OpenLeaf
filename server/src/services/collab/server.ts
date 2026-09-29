@@ -11,6 +11,7 @@ import { verifyHostCookie } from "../hostAuth.js";
 import { hostHeaderAllowed, isLoopbackOwner, lanAuthIsOpen, originAllowed } from "../requestGuard.js";
 import { requestLane, resolveGuest } from "../shareAuth.js";
 import { getOrCreateRoom, releaseRoomIfEmpty, type ProjectRoom } from "./room.js";
+import { changedYjsFiles, revertDeniedYjsFiles, snapshotYjsFiles, type FileAccessActor } from "../fileAccess.js";
 
 const messageSync = 0;
 const messageAwareness = 1;
@@ -119,6 +120,7 @@ export function attachCollabServer(httpServer: HttpServer): WebSocketServer {
 
       let identity: Identity | undefined;
       let readOnly = false;
+      let actor: FileAccessActor = "local";
       let branchId = parsed.branchId;
       const lane = requestLane(req);
       if (lane.kind === "share") {
@@ -135,6 +137,7 @@ export function attachCollabServer(httpServer: HttpServer): WebSocketServer {
           return;
         }
         identity = { id: r.guest.id, name: r.guest.name, color: r.guest.color };
+        actor = "guest";
         const bound = r.session.branchId || "main";
         const requested = parsed.branchId || bound;
         branchId = requested;
@@ -144,12 +147,14 @@ export function attachCollabServer(httpServer: HttpServer): WebSocketServer {
           rejectUpgrade(socket, 401, "Unauthorized");
           return;
         }
+        actor = "device";
         identity = await getProjectIdentity(parsed.projectId, parsed.identityId);
       } else if (lane.kind === "local") {
         if (!isLoopbackOwner(req) && !lanAuthIsOpen() && !verifyHostCookie(req)) {
           rejectUpgrade(socket, 401, "Unauthorized");
           return;
         }
+        actor = isLoopbackOwner(req) || lanAuthIsOpen() ? "local" : "device";
         identity = await getProjectIdentity(parsed.projectId, parsed.identityId);
       } else {
         rejectUpgrade(socket, 401, "Unauthorized");
@@ -161,7 +166,7 @@ export function attachCollabServer(httpServer: HttpServer): WebSocketServer {
       }
 
       wss.handleUpgrade(req, socket, head, (ws) => {
-        wss.emit("connection", ws, req, { ...parsed, branchId, identity, readOnly });
+        wss.emit("connection", ws, req, { ...parsed, branchId, identity, readOnly, actor });
       });
     })();
   });
@@ -177,6 +182,7 @@ export function attachCollabServer(httpServer: HttpServer): WebSocketServer {
         branchId: string;
         identity: Identity;
         readOnly: boolean;
+        actor: FileAccessActor;
       },
     ) => {
       // The client sends sync step 1 in the same turn as the upgrade. Messages
@@ -260,7 +266,19 @@ export function attachCollabServer(httpServer: HttpServer): WebSocketServer {
                   syncProtocol.readSyncStep1(decoder, encoder, room.doc);
                 }
               } else {
+                const before = snapshotYjsFiles(room.doc);
                 syncProtocol.readSyncMessage(decoder, encoder, room.doc, conn);
+                const changed = changedYjsFiles(room.doc, before);
+                if (changed.length > 0) room.holdDirty(changed);
+                void revertDeniedYjsFiles(room.doc, parsed.projectId, parsed.actor, before)
+                  .then((reverted) => {
+                    room.forgetDirty(reverted);
+                    room.releaseHold(changed.filter((filePath) => !reverted.includes(filePath)));
+                  })
+                  .catch((err) => {
+                    console.error("[collab] file access revert failed", err);
+                    room.forgetDirty(changed);
+                  });
               }
               if (encoding.length(encoder) > 1) send(conn, encoder);
               break;

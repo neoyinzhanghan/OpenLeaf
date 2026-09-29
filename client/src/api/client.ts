@@ -5,6 +5,8 @@ import type {
   CommentThread,
   CompileResult,
   DiffHighlightsResult,
+  FileAccessLevel,
+  FileAccessView,
   FilePayload,
   GitCommitInfo,
   GitCommitResult,
@@ -331,6 +333,20 @@ export function createProject(id: string, fromTemplate?: string): Promise<Projec
   return request("/api/projects", {
     method: "POST",
     body: JSON.stringify({ id, fromTemplate }),
+  });
+}
+
+export function getFileAccess(id: string): Promise<FileAccessView> {
+  return request(`/api/projects/${encodeURIComponent(id)}/file-access`);
+}
+
+export function putFileAccessRules(
+  id: string,
+  body: { upsert?: { path: string; level: FileAccessLevel }[]; delete?: string[] },
+): Promise<FileAccessView> {
+  return request(`/api/projects/${encodeURIComponent(id)}/file-access/rules`, {
+    method: "PUT",
+    body: JSON.stringify(body),
   });
 }
 

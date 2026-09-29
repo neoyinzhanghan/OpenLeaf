@@ -192,6 +192,8 @@ export class ProjectRoom {
   readonly generation: number;
   private clients = new Set<unknown>();
   private dirtyPaths = new Set<string>();
+  /** Paths whose latest update is still being checked against file access. */
+  private heldDirty = new Set<string>();
   /** Last content written to disk or ingested from disk — the 3-way merge base. */
   private diskBaseline = new Map<string, string>();
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -214,7 +216,7 @@ export class ProjectRoom {
     this.files = this.doc.getMap(FILES_MAP);
     this.meta = this.doc.getMap(META_MAP);
     this.updateHandler = (_update, origin) => {
-      if (origin === "disk-seed" || origin === "disk-flush" || origin === "tree-sync") return;
+      if (origin === "disk-seed" || origin === "disk-flush" || origin === "tree-sync" || origin === "access-revert") return;
       // comments.json lives on disk; only bump meta for live clients
       if (origin === "comments") {
         this.schedulePersist();
@@ -231,7 +233,8 @@ export class ProjectRoom {
       if (
         transaction.origin === "disk-seed" ||
         transaction.origin === "disk-flush" ||
-        transaction.origin === "tree-sync"
+        transaction.origin === "tree-sync" ||
+        transaction.origin === "access-revert"
       ) {
         return;
       }
@@ -279,6 +282,29 @@ export class ProjectRoom {
     return this.clients.size;
   }
 
+  /** Keep these paths out of the next disk flush until file access accepts them. */
+  holdDirty(paths: string[]): void {
+    for (const filePath of paths) this.heldDirty.add(filePath);
+  }
+
+  /** Drop a denied edit so it is neither flushed nor held. */
+  forgetDirty(paths: string[]): void {
+    for (const filePath of paths) {
+      this.dirtyPaths.delete(filePath);
+      this.heldDirty.delete(filePath);
+    }
+  }
+
+  /** An accepted edit may flush. Reschedule when one is still dirty. */
+  releaseHold(paths: string[]): void {
+    let pending = false;
+    for (const filePath of paths) {
+      this.heldDirty.delete(filePath);
+      if (this.dirtyPaths.has(filePath)) pending = true;
+    }
+    if (pending) this.scheduleFlush();
+  }
+
   private scheduleFlush(): void {
     const ms = loadConfig().collab.flushMs;
     if (this.flushTimer) clearTimeout(this.flushTimer);
@@ -311,8 +337,10 @@ export class ProjectRoom {
         clearTimeout(this.flushTimer);
         this.flushTimer = null;
       }
-      const paths = [...this.dirtyPaths];
+      const held = [...this.dirtyPaths].filter((filePath) => this.heldDirty.has(filePath));
+      const paths = [...this.dirtyPaths].filter((filePath) => !this.heldDirty.has(filePath));
       this.dirtyPaths.clear();
+      for (const filePath of held) this.dirtyPaths.add(filePath);
 
       // If disk changed under us (external write while the path was dirty),
       // merge that in *before* writing CRDT → disk so we never revert it.

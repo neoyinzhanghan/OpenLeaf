@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { FileChangeDiff, TreeNode } from "../api/types";
+import type { FileAccessLevel, FileChangeDiff, TreeNode } from "../api/types";
 
 export type FileChangeHint = Pick<FileChangeDiff, "status" | "additions" | "deletions">;
 
@@ -16,6 +16,9 @@ type Props = {
   canMutateActive: boolean;
   /** Hide every mutating control (read-only guest). */
   readOnly?: boolean;
+  /** Who is looking at the tree. Guests see locks; only local and device can change them. */
+  actor?: "local" | "device" | "guest";
+  onSetAccess?: (path: string, level: FileAccessLevel) => void;
   /** When Differences is on — Cursor-style +/− badges per path. */
   fileChanges?: Record<string, FileChangeHint> | null;
 };
@@ -53,6 +56,108 @@ function isNoopOrCyclicDrop(from: string, toDir: string): boolean {
 
 function readDragPath(e: React.DragEvent): string | null {
   return e.dataTransfer.getData(DRAG_MIME) || null;
+}
+
+function accessTitle(node: TreeNode): string | undefined {
+  const access = node.access;
+  if (!access) return undefined;
+  if (access.protected) {
+    return "Protected: runs code or holds settings on the host computer. Edit it on that computer.";
+  }
+  if (access.level === "host") {
+    return "Guests and AI links cannot edit this. This computer and paired devices can.";
+  }
+  if (access.level === "local") {
+    return "Only this computer can edit this. Phones, guests, and AI links are read-only.";
+  }
+  return undefined;
+}
+
+function AccessMark({ node }: { node: TreeNode }) {
+  const access = node.access;
+  if (!access) return null;
+  const title = accessTitle(node);
+  if (access.protected) {
+    return (
+      <span className="tree-access" title={title}>
+        <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden>
+          <path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z" fill="none" stroke="currentColor" strokeWidth="2" />
+        </svg>
+      </span>
+    );
+  }
+  if (access.level !== "host" && access.level !== "local") return null;
+  return (
+    <span className="tree-access" title={title}>
+      <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden>
+        <rect x="5" y="11" width="14" height="10" rx="2" fill="none" stroke="currentColor" strokeWidth="2" />
+        <path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" strokeWidth="2" />
+      </svg>
+      <span className="tree-access-label">{access.level}</span>
+    </span>
+  );
+}
+
+function WhoCanEdit({
+  node,
+  actor,
+  onSetAccess,
+  close,
+}: {
+  node: TreeNode;
+  actor: "local" | "device" | "guest";
+  onSetAccess?: (path: string, level: FileAccessLevel) => void;
+  close: () => void;
+}) {
+  const access = node.access;
+  if (access?.protected) {
+    return (
+      <button type="button" className="context-menu-access" disabled title={accessTitle(node)}>
+        Who can edit
+      </button>
+    );
+  }
+  const level = access?.level ?? "everyone";
+  const guestBlocked = actor === "guest";
+  const localLock = level === "local" && actor !== "local";
+  const reason = guestBlocked
+    ? "Only the host can change who edits a file."
+    : localLock
+      ? "Only this computer can loosen a lock set for this computer."
+      : "";
+  const choices: { level: FileAccessLevel; label: string }[] = [
+    { level: "everyone", label: "Anyone with edit access" },
+    { level: "host", label: "Only me" },
+    { level: "local", label: "Only on this computer" },
+  ];
+  return (
+    <fieldset className="context-menu-access">
+      <legend>Who can edit</legend>
+      {choices.map((choice) => {
+        const disabled =
+          !onSetAccess ||
+          guestBlocked ||
+          (localLock && choice.level !== "local") ||
+          (actor === "device" && choice.level === "everyone" && level === "local");
+        return (
+          <label key={choice.level} className={disabled ? "is-disabled" : ""}>
+            <input
+              type="radio"
+              name={`access-${node.path}`}
+              checked={level === choice.level}
+              disabled={disabled}
+              onChange={() => {
+                onSetAccess?.(node.path, choice.level);
+                close();
+              }}
+            />
+            {choice.label}
+          </label>
+        );
+      })}
+      {reason && <p className="context-menu-access-reason">{reason}</p>}
+    </fieldset>
+  );
 }
 
 function ChangeBadge({ hint }: { hint: FileChangeHint }) {
@@ -114,7 +219,8 @@ function NodeView({
           onDrop={(e) => onDropInDir(e, node.path)}
           onContextMenu={(e) => onContextMenu(e, node)}
         >
-          {node.name}
+          <span className="tree-file-name">{node.name}</span>
+          <AccessMark node={node} />
         </summary>
         <div className="tree-children">
           {(node.children ?? []).map((child) => (
@@ -151,9 +257,10 @@ function NodeView({
       onDragOver={(e) => onDirDragOver(e, parentOf(node.path))}
       onDragLeave={(e) => onDirDragLeave(e, parentOf(node.path))}
       onDrop={(e) => onDropInDir(e, parentOf(node.path))}
-      title={node.path}
+      title={accessTitle(node) ?? node.path}
     >
       <span className="tree-file-name">{node.name}</span>
+      <AccessMark node={node} />
       {hint && <ChangeBadge hint={hint} />}
     </button>
   );
@@ -172,6 +279,8 @@ export function FileTree({
   canMutateActive: _canMutateActive,
   readOnly = false,
   fileChanges = null,
+  actor = "local",
+  onSetAccess,
 }: Props) {
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [showBuildFiles, setShowBuildFiles] = useState(false);
@@ -443,6 +552,9 @@ export function FileTree({
                 </>
               )}
             </>
+          )}
+          {menuNode && (
+            <WhoCanEdit node={menuNode} actor={actor} onSetAccess={onSetAccess} close={() => setMenu(null)} />
           )}
         </div>
       )}

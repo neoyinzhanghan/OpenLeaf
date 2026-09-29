@@ -15,6 +15,7 @@ import {
   getProjectMerge,
   getProjectTimeline,
   getTree,
+  putFileAccessRules,
   generateTrackChanges,
   listProjectComments,
   mkdirProjectPath,
@@ -32,7 +33,7 @@ import {
   listProjectCitations,
   type CitationInstance,
 } from "../api/client";
-import type { AppConfig, FileChangeDiff, GitCommitInfo, PaperRecord, ProjectMeta, TimelineView, TreeNode } from "../api/types";
+import type { AppConfig, FileAccessLevel, FileChangeDiff, GitCommitInfo, PaperRecord, ProjectMeta, TimelineView, TreeNode } from "../api/types";
 import { guestLogout, hostLogout, listProjectAiReview, acceptAiReview, rejectAiReview, type AiReviewCollaborator, type AiReviewHunk } from "../api/share";
 import { flushCollab, useProjectCollab } from "../collab/useProjectCollab";
 import { BinaryPane } from "../components/BinaryPane";
@@ -52,6 +53,7 @@ import type { PdfDiffOverlay, PdfHighlight } from "../components/PdfViewer";
 const PdfViewer = lazy(() => import("../components/PdfViewer").then((mod) => ({ default: mod.PdfViewer })));
 import { HostAccessPanel } from "../components/HostAccessPanel";
 import { SharePanel } from "../components/SharePanel";
+import { FileAccessDrawer } from "../components/FileAccessDrawer";
 import { SplitPane } from "../components/SplitPane";
 import { ThemePicker } from "../components/ThemeToggle";
 import { extractCitations, extractLabels, type LatexCitationHint } from "../latex/completions";
@@ -61,6 +63,17 @@ import { useMediaQuery } from "../hooks/useMediaQuery";
 
 type Status = "idle" | "dirty" | "saving" | "compiling" | "ok" | "err";
 type EditMode = "text" | "binary" | "base64";
+
+function findTreeNode(nodes: TreeNode[], filePath: string): TreeNode | undefined {
+  for (const node of nodes) {
+    if (node.path === filePath) return node;
+    if (node.children) {
+      const hit = findTreeNode(node.children, filePath);
+      if (hit) return hit;
+    }
+  }
+  return undefined;
+}
 
 function flattenFiles(nodes: TreeNode[]): string[] {
   const out: string[] = [];
@@ -243,6 +256,8 @@ export function EditorPage() {
   const [project, setProject] = useState<ProjectMeta | null>(null);
   const collab = useProjectCollab(project?.id === id ? id || undefined : undefined, guestIdentity, branchId);
   const [shareOpen, setShareOpen] = useState(false);
+  const [fileAccessOpen, setFileAccessOpen] = useState(false);
+  const fileActor = isGuest ? "guest" : isRemoteHost ? "device" : "local";
   const [phoneOpen, setPhoneOpen] = useState(false);
   const [aiLinksOpen, setAiLinksOpen] = useState(false);
   const [shareActive, setShareActive] = useState(false);
@@ -470,6 +485,18 @@ export function EditorPage() {
     if (!id) return;
     setTree(await getTree(id, viewingGitHash, viewingGitHash ? null : branchId));
   }, [id, viewingGitHash, branchId]);
+
+  const setFileAccess = useCallback(
+    async (filePath: string, level: FileAccessLevel) => {
+      if (!id) return;
+      await putFileAccessRules(
+        id,
+        level === "everyone" ? { delete: [filePath] } : { upsert: [{ path: filePath, level }] },
+      );
+      await refreshTree();
+    },
+    [id, refreshTree],
+  );
 
   const loadIndexHints = useCallback(async (projectId: string, nodes: TreeNode[]) => {
     const files = flattenFiles(nodes).filter(isHintIndexPath);
@@ -2595,6 +2622,19 @@ export function EditorPage() {
                     {shareActive ? <span className="toolbar-menu-hint">Live</span> : null}
                   </button>
                 )}
+                {!isGuest && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setToolbarMoreOpen(false);
+                      setShareOpen(false);
+                      setFileAccessOpen(true);
+                    }}
+                  >
+                    File access
+                  </button>
+                )}
                 {(!isGuest || !readOnly) && (
                   <button
                     type="button"
@@ -2717,6 +2757,10 @@ export function EditorPage() {
           projectId={id}
           open={shareOpen}
           onClose={() => setShareOpen(false)}
+          onManageFileAccess={() => {
+            setShareOpen(false);
+            setFileAccessOpen(true);
+          }}
           onActiveChange={onShareStatus}
           onTimelineChange={onTimelineChange}
         />
@@ -2725,6 +2769,14 @@ export function EditorPage() {
         <HostAccessPanel open={phoneOpen} onClose={() => setPhoneOpen(false)} nextPath={`/p/${encodeURIComponent(id)}`} />
       )}
 
+      <FileAccessDrawer
+        projectId={id}
+        open={fileAccessOpen}
+        onClose={() => setFileAccessOpen(false)}
+        actor={fileActor}
+        nodes={tree}
+        onChanged={() => void refreshTree()}
+      />
       {(!isGuest || !readOnly) && (
         <AiLinkPanel
           projectId={id}
@@ -2881,6 +2933,8 @@ export function EditorPage() {
                 }}
                 canMutateActive={Boolean(activePath)}
                 readOnly={readOnly || !timelineCanEdit}
+                actor={fileActor}
+                onSetAccess={(filePath, level) => void setFileAccess(filePath, level)}
                 fileChanges={fileChangeMap}
               />
             )}
@@ -2956,6 +3010,13 @@ export function EditorPage() {
                           </button>
                         )}
                       </div>
+                      {activePath && findTreeNode(tree, activePath)?.access?.canWrite === false && (
+                        <div className="file-access-banner" role="status">
+                          {findTreeNode(tree, activePath)?.access?.reason === "protected"
+                            ? "Protected: edit on the computer running OpenLeaf."
+                            : "Read-only: the host locked this file. You can still comment."}
+                        </div>
+                      )}
                       <CodeEditor
                         path={activePath}
                         value={content}
@@ -2969,7 +3030,12 @@ export function EditorPage() {
                         onForwardSearch={(line, col) => void onForwardSearch(line, col)}
                         yText={collabText ? yText : null}
                         awareness={collabText ? collab.awareness : null}
-                        readOnly={readOnly || !timelineCanEdit || viewingDeletedFile}
+                        readOnly={
+                          readOnly ||
+                          !timelineCanEdit ||
+                          viewingDeletedFile ||
+                          (activePath ? findTreeNode(tree, activePath)?.access?.canWrite === false : false)
+                        }
                         commentMarks={commentMarks}
                         citationMarks={citationMarks}
                         onRequestComment={onRequestComment}

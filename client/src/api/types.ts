@@ -100,11 +100,33 @@ export type ProjectMeta = {
   path: string;
 };
 
+export type FileAccessReason = "protected" | "locked-host" | "locked-local" | null;
+export type FileAccessLevel = "everyone" | "host" | "local";
+
 export type TreeNode = {
   name: string;
   path: string;
   type: "file" | "directory";
   children?: TreeNode[];
+  /** Who the requesting actor may edit. The server decides; the client only displays it. */
+  access?: {
+    canWrite: boolean;
+    reason: FileAccessReason;
+    level?: FileAccessLevel;
+    protected?: boolean;
+  };
+};
+
+export type FileAccessRule = {
+  path: string;
+  level: "host" | "local";
+  setBy: string;
+  setAt: string;
+};
+
+export type FileAccessView = {
+  protected: { pattern: string; reason: string }[];
+  rules: FileAccessRule[];
 };
 
 export type FilePayload = {

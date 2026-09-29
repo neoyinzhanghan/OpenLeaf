@@ -30,12 +30,39 @@ export type ProjectMeta = {
   path: string;
 };
 
+export type StoredFileAccessRule = {
+  path: string;
+  level: "host" | "local";
+  setBy: string;
+  setAt: string;
+};
+
 export type PaperflowProjectConfig = {
   mainFile: string;
   engine?: LatexEngine;
   /** Project-specific collab identities (authoritative for this project). */
   identities?: Identity[];
+  /** Host file-access rules. Preserved across config patches so they stay in git. */
+  fileAccess?: { rules: StoredFileAccessRule[] };
 };
+
+/**
+ * Built-in paths that are never configurable. Only the computer running OpenLeaf
+ * may write them. `fileAccess.ts` is the policy; this list is the constant.
+ */
+export const PROTECTED_FILE_REASON =
+  "Protected: runs code or holds settings on the host computer. Edit it on that computer.";
+
+export const PROTECTED_FILE_PATTERNS: { pattern: string; reason: string }[] = [
+  { pattern: "latexmkrc", reason: PROTECTED_FILE_REASON },
+  { pattern: ".latexmkrc", reason: PROTECTED_FILE_REASON },
+  { pattern: "*.latexmkrc", reason: PROTECTED_FILE_REASON },
+  { pattern: ".git", reason: PROTECTED_FILE_REASON },
+  { pattern: ".git/**", reason: PROTECTED_FILE_REASON },
+  { pattern: ".openleaf/**", reason: PROTECTED_FILE_REASON },
+  { pattern: "openleaf.json", reason: PROTECTED_FILE_REASON },
+  { pattern: "comments.json", reason: PROTECTED_FILE_REASON },
+];
 
 /** Last resort when setup has not recorded a display name. Not a personal account. */
 const UNCONFIGURED_IDENTITY: Identity = { id: "author", name: "Author", color: "#0F766E" };
@@ -87,6 +114,49 @@ function normalizeRelativePath(relativePath: string): string {
   return relativePath.replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "");
 }
 
+/**
+ * One normal form for access checks: NFC, backslashes, a leading `./`,
+ * trailing slashes, and `.` / `..`. Throws 400 on a path that escapes the root.
+ */
+export function normalizeAccessPath(input: string): string {
+  let s = input.normalize("NFC").replace(/\\/g, "/");
+  while (s.startsWith("./")) s = s.slice(2);
+  s = s.replace(/^\/+/, "");
+  const parts: string[] = [];
+  for (const raw of s.split("/")) {
+    if (raw === "" || raw === ".") continue;
+    if (raw === "..") {
+      if (parts.length === 0) {
+        throw Object.assign(new Error("Path escape"), { status: 400 });
+      }
+      parts.pop();
+      continue;
+    }
+    parts.push(raw);
+  }
+  return parts.join("/");
+}
+
+/** True when a normalized relative path is on the built-in protected list. */
+export function isProtectedNormalizedPath(normalized: string): boolean {
+  const lower = normalized.toLowerCase();
+  if (!lower) return false;
+  const base = lower.split("/").pop() ?? "";
+  if (base === "latexmkrc" || base === ".latexmkrc" || base.endsWith(".latexmkrc")) return true;
+  if (lower === ".git" || lower.startsWith(".git/")) return true;
+  if (lower === ".openleaf" || lower.startsWith(".openleaf/")) return true;
+  if (base === "openleaf.json" || base === "comments.json") return true;
+  return false;
+}
+
+export function isProtectedAccessPath(relativePath: string): boolean {
+  try {
+    return isProtectedNormalizedPath(normalizeAccessPath(relativePath));
+  } catch {
+    return true;
+  }
+}
+
 /** Host settings / runtime that guests must not rewrite through the file API. */
 export function isHostMetadataPath(relativePath: string): boolean {
   const n = normalizeRelativePath(relativePath);
@@ -112,9 +182,7 @@ export function isGitMetadataPath(relativePath: string): boolean {
  * comments.json is mutated through the comments API (with author checks) instead.
  */
 export function isGuestForbiddenWritePath(relativePath: string): boolean {
-  if (isHostMetadataPath(relativePath)) return true;
-  if (isLatexmkrcPath(relativePath) || isGitMetadataPath(relativePath)) return true;
-  return normalizeRelativePath(relativePath).toLowerCase() === "comments.json";
+  return isProtectedAccessPath(relativePath);
 }
 
 export async function ensureProjectsRoot(): Promise<void> {
@@ -126,10 +194,12 @@ export async function readProjectConfig(id: string): Promise<PaperflowProjectCon
   const globalEngine = loadConfig().latex.engine;
   try {
     const raw = JSON.parse(await fs.readFile(cfgPath, "utf8")) as Partial<PaperflowProjectConfig>;
+    const rules = raw.fileAccess?.rules;
     return {
       mainFile: raw.mainFile ?? "main.tex",
       engine: raw.engine ?? globalEngine,
       identities: Array.isArray(raw.identities) ? raw.identities : undefined,
+      fileAccess: Array.isArray(rules) ? { rules } : undefined,
     };
   } catch {
     return { mainFile: "main.tex", engine: globalEngine };
@@ -168,8 +238,10 @@ export async function writeProjectConfig(
     mainFile: patch.mainFile ?? current.mainFile,
     engine: patch.engine ?? current.engine,
     identities: patch.identities ?? current.identities,
+    fileAccess: patch.fileAccess !== undefined ? patch.fileAccess : current.fileAccess,
   };
   if (!next.identities) delete next.identities;
+  if (!next.fileAccess) delete next.fileAccess;
   const cfgPath = resolveProjectPath(id, "openleaf.json");
   await fs.writeFile(cfgPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
   return next;
@@ -489,9 +561,6 @@ function assertWritableRel(relativePath: string): string {
 
 export async function deletePath(id: string, relativePath: string, rootDir?: string): Promise<void> {
   const rel = assertWritableRel(relativePath);
-  if (rel === "openleaf.json") {
-    throw Object.assign(new Error("Refusing to delete openleaf.json"), { status: 400 });
-  }
   const full = rootDir ? resolveRootPath(rootDir, rel) : resolveProjectPath(id, rel);
   if (!fsSync.existsSync(full)) {
     throw Object.assign(new Error("Path not found"), { status: 404 });
