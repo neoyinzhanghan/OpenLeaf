@@ -4,6 +4,7 @@ import {
   browserLauncher,
   commandLineHasInstance,
   commandLineProbe,
+  listenerPidProbe,
   npmBuildCommand,
   terminateCommand,
   toolLookup,
@@ -24,6 +25,22 @@ describe("platform commands", () => {
   it("asks macOS ps for the full command line", () => {
     const probe = commandLineProbe(42, "darwin");
     assert.deepEqual(probe, { file: "/bin/ps", args: ["-ww", "-p", "42", "-o", "command="] });
+  });
+
+  it("asks macOS lsof and Windows Get-NetTCPConnection who listens on a port", () => {
+    assert.deepEqual(listenerPidProbe(8787, "darwin"), {
+      file: "/usr/sbin/lsof",
+      args: ["-nP", "-iTCP:8787", "-sTCP:LISTEN", "-t"],
+    });
+    const windows = listenerPidProbe(8787, "win32");
+    assert.ok(windows);
+    assert.match(windows.file.replaceAll("\\", "/"), /WindowsPowerShell\/v1\.0\/powershell\.exe$/);
+    assert.ok(windows.args.includes("-NonInteractive"));
+    assert.ok(windows.args.includes("-NoProfile"));
+    assert.match(windows.args.join(" "), /Get-NetTCPConnection/);
+    assert.match(windows.args.join(" "), /LocalPort 8787/);
+    assert.equal(listenerPidProbe(0, "darwin"), null);
+    assert.equal(listenerPidProbe(8787, "linux"), null);
   });
 
   it("reads Windows command lines with Windows PowerShell, not a profile", () => {

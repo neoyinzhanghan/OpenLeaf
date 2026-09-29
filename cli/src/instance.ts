@@ -4,6 +4,7 @@ import {
   commandLineHasInstance,
   commandLineProbe,
   INSTANCE_MARKER,
+  listenerPidProbe,
   terminateCommand,
 } from "./platform.js";
 import fs from "node:fs";
@@ -185,9 +186,29 @@ function pidsForInodes(inodes: Set<string>): number[] {
   return pids;
 }
 
+function listenerPids(port: number): number[] {
+  if (process.platform === "linux") return pidsForInodes(listenInodes(port));
+  const probe = listenerPidProbe(port);
+  if (!probe) return [];
+  try {
+    const text = execFileSync(probe.file, probe.args, {
+      encoding: "utf8",
+      timeout: 8000,
+      windowsHide: true,
+    });
+    const pids = text
+      .split(/\s+/)
+      .map((part) => Number(part))
+      .filter((pid) => Number.isInteger(pid) && pid > 0);
+    return [...new Set(pids)];
+  } catch {
+    return [];
+  }
+}
+
 /** Pid of this checkout's server listening on `port`, or null. */
 export function checkoutServerPid(port: number): number | null {
-  for (const pid of pidsForInodes(listenInodes(port))) {
+  for (const pid of listenerPids(port)) {
     if (commandIsCheckoutServer(readCommandLineSync(pid), processCwd(pid))) return pid;
   }
   return null;

@@ -23,6 +23,33 @@ export function commandLineHasInstance(line: string | null | undefined, instance
   return line.includes(`${INSTANCE_MARKER}${instanceId}`);
 }
 
+/**
+ * Pids listening on a TCP port. Linux reads /proc/net instead.
+ * macOS `lsof -t` prints one pid per line. Windows prints OwningProcess.
+ */
+export function listenerPidProbe(
+  port: number,
+  platform = process.platform,
+): { file: string; args: string[] } | null {
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) return null;
+  if (platform === "darwin") {
+    return { file: "/usr/sbin/lsof", args: ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"] };
+  }
+  if (platform === "win32") {
+    const script = [
+      "$ProgressPreference='SilentlyContinue'",
+      `$conns = Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue`,
+      "if ($null -eq $conns) { exit 0 }",
+      "$conns | ForEach-Object { $_.OwningProcess } | Sort-Object -Unique | ForEach-Object { [Console]::Out.WriteLine($_) }",
+    ].join("; ");
+    return {
+      file: powershellExe(),
+      args: ["-NoProfile", "-NonInteractive", "-Command", script],
+    };
+  }
+  return null;
+}
+
 /** How to read another process's command line. Linux uses /proc instead. */
 export function commandLineProbe(
   pid: number,

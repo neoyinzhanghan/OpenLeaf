@@ -246,7 +246,11 @@ function main() {
   const force = process.argv.includes("--force");
   const addToPath = process.argv.includes("--add-to-path");
   const removing = process.argv.includes("--uninstall");
-  if ((process.env.CI || process.env.OPENLEAF_SKIP_BIN === "1") && !force && !addToPath && !removing) return;
+  // npm sets CI on GitHub Actions for every script. Skip only the postinstall
+  // hook there, so `npm ci` does not repoint a machine-wide command. An explicit
+  // `node scripts/install-cli-bin.mjs` or `openleaf install-cli` still installs.
+  const postinstallInCi = Boolean(process.env.CI) && process.env.npm_lifecycle_event === "postinstall";
+  if ((postinstallInCi || process.env.OPENLEAF_SKIP_BIN === "1") && !force && !addToPath && !removing) return;
   if (!fs.existsSync(entry)) {
     console.error(`openleaf launcher not found at ${entry}`);
     return;
