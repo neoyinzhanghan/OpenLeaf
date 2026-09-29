@@ -19,7 +19,7 @@ jobs:
           cache: npm
       - name: TeX on Ubuntu
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y texlive-latex-base texlive-bibtex-extra latexmk
+        run: sudo apt-get update && sudo apt-get install -y texlive-latex-base texlive-latex-recommended texlive-bibtex-extra latexmk
       - run: npm ci
       - run: npm run typecheck
       - run: npm test

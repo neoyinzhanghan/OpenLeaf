@@ -60,10 +60,17 @@ async function openPair(browser: Browser, id: string): Promise<{
     .toMatch(/2 editors/);
   const settled = async (page: Page) => {
     await expect
-      .poll(async () => (await page.locator(".editor-toolbar .status-pill").first().innerText()) ?? "", {
-        timeout: 15_000,
-      })
-      .toMatch(/Live|Saved/);
+      .poll(
+        async () =>
+          page.evaluate(() => {
+            const debug = (
+              window as Window & { __openleafCollabDebug?: { synced: () => boolean } }
+            ).__openleafCollabDebug;
+            return debug?.synced() ?? false;
+          }),
+        { timeout: 15_000 },
+      )
+      .toBe(true);
   };
   await settled(ada);
   await settled(grace);

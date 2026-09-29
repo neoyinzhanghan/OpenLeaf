@@ -175,7 +175,7 @@ test("synctex, zip, and pdf download answer for a compiled project", async () =>
   const id = "flow-files";
   await createProject(id);
   const compiled = await request("POST", `/api/projects/${id}/compile`, { json: {} });
-  expect(compiled.status, compiled.body).toBeLessThan(500);
+  expect(compiled.status, compiled.body.slice(0, 500)).toBe(200);
   const forward = await request("GET", `/api/projects/${id}/synctex?direction=forward&file=main.tex&line=1`);
   expect(forward.status).toBeLessThan(500);
   const zip = await request("GET", `/api/projects/${id}/download?format=zip`);
