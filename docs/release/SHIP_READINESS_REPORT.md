@@ -4,7 +4,7 @@
 
 P0-1 through P0-5 are fixed at the causes below. A fresh clone passed `npm run e2e` (18 tests) on this machine, and GitHub Actions run [36554366160](https://github.com/neoyinzhanghan/OpenLeaf/actions/runs/36554366160) on `54cccb1` is green: Ubuntu ran typecheck, unit tests, build, and e2e; macOS ran typecheck, unit tests, and build. macOS does not install TeX and does not run e2e, so compile cases there are skips.
 
-Branch `release/ship-ready`. The green code tip is `54cccb1`. Base for a pull request remains `feature/citation-library`.
+Branch `release/ship-ready`. Actions run 36554366160 proved `54cccb1`. The commit that adds this report is docs-only on top of that SHA. Base for a pull request remains `feature/citation-library`.
 
 ## Evidence
 
