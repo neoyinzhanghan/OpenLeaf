@@ -284,15 +284,19 @@ async function cmdRestart(): Promise<number> {
   return cmdStart();
 }
 
+const STATUS_CHECK_IDS = ["process", "port", "api-health", "app-ready", "tunnel"];
+
 async function cmdStatus(): Promise<number> {
   const checks = await runChecks({ smoke: false });
+  const shown = checks.filter((check) => STATUS_CHECK_IDS.includes(check.id));
   if (isJsonMode()) {
-    emitJson({ schemaVersion: CHECK_SCHEMA_VERSION, url: editorUrl(), checks });
+    emitJson({ schemaVersion: CHECK_SCHEMA_VERSION, url: editorUrl(), checks: shown });
   } else {
     out(`Editor: ${editorUrl()}`);
-    printChecks(checks.filter((check) => ["process", "port", "api-health", "app-ready", "tunnel"].includes(check.id)));
+    printChecks(shown);
   }
-  return hasErrors(checks) ? 1 : 0;
+  // Missing TeX is a doctor error. Status only reports whether this install is up.
+  return hasErrors(shown) ? 1 : 0;
 }
 
 async function cmdOpen(): Promise<number> {
