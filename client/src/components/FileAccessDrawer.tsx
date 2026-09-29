@@ -84,6 +84,7 @@ export function FileAccessDrawer({ projectId, open, onClose, actor, nodes, onCha
         {(view?.rules ?? []).map((rule) => (
           <li key={rule.path}>
             <code>{rule.path}</code>
+            {rule.missing ? <span className="share-muted">missing</span> : null}
             <span className="tree-access-label">{rule.level}</span>
             <span className="share-muted">set by {rule.setBy}</span>
             <button

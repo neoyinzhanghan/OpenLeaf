@@ -5,13 +5,14 @@ import * as decoding from "lib0/decoding";
 import * as encoding from "lib0/encoding";
 import * as awarenessProtocol from "y-protocols/awareness";
 import * as syncProtocol from "y-protocols/sync";
+import * as Y from "yjs";
 import type { Identity } from "../../config.js";
 import { getProjectIdentity, projectDir } from "../projectFs.js";
 import { verifyHostCookie } from "../hostAuth.js";
 import { hostHeaderAllowed, isLoopbackOwner, lanAuthIsOpen, originAllowed } from "../requestGuard.js";
 import { requestLane, resolveGuest } from "../shareAuth.js";
 import { getOrCreateRoom, releaseRoomIfEmpty, type ProjectRoom } from "./room.js";
-import { changedYjsFiles, revertDeniedYjsFiles, snapshotYjsFiles, type FileAccessActor } from "../fileAccess.js";
+import { yjsUpdateDeniedKeys, type FileAccessActor } from "../fileAccess.js";
 
 const messageSync = 0;
 const messageAwareness = 1;
@@ -258,27 +259,23 @@ export function attachCollabServer(httpServer: HttpServer): WebSocketServer {
             case messageSync: {
               const encoder = encoding.createEncoder();
               encoding.writeVarUint(encoder, messageSync);
-              if (parsed.readOnly) {
-                // Read-only guests may request state (step 1) but any update they
-                // send (step 2 / update) is dropped so the shared doc never changes.
-                const syncType = decoding.readVarUint(decoder);
-                if (syncType === syncProtocol.messageYjsSyncStep1) {
-                  syncProtocol.readSyncStep1(decoder, encoder, room.doc);
+              const syncType = decoding.readVarUint(decoder);
+              if (syncType === syncProtocol.messageYjsSyncStep1) {
+                syncProtocol.readSyncStep1(decoder, encoder, room.doc);
+              } else if (
+                syncType === syncProtocol.messageYjsSyncStep2 ||
+                syncType === syncProtocol.messageYjsUpdate
+              ) {
+                const update = decoding.readVarUint8Array(decoder);
+                const denied = parsed.readOnly
+                  ? ["read-only"]
+                  : yjsUpdateDeniedKeys(room.doc, update, parsed.actor, room.accessRules());
+                if (denied.length > 0) {
+                  // Drop the whole message. Step 2 snaps the sender back to the server doc.
+                  syncProtocol.writeSyncStep2(encoder, room.doc);
+                } else {
+                  Y.applyUpdate(room.doc, update, conn);
                 }
-              } else {
-                const before = snapshotYjsFiles(room.doc);
-                syncProtocol.readSyncMessage(decoder, encoder, room.doc, conn);
-                const changed = changedYjsFiles(room.doc, before);
-                if (changed.length > 0) room.holdDirty(changed);
-                void revertDeniedYjsFiles(room.doc, parsed.projectId, parsed.actor, before)
-                  .then((reverted) => {
-                    room.forgetDirty(reverted);
-                    room.releaseHold(changed.filter((filePath) => !reverted.includes(filePath)));
-                  })
-                  .catch((err) => {
-                    console.error("[collab] file access revert failed", err);
-                    room.forgetDirty(changed);
-                  });
               }
               if (encoding.length(encoder) > 1) send(conn, encoder);
               break;

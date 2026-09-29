@@ -23,7 +23,7 @@ process.env.OPENLEAF_HOST_GATEWAY = "0";
 
 const { loadConfig } = await import("../config.js");
 loadConfig(true);
-const { createProject, projectDir, writeFile } = await import("./projectFs.js");
+const { createProject, deletePath, projectDir, renamePath, writeFile } = await import("./projectFs.js");
 const {
   assertCanWrite,
   effectiveAccess,
@@ -243,6 +243,47 @@ describe("file access", { concurrency: 1 }, () => {
     Y.applyUpdate(doc, Y.encodeStateAsUpdate(sneak, Y.encodeStateVector(doc)));
     await revertDeniedYjsFiles(doc, "matrix", "guest", locked);
     assert.equal(doc.getMap<Y.Text>("files").get("notes.tex")!.toString().startsWith("LATE "), false);
+  });
+
+  it("moves a lock when a file or folder is renamed, and keeps it after delete", async () => {
+    await createProject("rename-lock", "missing-template");
+    const dir = projectDir("rename-lock");
+    fs.mkdirSync(path.join(dir, "sections"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "notes.tex"), "n\n");
+    fs.writeFileSync(path.join(dir, "sections", "body.tex"), "b\n");
+    fs.writeFileSync(path.join(dir, "sections", "secret.tex"), "s\n");
+    await putFileAccessRules("rename-lock", "local", {
+      upsert: [
+        { path: "notes.tex", level: "local" },
+        { path: "sections", level: "local" },
+        { path: "sections/secret.tex", level: "host" },
+      ],
+    });
+    await renamePath("rename-lock", "notes.tex", "notes2.tex");
+    await renamePath("rename-lock", "sections", "chapters");
+    await assert.rejects(() => assertCanWrite("rename-lock", "notes2.tex", "device"), (err: unknown) => {
+      assert.equal(denied(err).status, 403);
+      return true;
+    });
+    await assert.rejects(() => assertCanWrite("rename-lock", "chapters/body.tex", "device"), (err: unknown) => {
+      assert.equal(denied(err).status, 403);
+      return true;
+    });
+    await assert.rejects(() => assertCanWrite("rename-lock", "chapters/secret.tex", "guest"), (err: unknown) => {
+      assert.equal(denied(err).status, 403);
+      return true;
+    });
+    await assert.doesNotReject(() => assertCanWrite("rename-lock", "chapters/secret.tex", "device"));
+    await deletePath("rename-lock", "notes2.tex");
+    const listed = await listFileAccess("rename-lock");
+    const kept = listed.rules.find((rule) => rule.path === "notes2.tex");
+    assert.ok(kept, "deleted path must keep its rule");
+    assert.equal(kept?.missing, true);
+    await writeFile("rename-lock", "notes2.tex", "again\n");
+    await assert.rejects(() => assertCanWrite("rename-lock", "notes2.tex", "device"), (err: unknown) => {
+      assert.equal(denied(err).status, 403);
+      return true;
+    });
   });
 
   it("resolves actors from the request access lane", () => {

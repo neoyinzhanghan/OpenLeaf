@@ -140,7 +140,7 @@ export function LibraryAiLinkPanel({ open, onClose }: Props) {
               ChatGPT proposes verified papers → you Accept/Reject before they enter the library
             </p>
           </div>
-          <button type="button" className="btn btn-ghost btn-icon" onClick={onClose} title="Close">
+          <button type="button" className="btn btn-ghost btn-icon" onClick={onClose} aria-label="Close">
             ✕
           </button>
         </div>

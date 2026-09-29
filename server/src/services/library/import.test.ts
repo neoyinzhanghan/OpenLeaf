@@ -147,6 +147,21 @@ describe("import flows", () => {
     assert.ok(result.skipped[0]!.existingCitekey);
   });
 
+  it("imports a BibTeX entry written on one line and explains an empty import", async () => {
+    const oneLine =
+      "@article{oneLine2016, title={A One Line Paper}, author={Ada Lovelace}, year={2016}, journal={Notes}}";
+    const parsed = parseBibtex(oneLine);
+    assert.equal(parsed.length, 1);
+    assert.equal(parsed[0]?.fields.title, "A One Line Paper");
+    const result = await importBibtex(oneLine);
+    assert.equal(result.imported.length, 1, JSON.stringify(result));
+    assert.equal(result.errors.length, 0);
+    const empty = await importBibtex("this is not bibtex");
+    assert.equal(empty.imported.length, 0);
+    assert.ok(empty.errors.length > 0, JSON.stringify(empty));
+    assert.match(empty.errors[0]?.error ?? "", /BibTeX/i);
+  });
+
   it("extracts PDF title and imports via OpenAlex title search", async () => {
     // Minimal PDF with Info /Title
     const pdf = Buffer.from(

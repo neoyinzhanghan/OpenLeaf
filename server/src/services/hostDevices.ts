@@ -203,6 +203,18 @@ function redeemLimited(ip: string): boolean {
   return row.count > REDEEM_LIMIT;
 }
 
+/** True only for a pairing token that is still unused and unexpired. */
+export function isPendingPairingToken(token: string): boolean {
+  const tokenHash = hashToken(token);
+  const now = Date.now();
+  for (const pairing of pairings.values()) {
+    if (pairing.redeemedDeviceId) continue;
+    if (pairing.expiresAt <= now) continue;
+    if (safeEqual(pairing.tokenHash, tokenHash)) return true;
+  }
+  return false;
+}
+
 export function redeemPairing(
   token: string,
   meta: { userAgent: string; ip: string },

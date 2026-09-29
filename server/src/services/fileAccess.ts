@@ -33,9 +33,11 @@ export type FileAccessDecision = {
   protected: boolean;
 };
 
+export type FileAccessRuleView = FileAccessRule & { missing: boolean };
+
 export type FileAccessView = {
   protected: { pattern: string; reason: string }[];
-  rules: FileAccessRule[];
+  rules: FileAccessRuleView[];
 };
 
 type AccessRequest = {
@@ -101,8 +103,69 @@ async function writeRules(projectId: string, rules: FileAccessRule[]): Promise<v
   await fs.writeFile(dest, `${JSON.stringify(raw, null, 2)}\n`, "utf8");
 }
 
+export function readRulesSync(rootDir: string): FileAccessRule[] {
+  try {
+    const raw = JSON.parse(fsSync.readFileSync(path.join(rootDir, "openleaf.json"), "utf8")) as {
+      fileAccess?: { rules?: unknown };
+    };
+    const rules = raw.fileAccess?.rules;
+    if (!Array.isArray(rules)) return [];
+    return rules.map(validRule).filter((rule): rule is FileAccessRule => rule !== null);
+  } catch {
+    return [];
+  }
+}
+
+function ruleMissing(projectId: string, rulePath: string): boolean {
+  try {
+    const rel = normalizeAccessPath(rulePath);
+    const root = projectDir(projectId);
+    const full = path.resolve(root, rel);
+    if (full !== root && !full.startsWith(`${root}${path.sep}`)) return true;
+    return !fsSync.existsSync(full);
+  } catch {
+    return true;
+  }
+}
+
+function viewRules(projectId: string, rules: FileAccessRule[]): FileAccessRuleView[] {
+  return rules.map((rule) => ({ ...rule, missing: ruleMissing(projectId, rule.path) }));
+}
+
 export async function listFileAccess(projectId: string): Promise<FileAccessView> {
-  return { protected: PROTECTED_FILE_PATTERNS, rules: await readRules(projectId) };
+  return { protected: PROTECTED_FILE_PATTERNS, rules: viewRules(projectId, await readRules(projectId)) };
+}
+
+/** Keep locks attached when an allowed actor renames or moves a file or folder. */
+export async function moveFileAccessRules(projectId: string, from: string, to: string): Promise<void> {
+  let fromNorm: string;
+  let toNorm: string;
+  try {
+    fromNorm = normalizeAccessPath(from);
+    toNorm = normalizeAccessPath(to);
+  } catch {
+    return;
+  }
+  const rules = await readRules(projectId);
+  let changed = false;
+  const next = rules.map((rule) => {
+    let pathNorm: string;
+    try {
+      pathNorm = normalizeAccessPath(rule.path);
+    } catch {
+      return rule;
+    }
+    if (pathNorm.toLowerCase() === fromNorm.toLowerCase()) {
+      changed = true;
+      return { ...rule, path: toNorm };
+    }
+    if (pathNorm.toLowerCase().startsWith(`${fromNorm.toLowerCase()}/`)) {
+      changed = true;
+      return { ...rule, path: `${toNorm}${pathNorm.slice(fromNorm.length)}` };
+    }
+    return rule;
+  });
+  if (changed) await writeRules(projectId, next);
 }
 
 function specificity(rulePath: string, target: string): number | null {
@@ -337,7 +400,7 @@ export async function putFileAccessRules(
     else rules.push(next);
   }
   await writeRules(projectId, rules);
-  return { protected: PROTECTED_FILE_PATTERNS, rules };
+  return listFileAccess(projectId);
 }
 
 export type TreeNodeWithAccess = TreeNode & {
@@ -395,6 +458,40 @@ export function changedYjsFiles(doc: Y.Doc, before: Map<string, string>): string
     if (current !== before.get(key)) changed.push(key);
   }
   return changed;
+}
+
+/**
+ * Keys a Yjs update would change and this actor may not write.
+ * The update is applied to a scratch copy only — `doc` is left untouched.
+ * An empty list means the whole update may be applied.
+ */
+export function yjsUpdateDeniedKeys(
+  doc: Y.Doc,
+  update: Uint8Array,
+  actor: FileAccessActor,
+  rules: FileAccessRule[],
+): string[] {
+  if (actor === "local" || update.byteLength === 0) return [];
+  const scratch = new Y.Doc();
+  try {
+    Y.applyUpdate(scratch, Y.encodeStateAsUpdate(doc));
+    const before = snapshotYjsFiles(scratch);
+    Y.applyUpdate(scratch, update);
+    const denied: string[] = [];
+    for (const key of changedYjsFiles(scratch, before)) {
+      let normalized: string;
+      try {
+        normalized = normalizeAccessPath(key);
+      } catch {
+        denied.push(key);
+        continue;
+      }
+      if (!decisionFor(actor, [normalized], rules, false).canWrite) denied.push(key);
+    }
+    return denied;
+  } finally {
+    scratch.destroy();
+  }
 }
 
 /** Restore Y.Text values the actor is not allowed to change. Returns those paths. */

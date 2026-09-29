@@ -366,6 +366,7 @@ export function EditorPage() {
   const [aiFocusNonce, setAiFocusNonce] = useState(0);
   const [aiPopupBusy, setAiPopupBusy] = useState(false);
   const [toolbarMoreOpen, setToolbarMoreOpen] = useState(false);
+  const [menuSettings, setMenuSettings] = useState(false);
   const toolbarMoreRef = useRef<HTMLDivElement>(null);
   const toolbarMoreBtnRef = useRef<HTMLButtonElement>(null);
   const toolbarMenuRef = useRef<HTMLDivElement>(null);
@@ -2527,21 +2528,10 @@ export function EditorPage() {
                     <span className="toolbar-menu-hint">{guest.guest.name}</span>
                   </button>
                 )}
-                {narrow && !isGuest && collab.identities.length > 0 && (
-                  <label className="identity-picker toolbar-menu-identity">
-                    <span className="identity-picker-label">You</span>
-                    <select
-                      value={collab.identity?.id ?? ""}
-                      onChange={(e) => collab.setIdentityId(e.target.value)}
-                      aria-label="Select identity"
-                    >
-                      {collab.identities.map((ident) => (
-                        <option key={ident.id} value={ident.id}>
-                          {ident.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                {narrow && (
+                  <div className="toolbar-menu-label" role="presentation">
+                    Paper
+                  </div>
                 )}
                 {narrow && (!isGuest || !readOnly) && timelineCanEdit && (
                   <button
@@ -2574,6 +2564,9 @@ export function EditorPage() {
                 )}
                 {narrow && !isGuest && (
                   <>
+                    <div className="toolbar-menu-label" role="presentation">
+                      Library
+                    </div>
                     <Link
                       role="menuitem"
                       to="/library"
@@ -2595,6 +2588,7 @@ export function EditorPage() {
                   </>
                 )}
                 {narrow && (canHistory || !isGuest) && <div className="toolbar-menu-sep" />}
+                {narrow && <div className="toolbar-menu-label" role="presentation">Sharing</div>}
                 {!isGuest && !(session.kind === "host" && session.remote) && (
                   <button
                     type="button"
@@ -2687,9 +2681,32 @@ export function EditorPage() {
                   </button>
                 )}
                 <div className="toolbar-menu-sep" />
-                <div className="toolbar-menu-theme" onMouseDown={(e) => e.stopPropagation()}>
-                  <ThemePicker compact />
-                </div>
+                {narrow ? (
+                  <button type="button" role="menuitem" onClick={() => setMenuSettings((v) => !v)}>
+                    Settings
+                  </button>
+                ) : null}
+                {(!narrow || menuSettings) && (
+                  <div className="toolbar-menu-theme" onMouseDown={(e) => e.stopPropagation()}>
+                    {narrow && !isGuest && collab.identities.length > 0 && (
+                      <label className="identity-picker toolbar-menu-identity">
+                        <span className="identity-picker-label">You</span>
+                        <select
+                          value={collab.identity?.id ?? ""}
+                          onChange={(e) => collab.setIdentityId(e.target.value)}
+                          aria-label="Select identity"
+                        >
+                          {collab.identities.map((ident) => (
+                            <option key={ident.id} value={ident.id}>
+                              {ident.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
+                    <ThemePicker compact />
+                  </div>
+                )}
                 {isRemoteHost && (
                   <button
                     type="button"
@@ -2705,6 +2722,11 @@ export function EditorPage() {
                 {canDownload && (
                   <>
                     <div className="toolbar-menu-sep" />
+                    {narrow && (
+                      <div className="toolbar-menu-label" role="presentation">
+                        Download
+                      </div>
+                    )}
                     <a
                       role="menuitem"
                       href={downloadUrl(id, "pdf", branchId, viewingGitHash)}
@@ -3014,7 +3036,9 @@ export function EditorPage() {
                         <div className="file-access-banner" role="status">
                           {findTreeNode(tree, activePath)?.access?.reason === "protected"
                             ? "Protected: edit on the computer running OpenLeaf."
-                            : "Read-only: the host locked this file. You can still comment."}
+                            : findTreeNode(tree, activePath)?.access?.reason === "locked-local"
+                              ? "Only editable on the computer running OpenLeaf."
+                              : "Read-only: the host locked this file. You can still comment."}
                         </div>
                       )}
                       <CodeEditor

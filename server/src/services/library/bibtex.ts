@@ -17,14 +17,57 @@ function stripBraces(value: string): string {
   return v.replace(/\s+/g, " ").trim();
 }
 
+const SKIP_TYPES = new Set(["string", "comment", "preamble"]);
+
+/** Read one `{...}` body starting at `open`, honoring nested braces and quotes. */
+function readBraceBody(text: string, open: number): { body: string; end: number } | null {
+  if (text[open] !== "{") return null;
+  let depth = 1;
+  let quote = false;
+  for (let i = open + 1; i < text.length; i += 1) {
+    const ch = text[i]!;
+    if (quote) {
+      if (ch === '"') quote = false;
+      continue;
+    }
+    if (ch === '"') {
+      quote = true;
+      continue;
+    }
+    if (ch === "{") depth += 1;
+    else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) return { body: text.slice(open + 1, i), end: i + 1 };
+    }
+  }
+  return null;
+}
+
 export function parseBibtex(text: string): BibEntry[] {
   const entries: BibEntry[] = [];
-  const re = /@(\w+)\s*\{\s*([^,\s]+)\s*,([\s\S]*?)\n\s*\}/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text))) {
-    const type = m[1]!.toLowerCase();
-    const citekey = m[2]!;
-    const body = m[3]!;
+  let i = 0;
+  while (i < text.length) {
+    const at = text.indexOf("@", i);
+    if (at < 0) break;
+    const head = /^@(\w+)\s*\{/.exec(text.slice(at));
+    if (!head) {
+      i = at + 1;
+      continue;
+    }
+    const type = head[1]!.toLowerCase();
+    const braceAt = at + head[0].length - 1;
+    const wrapped = readBraceBody(text, braceAt);
+    if (!wrapped) {
+      i = at + 1;
+      continue;
+    }
+    i = wrapped.end;
+    if (SKIP_TYPES.has(type)) continue;
+    const comma = wrapped.body.indexOf(",");
+    if (comma < 0) continue;
+    const citekey = wrapped.body.slice(0, comma).trim();
+    if (!citekey || /\s/.test(citekey)) continue;
+    const body = wrapped.body.slice(comma + 1);
     const fields: Record<string, string> = {};
     const fieldRe = /(\w+)\s*=\s*(\{(?:[^{}]|\{[^{}]*\})*\}|"[^"]*"|[^,\n]+)/g;
     let fm: RegExpExecArray | null;

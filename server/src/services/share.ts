@@ -482,6 +482,7 @@ export async function startShare(projectId: string, input: StartShareInput): Pro
   const proc = spawn(shellScript ? "sh" : bin, shellScript ? [bin, ...tunnelArgs] : tunnelArgs, {
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, NO_COLOR: "1" },
+    detached: true,
   });
   session.proc = proc;
 
@@ -563,7 +564,8 @@ function killProc(s: ShareSession) {
   const p = s.proc;
   if (!p || p.exitCode !== null || p.killed) return;
   try {
-    p.kill("SIGTERM");
+    if (p.pid) process.kill(-p.pid, "SIGTERM");
+    else p.kill("SIGTERM");
     const t = setTimeout(() => {
       try {
         if (p.exitCode === null) p.kill("SIGKILL");
@@ -581,6 +583,10 @@ function teardown(s: ShareSession) {
   if (s.expiryTimer) {
     clearTimeout(s.expiryTimer);
     s.expiryTimer = null;
+  }
+  if (s.dnsProbeTimer) {
+    clearTimeout(s.dnsProbeTimer);
+    s.dnsProbeTimer = null;
   }
   if (s.hostname && sessionsByHost.get(s.hostname) === s) sessionsByHost.delete(s.hostname);
   // Rotating the secret makes every outstanding cookie fail even if the

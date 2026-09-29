@@ -158,6 +158,15 @@ export async function importBibtex(text: string): Promise<BibImportResult> {
   const imported: PaperRecord[] = [];
   const skipped: BibImportResult["skipped"] = [];
   const errors: BibImportResult["errors"] = [];
+  if (entries.length === 0) {
+    errors.push({
+      citekey: "",
+      error: text.trim()
+        ? "No BibTeX entries found. Each entry should start with @type{citekey, …}."
+        : "Paste BibTeX before importing.",
+    });
+    return { imported, skipped, errors };
+  }
 
   for (const entry of entries) {
     try {

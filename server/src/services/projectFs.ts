@@ -592,6 +592,8 @@ export async function renamePath(
   }
   await fs.mkdir(path.dirname(toFull), { recursive: true });
   await fs.rename(fromFull, toFull);
+  const { moveFileAccessRules } = await import("./fileAccess.js");
+  await moveFileAccessRules(id, fromRel, toRel);
 }
 
 export async function createEmptyFile(

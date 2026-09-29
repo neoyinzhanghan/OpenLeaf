@@ -122,6 +122,8 @@ export type FileAccessRule = {
   level: "host" | "local";
   setBy: string;
   setAt: string;
+  /** The path is not in the project right now. The lock still applies if it comes back. */
+  missing?: boolean;
 };
 
 export type FileAccessView = {

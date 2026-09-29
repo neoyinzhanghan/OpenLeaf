@@ -117,7 +117,7 @@ export function LibraryAiReviewPanel({ open, onClose, onAccepted, onCountChange 
               Verified proposals waiting for Accept — same idea as AI edit review
             </p>
           </div>
-          <button type="button" className="btn btn-ghost btn-icon" onClick={onClose} title="Close">
+          <button type="button" className="btn btn-ghost btn-icon" onClick={onClose} aria-label="Close">
             ✕
           </button>
         </div>

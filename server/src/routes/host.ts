@@ -17,6 +17,7 @@ import {
   cancelPairing,
   createPairing,
   getPairing,
+  isPendingPairingToken,
   listDevices,
   redeemPairing,
   renameDevice,
@@ -245,6 +246,10 @@ pairRouter.use(express.urlencoded({ extended: false }));
 
 const pairNonces = new Map<string, { nonce: string; expiresAt: number }>();
 
+export function pairNonceCount(): number {
+  return pairNonces.size;
+}
+
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (ch) => {
     if (ch === "&") return "&amp;";
@@ -260,8 +265,40 @@ function deviceLabel(userAgent: string): string {
   return ua.length > 80 ? `${ua.slice(0, 80)}…` : ua;
 }
 
+function prunePairNonces(now = Date.now()): void {
+  for (const [token, row] of pairNonces) {
+    if (row.expiresAt <= now || !isPendingPairingToken(token)) pairNonces.delete(token);
+  }
+}
+
 pairRouter.get("/:token", (req, res) => {
+  prunePairNonces();
   const token = String(req.params.token);
+  if (!isPendingPairingToken(token)) {
+    pairNonces.delete(token);
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Robots-Tag", "noindex");
+    res.type("html").send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Sign in to OpenLeaf</title>
+</head>
+<body>
+<main>
+<h1>Sign in to OpenLeaf on this device?</h1>
+<p>This link has expired or was already used.</p>
+<form method="get" action="/">
+<input type="hidden" name="pair" value="invalid">
+<button type="submit">Sign in</button>
+</form>
+</main>
+</body>
+</html>`);
+    return;
+  }
   const nonce = crypto.randomBytes(24).toString("base64url");
   pairNonces.set(token, { nonce, expiresAt: Date.now() + 10 * 60_000 });
   const label = escapeHtml(deviceLabel(req.get("user-agent") ?? ""));

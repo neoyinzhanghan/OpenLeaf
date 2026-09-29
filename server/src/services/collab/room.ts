@@ -14,6 +14,7 @@ import {
 } from "../projectFs.js";
 import { ensureBranchRoot } from "../timeline.js";
 import { ProjectDiskWatch } from "./diskWatch.js";
+import { readRulesSync, type FileAccessRule } from "../fileAccess.js";
 import { patchYText, threeWayMerge } from "./textMerge.js";
 
 const FILES_MAP = "files";
@@ -132,7 +133,17 @@ function resolveInRoot(rootDir: string, relativePath: string): string {
 async function writeInRoot(rootDir: string, relativePath: string, content: string): Promise<void> {
   const full = resolveInRoot(rootDir, relativePath);
   await fs.mkdir(path.dirname(full), { recursive: true });
-  await fs.writeFile(full, content, "utf8");
+  // Rename into place so a concurrent reader never sees a torn file. A torn
+  // main.tex (start present, end missing) was ingested back into the CRDT and
+  // dropped the other client's edit under load.
+  const tmp = `${full}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    await fs.writeFile(tmp, content, "utf8");
+    await fs.rename(tmp, full);
+  } catch (err) {
+    await fs.rm(tmp, { force: true }).catch(() => undefined);
+    throw err;
+  }
 }
 
 async function getTreeFromRoot(rootDir: string): Promise<TreeNode[]> {
@@ -192,10 +203,11 @@ export class ProjectRoom {
   readonly generation: number;
   private clients = new Set<unknown>();
   private dirtyPaths = new Set<string>();
-  /** Paths whose latest update is still being checked against file access. */
-  private heldDirty = new Set<string>();
   /** Last content written to disk or ingested from disk — the 3-way merge base. */
   private diskBaseline = new Map<string, string>();
+  /** Exact bytes last written by this room, so a watch echo is not merged back. */
+  private lastWritten = new Map<string, string>();
+  private ruleCache: { mtimeMs: number; rules: FileAccessRule[] } | null = null;
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
   private seeding = new Map<string, Promise<Y.Text>>();
@@ -282,30 +294,23 @@ export class ProjectRoom {
     return this.clients.size;
   }
 
-  /** Keep these paths out of the next disk flush until file access accepts them. */
-  holdDirty(paths: string[]): void {
-    for (const filePath of paths) this.heldDirty.add(filePath);
-  }
-
-  /** Drop a denied edit so it is neither flushed nor held. */
-  forgetDirty(paths: string[]): void {
-    for (const filePath of paths) {
-      this.dirtyPaths.delete(filePath);
-      this.heldDirty.delete(filePath);
+  /** Rules for this project, recomputed when openleaf.json changes. */
+  accessRules(): FileAccessRule[] {
+    const file = path.join(projectDir(this.projectId), "openleaf.json");
+    let mtimeMs = -1;
+    try {
+      mtimeMs = fsSync.statSync(file).mtimeMs;
+    } catch {
+      mtimeMs = -1;
     }
-  }
-
-  /** An accepted edit may flush. Reschedule when one is still dirty. */
-  releaseHold(paths: string[]): void {
-    let pending = false;
-    for (const filePath of paths) {
-      this.heldDirty.delete(filePath);
-      if (this.dirtyPaths.has(filePath)) pending = true;
-    }
-    if (pending) this.scheduleFlush();
+    if (this.ruleCache && this.ruleCache.mtimeMs === mtimeMs) return this.ruleCache.rules;
+    const rules = readRulesSync(projectDir(this.projectId));
+    this.ruleCache = { mtimeMs, rules };
+    return rules;
   }
 
   private scheduleFlush(): void {
+    if (this.closing || this.destroyed) return;
     const ms = loadConfig().collab.flushMs;
     if (this.flushTimer) clearTimeout(this.flushTimer);
     // Background disk flush only — commits happen on explicit save / FS mutations
@@ -337,10 +342,8 @@ export class ProjectRoom {
         clearTimeout(this.flushTimer);
         this.flushTimer = null;
       }
-      const held = [...this.dirtyPaths].filter((filePath) => this.heldDirty.has(filePath));
-      const paths = [...this.dirtyPaths].filter((filePath) => !this.heldDirty.has(filePath));
+      const paths = [...this.dirtyPaths];
       this.dirtyPaths.clear();
-      for (const filePath of held) this.dirtyPaths.add(filePath);
 
       // If disk changed under us (external write while the path was dirty),
       // merge that in *before* writing CRDT → disk so we never revert it.
@@ -367,16 +370,20 @@ export class ProjectRoom {
         const disk = diskNow.has(filePath) ? diskNow.get(filePath)! : this.readDiskText(filePath);
         if (disk === content) {
           this.diskBaseline.set(filePath, content);
+          this.lastWritten.set(filePath, content);
           continue;
         }
         try {
           await writeInRoot(this.rootDir, filePath, content);
           this.diskBaseline.set(filePath, content);
+          this.lastWritten.set(filePath, content);
+          if (ytext.toString() !== content) this.dirtyPaths.add(filePath);
         } catch (err) {
           this.dirtyPaths.add(filePath);
           throw err;
         }
       }
+      if (this.dirtyPaths.size > 0 && !this.closing) this.scheduleFlush();
       this.doc.transact(() => {
         this.meta.set("flushAt", Date.now());
       }, "disk-flush");
@@ -447,6 +454,7 @@ export class ProjectRoom {
       const treeChanged: string[] = [];
       let commentsChanged = false;
       let mergedDirty = false;
+      let echoDirty = false;
 
       this.doc.transact(() => {
         for (const filePath of unique) {
@@ -504,6 +512,14 @@ export class ProjectRoom {
           const diskText = this.readDiskText(filePath);
           if (diskText === null) continue;
           const content = diskText;
+          if (existing && this.lastWritten.get(filePath) === content) {
+            if (existing.toString() === content) this.diskBaseline.set(filePath, content);
+            else {
+              this.dirtyPaths.add(filePath);
+              echoDirty = true;
+            }
+            continue;
+          }
           if (existing && existing.toString() === content) {
             this.diskBaseline.set(filePath, content);
             continue;
@@ -538,7 +554,7 @@ export class ProjectRoom {
         }
       }, "disk-seed");
 
-      if (mergedDirty) this.scheduleFlush();
+      if (mergedDirty || echoDirty) this.scheduleFlush();
     });
   }
 

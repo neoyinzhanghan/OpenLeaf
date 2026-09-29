@@ -66,6 +66,16 @@ type Props = {
 
 type Density = "compact" | "comfortable";
 
+function phoneMeta(paper: PaperRecord): string {
+  const first = paper.authors[0];
+  const who = !first
+    ? "Unknown author"
+    : paper.authors.length > 1
+      ? `${first.family} et al.`
+      : first.family;
+  return [who, paper.year != null ? String(paper.year) : "", paper.venue].filter(Boolean).join(" · ");
+}
+
 function authorsLabel(paper: PaperRecord, opts?: { compact?: boolean }): string {
   if (!paper.authors.length) return "Unknown authors";
   const names = paper.authors.map((a) =>
@@ -144,6 +154,12 @@ export function LibraryPanel({
     tags: true,
     integrity: true,
   });
+  const [phoneMenu, setPhoneMenu] = useState(false);
+  const [phoneSearch, setPhoneSearch] = useState(false);
+  const [phoneSheet, setPhoneSheet] = useState<null | "collections" | "topics" | "sort">(null);
+  const [selecting, setSelecting] = useState(false);
+  const [detailMenu, setDetailMenu] = useState(false);
+  const pressTimer = useRef<number | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
 
@@ -172,6 +188,22 @@ export function LibraryPanel({
       setError(err instanceof Error ? err.message : "Failed to load library");
     }
   }, [query, tagFilter, collectionFilter, starredOnly, sort]);
+
+  useEffect(() => {
+    if (variant !== "page") return;
+    let last = window.scrollY;
+    const onScroll = () => {
+      const y = window.scrollY;
+      if (y > last + 8 && y > 48) document.documentElement.dataset.libraryBar = "hidden";
+      else if (y < last - 8 || y < 16) delete document.documentElement.dataset.libraryBar;
+      last = y;
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      delete document.documentElement.dataset.libraryBar;
+    };
+  }, [variant]);
 
   useEffect(() => {
     if (!open) return;
@@ -423,8 +455,17 @@ export function LibraryPanel({
     try {
       const result = await importLibraryBibtex(importBib);
       setImportBib("");
-      setImportOpen(false);
       await refresh();
+      if (result.imported.length === 0) {
+        const why =
+          result.errors.map((item) => item.error).filter(Boolean).join(" ") ||
+          (result.skipped.length > 0
+            ? `Nothing new to add. ${result.skipped.length} entr${result.skipped.length === 1 ? "y is" : "ies are"} already in the library.`
+            : "No papers were imported.");
+        setError(why);
+        return;
+      }
+      setImportOpen(false);
       const skipped = result.skipped.length;
       const parts = [
         `Imported ${result.imported.length}`,
@@ -619,11 +660,72 @@ export function LibraryPanel({
 
   return (
     <aside
-      className={`${isPage ? "library-page" : "history-drawer library-drawer"} density-${density}`}
+      className={`${isPage ? "library-page" : "history-drawer library-drawer"} density-${density}${selecting ? " is-selecting" : ""}`}
       role={isPage ? "main" : "dialog"}
       aria-label="Citation library"
       onKeyDown={onKeyDown}
     >
+      <div className="library-phone-bar">
+        <strong>Library · {papers.length}</strong>
+        <button
+          type="button"
+          className="btn btn-ghost btn-icon"
+          aria-label="Search library"
+          aria-pressed={phoneSearch}
+          onClick={() => setPhoneSearch((v) => !v)}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+            <circle cx="11" cy="11" r="7" />
+            <path d="M20 20l-3.5-3.5" />
+          </svg>
+        </button>
+        <button type="button" className="btn btn-primary" onClick={() => setImportOpen(true)}>
+          + Add
+        </button>
+        <button
+          type="button"
+          className="btn btn-ghost btn-icon"
+          aria-label="Library menu"
+          aria-expanded={phoneMenu}
+          onClick={() => setPhoneMenu((v) => !v)}
+        >
+          ⋯
+        </button>
+        {phoneMenu ? (
+          <div className="library-phone-menu" role="menu">
+            <button type="button" role="menuitem" onClick={() => { setPhoneMenu(false); viewMode === "litreview" ? setViewMode("browse") : seedLitReviewFromLibrary(); }}>
+              Lit review
+            </button>
+            <button type="button" role="menuitem" onClick={() => { setPhoneMenu(false); void runCheckAll(); }}>
+              Check all
+            </button>
+            <button type="button" role="menuitem" onClick={() => { setPhoneMenu(false); setShareOpen(true); }}>
+              Share
+            </button>
+            <button type="button" role="menuitem" onClick={() => { setPhoneMenu(false); setAiLinkOpen(true); }}>
+              AI link
+            </button>
+            <button type="button" role="menuitem" onClick={() => { setPhoneMenu(false); setAiReviewOpen(true); }}>
+              Review queue{aiPendingCount ? ` (${aiPendingCount})` : ""}
+            </button>
+            <button type="button" role="menuitem" onClick={() => { setPhoneMenu(false); setDensity((d) => (d === "compact" ? "comfortable" : "compact")); }}>
+              Density
+            </button>
+            <button type="button" role="menuitem" onClick={() => { setPhoneMenu(false); setSelecting((v) => !v); }}>
+              {selecting ? "Done selecting" : "Select"}
+            </button>
+          </div>
+        ) : null}
+      </div>
+      {phoneSearch ? (
+        <input
+          className="library-search library-phone-search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search title, authors, topics…"
+          aria-label="Filter library"
+        />
+      ) : null}
       <div className="history-drawer-head">
         <div>
           <strong>{isPage ? "Citation library" : "Library"}</strong>
@@ -698,7 +800,7 @@ export function LibraryPanel({
             Add paper
           </button>
           {!isPage ? (
-            <button type="button" className="btn btn-ghost btn-icon" title="Close" onClick={onClose}>
+            <button type="button" className="btn btn-ghost btn-icon" aria-label="Close" onClick={onClose}>
               ✕
             </button>
           ) : null}
@@ -829,6 +931,27 @@ export function LibraryPanel({
             Candidate papers — import is a deliberate checkbox action (never a silent agent write).
             Claim-support verdicts are triage signals, not certified facts.
           </p>
+          <div className="library-lit-cards">
+            {litRows.map((row, idx) => (
+              <article key={row.paper.citekey} className="library-lit-card">
+                <label className="share-check">
+                  <input
+                    type="checkbox"
+                    checked={row.importSelected}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setLitRows((rows) => rows.map((r, i) => (i === idx ? { ...r, importSelected: checked } : r)));
+                    }}
+                  />
+                  <span>Import</span>
+                </label>
+                <div className="library-item-title">{row.paper.title}</div>
+                <p><span>Relevance</span> {row.relevance}</p>
+                <p><span>Claim support</span> {row.claim}</p>
+                <p><span>Integrity</span> {row.integrity}</p>
+              </article>
+            ))}
+          </div>
           <table className="library-lit-table">
             <thead>
               <tr>
@@ -884,6 +1007,31 @@ export function LibraryPanel({
         </div>
       ) : (
       <div className={`library-master${selectedKey ? " has-selection" : ""}`}>
+        <div className="library-phone-chips" role="toolbar" aria-label="Filters">
+          <button
+            type="button"
+            className={`library-chip${!collectionFilter && !tagFilter && !starredOnly ? " is-active" : ""}`}
+            onClick={clearSmartFilters}
+          >
+            All
+          </button>
+          <button
+            type="button"
+            className={`library-chip${starredOnly ? " is-active" : ""}`}
+            onClick={() => setStarredOnly((v) => !v)}
+          >
+            ★ Starred
+          </button>
+          <button type="button" className="library-chip" onClick={() => setPhoneSheet("collections")}>
+            Collections ▾
+          </button>
+          <button type="button" className="library-chip" onClick={() => setPhoneSheet("topics")}>
+            Topics ▾
+          </button>
+          <button type="button" className="library-chip" onClick={() => setPhoneSheet("sort")}>
+            Sort: {SORT_OPTIONS.find((o) => o.id === sort)?.label ?? "Recent"} ▾
+          </button>
+        </div>
         <div className="library-sidebar">
           <input
             ref={searchRef}
@@ -1050,9 +1198,29 @@ export function LibraryPanel({
                   <button
                     type="button"
                     className="library-item-body"
-                    onClick={() => setSelectedKey(p.citekey)}
+                    onClick={() => {
+                      if (selecting) toggleChecked(p.citekey);
+                      else setSelectedKey(p.citekey);
+                    }}
+                    onPointerDown={() => {
+                      if (pressTimer.current) window.clearTimeout(pressTimer.current);
+                      pressTimer.current = window.setTimeout(() => {
+                        setSelecting(true);
+                        setCheckedKeys((prev) => new Set(prev).add(p.citekey));
+                      }, 450);
+                    }}
+                    onPointerUp={() => {
+                      if (pressTimer.current) window.clearTimeout(pressTimer.current);
+                    }}
+                    onPointerLeave={() => {
+                      if (pressTimer.current) window.clearTimeout(pressTimer.current);
+                    }}
                   >
                     <div className="library-item-title">{p.title}</div>
+                    <div className="library-phone-meta">
+                      <span>{phoneMeta(p)}</span>
+                      <span className={badge.className}>{badge.label}</span>
+                    </div>
                     <div className="library-item-meta">
                       <span className="library-authors">{authorsLabel(p, { compact: true })}</span>
                       {p.year != null ? <span>· {p.year}</span> : null}
@@ -1115,6 +1283,66 @@ export function LibraryPanel({
         <div className="library-detail">
           {selected ? (
             <>
+              <div className="library-phone-detailbar">
+                <button type="button" className="btn btn-ghost" onClick={() => setSelectedKey(null)} aria-label="Back">
+                  ←
+                </button>
+                <strong>{selected.title}</strong>
+                <button
+                  type="button"
+                  className={`library-star${selected.starred ? " is-on" : ""}`}
+                  aria-label={selected.starred ? "Unstar" : "Star"}
+                  aria-pressed={selected.starred}
+                  onClick={() => void toggleStar(selected)}
+                >
+                  {selected.starred ? "★" : "☆"}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-icon"
+                  aria-label="Paper menu"
+                  aria-expanded={detailMenu}
+                  onClick={() => setDetailMenu((v) => !v)}
+                >
+                  ⋯
+                </button>
+                {detailMenu ? (
+                  <div className="library-phone-menu" role="menu">
+                    {onCiteIntoProject ? (
+                      <button type="button" role="menuitem" onClick={() => { setDetailMenu(false); onCiteIntoProject(selected.citekey); }}>
+                        Cite
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setDetailMenu(false);
+                        document.querySelector('.library-section[data-section="pdf"]')?.scrollIntoView({ block: "start" });
+                      }}
+                    >
+                      Open PDF
+                    </button>
+                    <button type="button" role="menuitem" onClick={() => { setDetailMenu(false); setShareOpen(true); }}>
+                      Share
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setDetailMenu(false);
+                        if (!confirm(`Delete ${selected.citekey}?`)) return;
+                        void deleteLibraryPaper(selected.citekey).then(() => {
+                          setSelectedKey(null);
+                          void refresh();
+                        });
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ) : null}
+              </div>
               <button
                 type="button"
                 className="btn btn-ghost library-back"
@@ -1139,6 +1367,7 @@ export function LibraryPanel({
               </div>
               <Collapsible
                 title="Organize"
+                section="organize"
                 open={sectionOpen.organize}
                 onToggle={() => setSectionOpen((s) => ({ ...s, organize: !s.organize }))}
               >
@@ -1201,6 +1430,7 @@ export function LibraryPanel({
               </Collapsible>
               <Collapsible
                 title="Info"
+                section="info"
                 open={sectionOpen.info}
                 onToggle={() => setSectionOpen((s) => ({ ...s, info: !s.info }))}
               >
@@ -1222,6 +1452,7 @@ export function LibraryPanel({
               </Collapsible>
               <Collapsible
                 title="Notes"
+                section="notes"
                 open={sectionOpen.notes}
                 onToggle={() => setSectionOpen((s) => ({ ...s, notes: !s.notes }))}
               >
@@ -1235,6 +1466,7 @@ export function LibraryPanel({
               </Collapsible>
               <Collapsible
                 title={selected.attachment ? "PDF & highlights" : "PDF & highlights"}
+                section="pdf"
                 open={sectionOpen.pdf}
                 onToggle={() => setSectionOpen((s) => ({ ...s, pdf: !s.pdf }))}
               >
@@ -1280,6 +1512,7 @@ export function LibraryPanel({
               </Collapsible>
               <Collapsible
                 title="Topics"
+                section="topics"
                 open={sectionOpen.tags}
                 onToggle={() => setSectionOpen((s) => ({ ...s, tags: !s.tags }))}
               >
@@ -1337,6 +1570,7 @@ export function LibraryPanel({
               </Collapsible>
               <Collapsible
                 title="Integrity"
+                section="integrity"
                 open={sectionOpen.integrity}
                 onToggle={() => setSectionOpen((s) => ({ ...s, integrity: !s.integrity }))}
               >
@@ -1454,6 +1688,61 @@ export function LibraryPanel({
         onAccepted={() => void refresh()}
         onCountChange={setAiPendingCount}
       />
+      {phoneSheet ? (
+        <div className="library-phone-sheet" role="dialog" aria-label={phoneSheet}>
+          <div className="library-phone-sheet-head">
+            <strong>{phoneSheet === "sort" ? "Sort" : phoneSheet === "topics" ? "Topics" : "Collections"}</strong>
+            <button type="button" className="btn btn-ghost" onClick={() => setPhoneSheet(null)}>
+              Done
+            </button>
+          </div>
+          {phoneSheet === "sort"
+            ? SORT_OPTIONS.map((o) => (
+                <button
+                  key={o.id}
+                  type="button"
+                  className={`library-chip${sort === o.id ? " is-active" : ""}`}
+                  onClick={() => {
+                    setSort(o.id);
+                    setPhoneSheet(null);
+                  }}
+                >
+                  {o.label}
+                </button>
+              ))
+            : null}
+          {phoneSheet === "collections"
+            ? Object.entries(collections?.collections ?? {}).map(([id, c]) => (
+                <button
+                  key={id}
+                  type="button"
+                  className={`library-chip${collectionFilter === id ? " is-active" : ""}`}
+                  onClick={() => {
+                    setCollectionFilter((cur) => (cur === id ? null : id));
+                    setPhoneSheet(null);
+                  }}
+                >
+                  {c.name}
+                </button>
+              ))
+            : null}
+          {phoneSheet === "topics"
+            ? allTags.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  className={`library-chip${tagFilter === t ? " is-active" : ""}`}
+                  onClick={() => {
+                    setTagFilter((cur) => (cur === t ? null : t));
+                    setPhoneSheet(null);
+                  }}
+                >
+                  #{t}
+                </button>
+              ))
+            : null}
+        </div>
+      ) : null}
     </aside>
   );
 }
@@ -1463,14 +1752,16 @@ function Collapsible({
   open,
   onToggle,
   children,
+  section,
 }: {
   title: string;
   open: boolean;
   onToggle: () => void;
   children: React.ReactNode;
+  section?: string;
 }) {
   return (
-    <section className="library-section">
+    <section className="library-section" data-section={section}>
       <button type="button" className="library-section-head" onClick={onToggle} aria-expanded={open}>
         <span>{open ? "▾" : "▸"}</span> {title}
       </button>
