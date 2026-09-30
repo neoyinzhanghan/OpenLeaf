@@ -8,9 +8,9 @@
 import { findLikelyDuplicate, titlesSoftMatch } from "./dedupe.js";
 import { lookupExternal, detectLink } from "./import.js";
 import { addPaper, deletePaper } from "./index.js";
-import { checkPaperIntegrity } from "./integrity.js";
+import { checkPaperIntegrity, checkCrossrefRetraction } from "./integrity.js";
 import { normalizeArxivId } from "./sources/arxiv.js";
-import { getSourceClients, type ResolvedPaper } from "./sources/index.js";
+import { type ResolvedPaper } from "./sources/index.js";
 import { normalizeDoi } from "./paperUrl.js";
 import type { CreatePaperInput, PaperAuthor, PaperRecord } from "./types.js";
 
@@ -103,25 +103,31 @@ function hydrateFromUrl(input: ProposalInput): ProposalInput {
   return next;
 }
 
-async function checkRetraction(doi: string): Promise<"clean" | "retracted" | "corrected"> {
-  try {
-    const clients = getSourceClients();
-    // Prefer Crossref update-to via integrity path — lightweight DOI lookup first.
-    const remote = await clients.crossref.lookupDoi(doi);
-    if (!remote) return "clean";
-    // Crossref client here doesn't surface updates; use OpenAlex as soft signal is weak.
-    // Defer detailed retraction to post-add integrity; for verify we call check on a probe.
-    return "clean";
-  } catch {
-    return "clean";
-  }
+/**
+ * Real Crossref update-to check (same one integrity.ts runs post-add) — this
+ * used to be a stub that always returned "clean" without ever calling
+ * Crossref, which meant "retraction: clean" was returned to callers of
+ * /verify as if it had been checked when it hadn't. A genuine network/HTTP
+ * failure here throws (fail-closed) rather than being swallowed into
+ * "clean", so a Crossref outage rejects the verify instead of silently
+ * letting a possibly-retracted paper through.
+ */
+async function checkRetraction(
+  doi: string,
+  fetchImpl?: typeof fetch,
+): Promise<"clean" | "retracted" | "corrected"> {
+  const result = await checkCrossrefRetraction(doi, fetchImpl);
+  return result.retraction;
 }
 
 /**
  * Verify a proposed citation without writing. Prefer DOI → arXiv → title+OpenAlex.
  * Never accept Scholar-only or unresolved bare URLs.
  */
-export async function verifyProposal(raw: ProposalInput): Promise<VerifyResult> {
+export async function verifyProposal(
+  raw: ProposalInput,
+  opts?: { fetchImpl?: typeof fetch },
+): Promise<VerifyResult> {
   const input = hydrateFromUrl(raw);
   const doi = input.doi?.trim() ? normalizeDoi(input.doi) : "";
   const arxivId = input.arxivId?.trim() ? normalizeArxivId(input.arxivId) : "";
@@ -196,7 +202,7 @@ export async function verifyProposal(raw: ProposalInput): Promise<VerifyResult> 
         },
       );
     }
-    const retraction = await checkRetraction(doi);
+    const retraction = await checkRetraction(doi, opts?.fetchImpl);
     if (retraction === "retracted") {
       return reject(
         "RETRACTED",
@@ -371,11 +377,14 @@ function resolvedToCreateInput(resolved: ResolvedPaper, input: ProposalInput): C
  * Verify a proposal for the library AI review queue (no write).
  * Host Accept later calls addVerifiedPaper.
  */
-export async function proposeVerifiedPaper(raw: ProposalInput): Promise<
+export async function proposeVerifiedPaper(
+  raw: ProposalInput,
+  opts?: { fetchImpl?: typeof fetch },
+): Promise<
   | { ok: true; decision: "pending"; verify: VerifyAccept; proposal: ProposalInput }
   | VerifyReject
 > {
-  const verify = await verifyProposal(raw);
+  const verify = await verifyProposal(raw, opts);
   if (!verify.ok) return verify;
   return {
     ok: true,
@@ -389,8 +398,11 @@ export async function proposeVerifiedPaper(raw: ProposalInput): Promise<
  * Verify then add. On post-add integrity failure (mismatch/retracted), delete and reject.
  * Duplicates return reject (do not silently re-add).
  */
-export async function addVerifiedPaper(raw: ProposalInput): Promise<AddResult> {
-  const verify = await verifyProposal(raw);
+export async function addVerifiedPaper(
+  raw: ProposalInput,
+  opts?: { fetchImpl?: typeof fetch },
+): Promise<AddResult> {
+  const verify = await verifyProposal(raw, opts);
   if (!verify.ok) return verify;
 
   // Re-check duplicate against resolved identifiers (title path may have upgraded DOI).
@@ -411,7 +423,7 @@ export async function addVerifiedPaper(raw: ProposalInput): Promise<AddResult> {
 
   const paper = await addPaper(resolvedToCreateInput(verify.resolved, hydrateFromUrl(raw)));
   try {
-    const integrity = await checkPaperIntegrity(paper.citekey, { force: true });
+    const integrity = await checkPaperIntegrity(paper.citekey, { force: true, fetchImpl: opts?.fetchImpl });
     if (integrity.integrity.retraction === "retracted") {
       await deletePaper(paper.citekey);
       return reject(

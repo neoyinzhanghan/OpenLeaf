@@ -12,7 +12,8 @@ loadConfig(true);
 
 const { setSourceClientsForTests } = await import("./sources/index.js");
 const { closeIndexDb, reindexLibrary, findByDoi } = await import("./index.js");
-const { detectLink, importBibtex, importFromLink, importPdf, extractPdfTitle } = await import("./import.js");
+const { detectLink, importBibtex, importFromLink, importPdf, extractPdfTitle, MAX_BIBTEX_IMPORT_ENTRIES } =
+  await import("./import.js");
 const { parseBibtex } = await import("./bibtex.js");
 
 const mockResolved = {
@@ -160,6 +161,23 @@ describe("import flows", () => {
     assert.equal(empty.imported.length, 0);
     assert.ok(empty.errors.length > 0, JSON.stringify(empty));
     assert.match(empty.errors[0]?.error ?? "", /BibTeX/i);
+  });
+
+  it("rejects a BibTeX import larger than the entry cap without writing papers", async () => {
+    const papersDir = path.join(libraryRoot, "papers");
+    const before = fs.existsSync(papersDir) ? fs.readdirSync(papersDir).length : 0;
+    const overflow = MAX_BIBTEX_IMPORT_ENTRIES + 1;
+    const bib = Array.from({ length: overflow }, (_, i) => {
+      return `@article{cap${i}, title={Capped Paper ${i} Unique Title}, author={Smith, Alice}, year={2020}}`;
+    }).join("\n");
+    const result = await importBibtex(bib);
+    assert.equal(result.imported.length, 0);
+    assert.equal(result.skipped.length, 0);
+    assert.equal(result.errors.length, 1);
+    assert.match(result.errors[0]?.error ?? "", new RegExp(String(MAX_BIBTEX_IMPORT_ENTRIES)));
+    assert.match(result.errors[0]?.error ?? "", new RegExp(String(overflow)));
+    const after = fs.existsSync(papersDir) ? fs.readdirSync(papersDir).length : 0;
+    assert.equal(after, before);
   });
 
   it("extracts PDF title and imports via OpenAlex title search", async () => {

@@ -7459,7 +7459,10 @@ button.lib-badge:hover {
 /* —— Paper / collection share (Paperpile-style private links) —— */
 
 .library-share-drawer {
-  z-index: 40;
+  /* Rendered as a child overlay of .library-drawer (z-index: 42), so this
+     must clear that to actually paint above the Library panel that hosts
+     it instead of behind it. */
+  z-index: 44;
 }
 
 .library-share-drawer .share-section {

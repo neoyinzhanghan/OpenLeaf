@@ -110,10 +110,10 @@ export async function getPaper(citekey: string): Promise<PaperRecord> {
   return record;
 }
 
-export async function findByDoi(doi: string): Promise<PaperRecord | null> {
+export async function findByDoi(doi: string, records?: PaperRecord[]): Promise<PaperRecord | null> {
   const normalized = doi.trim().toLowerCase().replace(/^https?:\/\/(dx\.)?doi\.org\//, "");
   if (!normalized) return null;
-  const all = await listAllRecords();
+  const all = records ?? (await listAllRecords());
   return all.find((r) => r.doi?.toLowerCase() === normalized) ?? null;
 }
 

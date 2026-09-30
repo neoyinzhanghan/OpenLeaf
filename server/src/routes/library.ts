@@ -77,7 +77,12 @@ libraryRouter.get("/", async (req, res) => {
       ["added", "title", "year", "rating", "starred", "status"].includes(req.query.sort)
         ? (req.query.sort as "added" | "title" | "year" | "rating" | "starred" | "status")
         : undefined;
-    const limit = typeof req.query.limit === "string" ? Number(req.query.limit) : undefined;
+    // A non-numeric ?limit= (e.g. "abc") used to become NaN here and flow
+    // into searchPapers's Math.min/Math.max clamp, which stays NaN and
+    // makes Array.prototype.slice(0, NaN) return zero results — a silent
+    // "empty library" instead of a clear error or an ignored bad value.
+    const rawLimit = typeof req.query.limit === "string" ? Number(req.query.limit) : undefined;
+    const limit = rawLimit != null && Number.isFinite(rawLimit) ? rawLimit : undefined;
     const papers = await searchPapers({ q, tag, tags, collection, starred, status, sort, limit });
     res.json({ papers });
   } catch (err) {

@@ -64,6 +64,45 @@ describe("cite into project", () => {
     assert.match(bib, /doi = \{10\.1000\/attention\}/);
   });
 
+  it("escapes LaTeX-active characters in titles/authors so citing a real paper does not break compile", () => {
+    // Regression: &, %, $, #, _, ~, ^ were previously left unescaped, so a
+    // real title/author containing any of them would produce a .bib field
+    // LaTeX chokes on the first time the paper is cited.
+    const bib = paperToBibtex({
+      citekey: "covid2021",
+      title: "COVID-19 & Long-COVID: 50% Recovery, $100 Cost, #Data_Set ~Estimate ^Note",
+      authors: [{ given: "A_B", family: "O'Connor & Sons" }],
+      year: 2021,
+      doi: null,
+      arxivId: null,
+      url: null,
+      venue: "",
+      abstract: "",
+      tags: [],
+      collections: [],
+      notes: "",
+      attachment: null,
+      source: "manual",
+      starred: false,
+      status: "unread",
+      rating: 0,
+      integrity: { existence: "unresolved", retraction: "clean", lastChecked: null },
+      addedAt: new Date().toISOString(),
+    });
+    // None of these LaTeX-active characters should appear unescaped.
+    for (const raw of ["&", "%", "$", "#", "~", "^"]) {
+      const unescaped = new RegExp(`[^\\\\]\\${raw}`);
+      assert.ok(!unescaped.test(bib), `expected no unescaped "${raw}" in:\n${bib}`);
+    }
+    assert.match(bib, /\\&/);
+    assert.match(bib, /\\%/);
+    assert.match(bib, /\\\$/);
+    assert.match(bib, /\\#/);
+    assert.match(bib, /\\_/);
+    assert.match(bib, /\\textasciitilde\{\}/);
+    assert.match(bib, /\\textasciicircum\{\}/);
+  });
+
   it("syncs into references.bib and inserts \\cite{}", async () => {
     await citeIntoProject(projectId, { citekey: "smith2023attention" });
     const bib = await readFile(projectId, "references.bib");

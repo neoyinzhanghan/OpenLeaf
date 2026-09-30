@@ -129,7 +129,12 @@ export function LibraryAiLinkPanel({ open, onClose }: Props) {
   };
 
   return (
-    <div className="share-drawer library-share-drawer" role="dialog" aria-label="Library AI link">
+    <div
+      className="history-drawer share-drawer library-share-drawer"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Library AI link"
+    >
       <div className="share-body">
         <div className="share-cred" style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
           <div>

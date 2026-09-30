@@ -89,6 +89,11 @@ describe("host metadata path guards", () => {
     );
     assert.equal(renamed?.status, 403);
   });
+
+  it("also blocks citations.json for guest file/fs writes (mirrors comments.json)", () => {
+    assert.equal(isGuestForbiddenWritePath("citations.json"), true);
+    assert.equal(isGuestForbiddenWritePath("Citations.JSON"), true);
+  });
 });
 
 describe("guestRouteDenial", () => {
@@ -105,6 +110,11 @@ describe("guestRouteDenial", () => {
 
   it("blocks guest writes to comments.json via the file API", () => {
     const denial = guestRouteDenial(req(`${prefix}/files/comments.json`, "PUT"), s);
+    assert.equal(denial?.status, 403);
+  });
+
+  it("blocks guest writes to citations.json via the file API", () => {
+    const denial = guestRouteDenial(req(`${prefix}/files/citations.json`, "PUT"), s);
     assert.equal(denial?.status, 403);
   });
 

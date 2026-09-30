@@ -229,6 +229,19 @@ export function LibraryPanel({
     return () => window.clearInterval(t);
   }, [open]);
 
+  // The panel stays mounted (EditorPage toggles `open`, not conditional
+  // rendering), so its own sub-dialog toggles never reset on their own.
+  // Without this, closing the Library from elsewhere (e.g. opening Timeline,
+  // which calls closeOverlappingChrome) and reopening it could resurrect a
+  // Share/AI-link/AI-review dialog the user never asked to see again.
+  useEffect(() => {
+    if (open) return;
+    setImportOpen(false);
+    setShareOpen(false);
+    setAiLinkOpen(false);
+    setAiReviewOpen(false);
+  }, [open]);
+
   useEffect(() => {
     if (!selected) {
       setPdfHint(null);
@@ -375,6 +388,24 @@ export function LibraryPanel({
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") {
+      // A nested dialog (Share / AI link / AI review) renders on top of this
+      // panel; Escape should close just that dialog, not fall through to
+      // clearing the search box or closing the whole Library panel under it.
+      if (shareOpen) {
+        setShareOpen(false);
+        e.preventDefault();
+        return;
+      }
+      if (aiLinkOpen) {
+        setAiLinkOpen(false);
+        e.preventDefault();
+        return;
+      }
+      if (aiReviewOpen) {
+        setAiReviewOpen(false);
+        e.preventDefault();
+        return;
+      }
       if (checkedKeys.size) {
         setCheckedKeys(new Set());
         e.preventDefault();
@@ -1189,6 +1220,7 @@ export function LibraryPanel({
                       type="button"
                       className={`library-star${p.starred ? " is-on" : ""}`}
                       title={p.starred ? "Unstar" : "Star"}
+                      aria-label={p.starred ? "Unstar" : "Star"}
                       aria-pressed={p.starred}
                       onClick={(e) => void toggleStar(p, e)}
                     >
@@ -1356,6 +1388,7 @@ export function LibraryPanel({
                     type="button"
                     className={`library-star library-star-lg${selected.starred ? " is-on" : ""}`}
                     title={selected.starred ? "Unstar" : "Star"}
+                    aria-label={selected.starred ? "Unstar" : "Star"}
                     aria-pressed={selected.starred}
                     onClick={() => void toggleStar(selected)}
                   >
@@ -1524,6 +1557,7 @@ export function LibraryPanel({
                       type="button"
                       className="lib-badge is-on"
                       title="Remove topic"
+                      aria-label={`Remove topic ${t}`}
                       onClick={() => void removeTag(selected, t)}
                     >
                       #{t} ×

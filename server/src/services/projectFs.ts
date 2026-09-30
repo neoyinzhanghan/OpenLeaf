@@ -145,7 +145,7 @@ export function isProtectedNormalizedPath(normalized: string): boolean {
   if (base === "latexmkrc" || base === ".latexmkrc" || base.endsWith(".latexmkrc")) return true;
   if (lower === ".git" || lower.startsWith(".git/")) return true;
   if (lower === ".openleaf" || lower.startsWith(".openleaf/")) return true;
-  if (base === "openleaf.json" || base === "comments.json") return true;
+  if (base === "openleaf.json" || base === "comments.json" || base === "citations.json") return true;
   return false;
 }
 
@@ -180,6 +180,11 @@ export function isGitMetadataPath(relativePath: string): boolean {
 /**
  * Paths guests and AI links must not create, overwrite, rename, or delete.
  * comments.json is mutated through the comments API (with author checks) instead.
+ * citations.json mirrors comments.json (source-anchored, host-managed claim
+ * verdicts) and must be mutated only through the /citations routes, which run
+ * verifyClaimInstance/scanProjectCitations rather than accepting raw writes —
+ * otherwise a write-capable guest could forge "verified" integrity/claim-check
+ * verdicts directly through the generic file API.
  */
 export function isGuestForbiddenWritePath(relativePath: string): boolean {
   return isProtectedAccessPath(relativePath);

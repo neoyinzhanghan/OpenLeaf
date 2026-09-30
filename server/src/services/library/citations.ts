@@ -155,24 +155,26 @@ export async function verifyClaimInstance(
   line: number,
   opts?: { citekey?: string; force?: boolean },
 ): Promise<CitationInstance> {
-  let instances = await listCitationInstances(projectId);
-  let target = instances.find(
+  // Always rescan this one file first so claimText reflects the CURRENT
+  // source, not whatever was last stored. Without this, editing the citing
+  // sentence while keeping the same file:line:citekey would silently keep
+  // showing a stale verdict for the old sentence — scanProjectCitations is
+  // what actually notices the sentence changed (via the claimHash below)
+  // and resets a changed instance's verdict to "not_checked".
+  await scanProjectCitations(projectId, [file]);
+  const instances = await listCitationInstances(projectId);
+  const target = instances.find(
     (i) => i.file === file && i.line === line && (!opts?.citekey || i.citekey === opts.citekey),
   );
-  if (!target) {
-    // Rescan this file only
-    await scanProjectCitations(projectId, [file]);
-    instances = await listCitationInstances(projectId);
-    target = instances.find(
-      (i) => i.file === file && i.line === line && (!opts?.citekey || i.citekey === opts.citekey),
-    );
-  }
   if (!target) {
     throw Object.assign(new Error("No citation at that location"), { status: 404 });
   }
 
-  const evidenceDigest = (await evidenceForPaper(target.citekey)).text.slice(0, 200);
-  const claimHash = hashClaimContext(target.claimText, evidenceDigest);
+  // Use the SAME hash formula scanProjectCitations uses (claimText + citekey)
+  // so a fresh scan's hash and this function's cache check always agree —
+  // two different formulas here previously made the cache miss on every
+  // scan-then-verify cycle, forcing a claim-check call every time.
+  const claimHash = hashClaimContext(target.claimText, target.citekey);
   if (
     !opts?.force &&
     target.claimHash === claimHash &&

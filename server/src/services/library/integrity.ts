@@ -29,7 +29,15 @@ type RetractionCache = {
   checkedAt: string;
 };
 
-async function checkCrossrefRetraction(
+/**
+ * Exported so verifyProposal.ts's pre-add gate can run the SAME real check
+ * used post-add here, instead of a separate stub that always reported
+ * "clean" without ever actually calling Crossref (a fabricated verdict that
+ * was returned verbatim from the verify API). Throws on a genuine network/
+ * HTTP failure (not on a plain 404) — callers should let that propagate
+ * rather than treating an unchecked paper as confirmed clean.
+ */
+export async function checkCrossrefRetraction(
   doi: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<RetractionCache> {

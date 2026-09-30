@@ -208,7 +208,8 @@ export async function createLibraryShare(input: {
   armExpiry(session);
 
   const inviteUrl = `${publicBaseUrl(input.port)}/lib-share/${token}`;
-  console.log(`[library-share] created ${id} (${papers.length} papers) → ${inviteUrl}`);
+  // Never log inviteUrl/token: the token is a bearer credential for this share.
+  console.log(`[library-share] created ${id} (${papers.length} papers)`);
   return { session, inviteUrl };
 }
 

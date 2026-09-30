@@ -7,6 +7,7 @@ import { Router, type Request, type Response } from "express";
 import { ZodError, z } from "zod";
 import { loadConfig } from "../config.js";
 import { handleLibraryAiMcpHttp } from "../services/libraryAiMcp.js";
+import { assertLibraryAiOutbound } from "../services/libraryAiOutboundLimit.js";
 import { enrichPaper } from "../services/library/enrich.js";
 import { lookupExternal } from "../services/library/import.js";
 import { getPaper, searchPapers } from "../services/library/index.js";
@@ -326,6 +327,8 @@ libraryAiApiRouter.post("/lookup", async (req, res) => {
   const auth = requireLibraryAi(req, res);
   if (!auth) return;
   try {
+    assertLibraryAiSearch(auth.session);
+    assertLibraryAiOutbound(auth.session.id);
     const body = ProposalSchema.parse(req.body ?? {});
     const paper = await lookupExternal({
       doi: body.doi ?? undefined,
@@ -343,6 +346,8 @@ libraryAiApiRouter.post("/verify", async (req, res) => {
   const auth = requireLibraryAi(req, res);
   if (!auth) return;
   try {
+    assertLibraryAiSearch(auth.session);
+    assertLibraryAiOutbound(auth.session.id);
     const body = ProposalSchema.parse(req.body ?? {});
     bumpVerify(auth.session);
     const result = await verifyProposal(body);

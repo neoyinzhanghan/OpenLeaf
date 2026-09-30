@@ -55,6 +55,12 @@ export function parseArgs(argv: string[]): ParsedArgs {
   return { positionals, flags };
 }
 
+/** Parse one typed menu line the same way real argv is parsed. */
+export function parseCommandLine(line: string): ParsedArgs {
+  const tokens = line.trim().split(/\s+/).filter(Boolean);
+  return parseArgs(["", "", ...tokens]);
+}
+
 export function flagString(flags: Map<string, string | true>, name: string): string | undefined {
   const value = flags.get(name);
   return typeof value === "string" ? value : undefined;

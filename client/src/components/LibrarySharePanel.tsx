@@ -157,7 +157,12 @@ export function LibrarySharePanel({ open, onClose, citekeys, collectionId, colle
   };
 
   return (
-    <div className="share-drawer library-share-drawer" role="dialog" aria-label="Share papers">
+    <div
+      className="history-drawer share-drawer library-share-drawer"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Share papers"
+    >
       <div className="share-body">
         <div className="share-cred" style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
           <div>

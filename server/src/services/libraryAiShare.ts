@@ -156,7 +156,10 @@ export function mintLibraryAi(input: {
   const libraryAiUrl = `${origin}/library-ai/${session.token}`;
   const apiBase = `${origin}/api/library-ai/v1`;
   const mcpUrl = mcpUrlFromApiBase(apiBase);
-  console.log(`[library-ai] minted ${session.id} → ${libraryAiUrl}`);
+  // Never log libraryAiUrl/token: the token is the entire credential for this
+  // lane (bearer, no other auth). Log only the non-secret session id, matching
+  // the established aiShare.ts pattern.
+  console.log(`[library-ai] minted ${session.id}`);
   return {
     session,
     libraryAiUrl,

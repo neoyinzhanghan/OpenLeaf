@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -42,6 +42,26 @@ export type SetupResult = {
   next: string[];
 };
 
+/** Forward SIGINT/SIGTERM to a foreground child, then drop the listeners. */
+export function forwardSignalsToChild(child: ChildProcess): () => void {
+  const forward = (signal: NodeJS.Signals) => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    try {
+      child.kill(signal);
+    } catch {
+      /* child already gone */
+    }
+  };
+  const onInt = () => forward("SIGINT");
+  const onTerm = () => forward("SIGTERM");
+  process.once("SIGINT", onInt);
+  process.once("SIGTERM", onTerm);
+  return () => {
+    process.removeListener("SIGINT", onInt);
+    process.removeListener("SIGTERM", onTerm);
+  };
+}
+
 function runNpmBuild(repoRoot: string): Promise<void> {
   const npm = npmBuildCommand();
   return new Promise((resolve, reject) => {
@@ -52,8 +72,14 @@ function runNpmBuild(repoRoot: string): Promise<void> {
       shell: npm.shell,
       windowsHide: true,
     });
-    child.on("error", reject);
+    const stopForwarding = forwardSignalsToChild(child);
+    const finish = () => stopForwarding();
+    child.on("error", (err) => {
+      finish();
+      reject(err);
+    });
     child.on("exit", (code) => {
+      finish();
       if (code === 0) resolve();
       else reject(new Error(`npm run build exited with ${code ?? "unknown"}`));
     });

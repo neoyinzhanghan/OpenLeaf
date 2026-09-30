@@ -110,9 +110,47 @@ export async function getPdfSourceHint(citekey: string): Promise<PdfSourceHint> 
   };
 }
 
+/** Hard cap on a downloaded OA PDF. Generous for a real paper, small enough to bound memory/disk. */
+const MAX_PDF_BYTES = 100 * 1024 * 1024; // 100 MB
+/** The OA host can be any third-party publisher/repository; bound how long we wait on it. */
+const PDF_FETCH_TIMEOUT_MS = 45_000;
+
+/**
+ * Read a fetch Response body up to `maxBytes`, aborting as soon as the cap is
+ * exceeded rather than buffering the whole thing first — a slow or
+ * misconfigured OA host must not be able to exhaust server memory/disk by
+ * streaming an arbitrarily large (or infinite) body.
+ */
+async function readBodyWithCap(res: Response, maxBytes: number): Promise<Buffer> {
+  const reader = res.body?.getReader?.();
+  if (!reader) {
+    // Fallback (e.g. a test double without a real stream): buffer, then check.
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length > maxBytes) {
+      throw httpError(502, `PDF exceeded the ${maxBytes} byte limit`);
+    }
+    return buf;
+  }
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) {
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {});
+        throw httpError(502, `PDF exceeded the ${maxBytes} byte limit`);
+      }
+      chunks.push(value);
+    }
+  }
+  return Buffer.concat(chunks);
+}
+
 export async function fetchAndAttachPdf(
   citekey: string,
-  opts?: { fetchImpl?: typeof fetch },
+  opts?: { fetchImpl?: typeof fetch; maxBytes?: number; timeoutMs?: number },
 ): Promise<{ paper: PaperRecord; source: "arxiv" | "unpaywall"; bytes: number }> {
   const paper = await getPaper(citekey);
   if (hasLocalPdf(paper)) {
@@ -123,6 +161,7 @@ export async function fetchAndAttachPdf(
     throw httpError(404, "No direct PDF download available for this paper");
   }
 
+  const maxBytes = opts?.maxBytes ?? MAX_PDF_BYTES;
   const fetchImpl = opts?.fetchImpl ?? fetch;
   const res = await fetchImpl(resolved.url, {
     headers: {
@@ -130,11 +169,16 @@ export async function fetchAndAttachPdf(
       "User-Agent": "OpenLeaf/1.0 (library PDF fetch)",
     },
     redirect: "follow",
+    signal: AbortSignal.timeout(opts?.timeoutMs ?? PDF_FETCH_TIMEOUT_MS),
   });
   if (!res.ok) {
     throw httpError(502, `PDF download failed (${res.status}) from ${resolved.source}`);
   }
-  const buf = Buffer.from(await res.arrayBuffer());
+  const declaredLength = Number(res.headers?.get?.("content-length") ?? "");
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    throw httpError(502, `PDF exceeded the ${maxBytes} byte limit`);
+  }
+  const buf = await readBodyWithCap(res, maxBytes);
   if (buf.length < 5 || buf.subarray(0, 5).toString("latin1") !== "%PDF-") {
     throw httpError(502, "Downloaded file is not a PDF");
   }

@@ -6,7 +6,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { bibEntryToCreateInput, parseBibtex } from "./bibtex.js";
 import { findLikelyDuplicate } from "./dedupe.js";
-import { addPaper, findByDoi, getPaper } from "./index.js";
+import { addPaper, findByDoi, getPaper, listAllRecords } from "./index.js";
 import { paperDir } from "./paths.js";
 import { getSourceClients, type ResolvedPaper } from "./sources/index.js";
 import { normalizeArxivId } from "./sources/arxiv.js";
@@ -153,6 +153,9 @@ export type BibImportResult = {
   errors: Array<{ citekey: string; error: string }>;
 };
 
+/** Bound one request so duplicate checks cannot scan the library once per unbounded entry. */
+export const MAX_BIBTEX_IMPORT_ENTRIES = 500;
+
 export async function importBibtex(text: string): Promise<BibImportResult> {
   const entries = parseBibtex(text);
   const imported: PaperRecord[] = [];
@@ -167,6 +170,20 @@ export async function importBibtex(text: string): Promise<BibImportResult> {
     });
     return { imported, skipped, errors };
   }
+  if (entries.length > MAX_BIBTEX_IMPORT_ENTRIES) {
+    errors.push({
+      citekey: "",
+      error: `This file has ${entries.length} BibTeX entries. Import at most ${MAX_BIBTEX_IMPORT_ENTRIES} at a time.`,
+    });
+    return { imported, skipped, errors };
+  }
+
+  const known = await listAllRecords();
+  const remember = (paper: PaperRecord) => {
+    const index = known.findIndex((record) => record.citekey === paper.citekey);
+    if (index >= 0) known[index] = paper;
+    else known.push(paper);
+  };
 
   for (const entry of entries) {
     try {
@@ -188,7 +205,7 @@ export async function importBibtex(text: string): Promise<BibImportResult> {
           // Prefer metadata from the bib; drop DOI if another record already owns it.
           let doi = input.doi ?? null;
           if (doi) {
-            const owner = await findByDoi(doi);
+            const owner = await findByDoi(doi, known);
             if (owner && owner.citekey !== entry.citekey) doi = existing.doi;
           }
           const upgraded = await updatePaper(entry.citekey, {
@@ -203,6 +220,7 @@ export async function importBibtex(text: string): Promise<BibImportResult> {
             notes: "",
           });
           imported.push(upgraded);
+          remember(upgraded);
           continue;
         }
         skipped.push({
@@ -214,7 +232,7 @@ export async function importBibtex(text: string): Promise<BibImportResult> {
         continue;
       }
       if (input.doi) {
-        const existingByDoi = await findByDoi(input.doi);
+        const existingByDoi = await findByDoi(input.doi, known);
         if (existingByDoi) {
           // Keep the project's citekey as an alias record (no duplicate DOI).
           try {
@@ -226,19 +244,19 @@ export async function importBibtex(text: string): Promise<BibImportResult> {
               stub.authors.length === 0;
             if (isStub) {
               const { updatePaper } = await import("./index.js");
-              imported.push(
-                await updatePaper(entry.citekey, {
-                  title: existingByDoi.title,
-                  authors: existingByDoi.authors,
-                  year: existingByDoi.year,
-                  venue: existingByDoi.venue,
-                  abstract: existingByDoi.abstract,
-                  doi: null,
-                  arxivId: existingByDoi.arxivId,
-                  source: existingByDoi.source,
-                  notes: `Project citekey alias of ${existingByDoi.citekey}; metadata copied.`,
-                }),
-              );
+              const upgraded = await updatePaper(entry.citekey, {
+                title: existingByDoi.title,
+                authors: existingByDoi.authors,
+                year: existingByDoi.year,
+                venue: existingByDoi.venue,
+                abstract: existingByDoi.abstract,
+                doi: null,
+                arxivId: existingByDoi.arxivId,
+                source: existingByDoi.source,
+                notes: `Project citekey alias of ${existingByDoi.citekey}; metadata copied.`,
+              });
+              imported.push(upgraded);
+              remember(upgraded);
               continue;
             }
           } catch {
@@ -256,6 +274,7 @@ export async function importBibtex(text: string): Promise<BibImportResult> {
                 notes: `Project citekey alias of ${existingByDoi.citekey}; metadata copied.`,
               });
               imported.push(alias);
+              remember(alias);
               continue;
             } catch {
               /* fall through to skip */
@@ -270,12 +289,15 @@ export async function importBibtex(text: string): Promise<BibImportResult> {
           continue;
         }
       }
-      const softDup = await findLikelyDuplicate({
-        doi: input.doi,
-        arxivId: input.arxivId,
-        title: input.title,
-        authors: input.authors,
-      });
+      const softDup = await findLikelyDuplicate(
+        {
+          doi: input.doi,
+          arxivId: input.arxivId,
+          title: input.title,
+          authors: input.authors,
+        },
+        known,
+      );
       if (softDup) {
         skipped.push({
           citekey: entry.citekey,
@@ -287,6 +309,7 @@ export async function importBibtex(text: string): Promise<BibImportResult> {
       }
       const paper = await addPaper(input);
       imported.push(paper);
+      remember(paper);
     } catch (err) {
       errors.push({
         citekey: entry.citekey,

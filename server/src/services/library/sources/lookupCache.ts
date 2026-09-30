@@ -2,6 +2,7 @@
  * Cache every external lookup by DOI / arXiv id under library/.cache/lookups/.
  * Keyed so repeated projects citing the same paper do not re-hit external APIs.
  */
+import crypto from "node:crypto";
 import fs from "node:fs";
 import fsPromises from "node:fs/promises";
 import path from "node:path";
@@ -18,7 +19,13 @@ function sanitizeKey(key: string): string {
 }
 
 export function lookupCachePath(kind: "doi" | "arxiv" | "title", key: string): string {
-  return path.join(lookupsDir(), `${kind}-${sanitizeKey(key)}.json`);
+  // Sanitizing (lowercasing, collapsing punctuation to "_", truncating to
+  // 180 chars) can map two distinct keys to the same string, which would
+  // otherwise make them silently share (and overwrite) one cache file. A
+  // short hash of the original, un-sanitized key makes the filename unique
+  // per key while keeping it human-scannable.
+  const digest = crypto.createHash("sha1").update(key.trim().toLowerCase()).digest("hex").slice(0, 10);
+  return path.join(lookupsDir(), `${kind}-${sanitizeKey(key)}-${digest}.json`);
 }
 
 export async function readLookupCache<T>(

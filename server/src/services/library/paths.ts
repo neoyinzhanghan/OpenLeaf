@@ -2,6 +2,36 @@ import fs from "node:fs";
 import path from "node:path";
 import { getLibraryRootAbs } from "../../config.js";
 
+function pathError(status: number, message: string): Error {
+  return Object.assign(new Error(message), { status });
+}
+
+/**
+ * Citekeys reach filesystem paths from several trust boundaries (host routes,
+ * BibTeX import, the Library-AI bearer surface, MCP tools). Validate the
+ * shape here, once, centrally, rather than trusting every caller to have
+ * sanitized it first — matches CitekeySchema in ./types.ts, but duplicated
+ * as a plain regex to avoid a dependency cycle with zod-based types here.
+ * Rejects anything containing "/", "\", or ".." so a crafted citekey (e.g.
+ * from a URL param where "%2f" decodes to "/" only after Express routing)
+ * cannot escape papersDir().
+ */
+const SAFE_CITEKEY = /^[A-Za-z][A-Za-z0-9_.:-]*$/;
+
+export function assertSafeCitekey(citekey: string): void {
+  if (
+    typeof citekey !== "string" ||
+    citekey.length === 0 ||
+    citekey.length > 128 ||
+    citekey.includes("/") ||
+    citekey.includes("\\") ||
+    citekey.includes("..") ||
+    !SAFE_CITEKEY.test(citekey)
+  ) {
+    throw pathError(400, "Invalid citekey");
+  }
+}
+
 export function libraryRoot(): string {
   return getLibraryRootAbs();
 }
@@ -11,6 +41,7 @@ export function papersDir(): string {
 }
 
 export function paperDir(citekey: string): string {
+  assertSafeCitekey(citekey);
   return path.join(papersDir(), citekey);
 }
 

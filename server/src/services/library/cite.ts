@@ -9,10 +9,21 @@ import { getPaper } from "./index.js";
 import type { PaperRecord } from "./types.js";
 import { projectDir, readFile, writeFile } from "../projectFs.js";
 
+/**
+ * Escape a value for a .bib field. Real paper titles/authors routinely
+ * contain &, %, $, #, _, ~, ^ (e.g. "COVID-19 & Long-Term Effects", an
+ * author name with an underscore) — left unescaped, these are LaTeX-active
+ * characters (alignment tab, comment, math mode, argument, etc.) and will
+ * break the user's compile the first time the paper is cited, not just look
+ * wrong in the .bib file.
+ */
 function escapeBibtex(value: string): string {
   return value
     .replace(/\\/g, "\\textbackslash{}")
     .replace(/[{}]/g, (c) => `\\${c}`)
+    .replace(/[&%$#_]/g, (c) => `\\${c}`)
+    .replace(/~/g, "\\textasciitilde{}")
+    .replace(/\^/g, "\\textasciicircum{}")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -113,6 +124,10 @@ export async function exportLibraryPapers(opts: {
   return { text, count: papers.length, filename: `${base}-${stamp}.${ext}`, format };
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function findBibFile(projectId: string): string {
   const root = projectDir(projectId);
   const candidates = ["references.bib", "refs.bib", "bibliography.bib", "main.bib"];
@@ -135,7 +150,7 @@ export async function syncCitekeyToBib(projectId: string, citekey: string): Prom
   }
 
   const entry = paperToBibtex(paper);
-  const entryRe = new RegExp(`@[a-zA-Z]+\\{${citekey}\\s*,[\\s\\S]*?\\n\\}`, "m");
+  const entryRe = new RegExp(`@[a-zA-Z]+\\{${escapeRegExp(citekey)}\\s*,[\\s\\S]*?\\n\\}`, "m");
   let next: string;
   if (entryRe.test(existing)) {
     next = existing.replace(entryRe, entry.trimEnd());

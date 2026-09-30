@@ -47,26 +47,33 @@ export async function findByArxiv(arxivId: string): Promise<PaperRecord | null> 
   );
 }
 
-export async function findLikelyDuplicate(input: {
-  doi?: string | null;
-  arxivId?: string | null;
-  title?: string | null;
-  authors?: PaperAuthor[] | null;
-}): Promise<DuplicateMatch | null> {
+export async function findLikelyDuplicate(
+  input: {
+    doi?: string | null;
+    arxivId?: string | null;
+    title?: string | null;
+    authors?: PaperAuthor[] | null;
+  },
+  records?: PaperRecord[],
+): Promise<DuplicateMatch | null> {
   const { findByDoi, listAllRecords } = await import("./index.js");
+  const pool = records ?? (await listAllRecords());
   if (input.doi?.trim()) {
-    const byDoi = await findByDoi(input.doi);
+    const byDoi = await findByDoi(input.doi, pool);
     if (byDoi) return { paper: byDoi, match: "doi" };
   }
   if (input.arxivId?.trim()) {
-    const byArxiv = await findByArxiv(input.arxivId);
+    const normalized = normalizeArxivKey(input.arxivId);
+    const byArxiv = normalized
+      ? (pool.find((r) => r.arxivId && normalizeArxivKey(r.arxivId) === normalized) ?? null)
+      : null;
     if (byArxiv) return { paper: byArxiv, match: "arxiv" };
   }
   const title = input.title?.trim();
   if (!title) return null;
 
   const family = input.authors?.[0]?.family?.trim().toLowerCase() ?? "";
-  const all = await listAllRecords();
+  const all = pool;
   for (const r of all) {
     if (!titlesSoftMatch(title, r.title)) continue;
     if (family) {

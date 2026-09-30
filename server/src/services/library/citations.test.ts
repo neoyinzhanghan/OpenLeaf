@@ -77,4 +77,29 @@ describe("claim-support checking", () => {
     const all = await listCitationInstances(projectId);
     assert.equal(all.length, 1);
   });
+
+  it("re-checks when the citing sentence changes at the same file:line:citekey", async () => {
+    // Same line number, same citekey, but the sentence now says the opposite.
+    await writeFile(
+      projectId,
+      "main.tex",
+      [
+        "\\documentclass{article}",
+        "\\begin{document}",
+        "Attention mechanisms fail to improve calibration under label shift \\cite{smith2023attention}.",
+        "\\end{document}",
+        "",
+      ].join("\n"),
+    );
+
+    const before = (await listCitationInstances(projectId)).find((i) => i.line === 3)!;
+    assert.match(before.claimText, /improve calibration/); // still the OLD stale text
+
+    const updated = await verifyClaimInstance(projectId, "main.tex", 3, {
+      citekey: "smith2023attention",
+    });
+
+    assert.match(updated.claimText, /fail to improve calibration/);
+    assert.notEqual(updated.claimHash, before.claimHash);
+  });
 });

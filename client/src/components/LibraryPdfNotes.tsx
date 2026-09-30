@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   createLibraryAnnotation,
   deleteLibraryAnnotation,
@@ -86,16 +86,26 @@ export function LibraryPdfNotes({ paper, onError }: Props) {
   const [visiblePage, setVisiblePage] = useState(1);
   const [pageFilter, setPageFilter] = useState<"all" | "page">("all");
 
+  // Guards against a stale in-flight refresh() for a previously-viewed paper
+  // resolving after the user has already switched to another paper and
+  // clobbering the newer paper's annotation list (mirrors LibraryPanel's
+  // pdfHint effect guard).
+  const citekeyRef = useRef(paper.citekey);
+
   const refresh = useCallback(async () => {
+    const requestedFor = paper.citekey;
     try {
       const { annotations: list } = await listLibraryAnnotations(paper.citekey);
+      if (citekeyRef.current !== requestedFor) return;
       setAnnotations(list);
     } catch (err) {
+      if (citekeyRef.current !== requestedFor) return;
       onError?.(err instanceof Error ? err.message : "Could not load annotations");
     }
   }, [paper.citekey, onError]);
 
   useEffect(() => {
+    citekeyRef.current = paper.citekey;
     void refresh();
     setPdfOpen(Boolean(paper.attachment));
     setPending(null);
@@ -234,6 +244,8 @@ export function LibraryPdfNotes({ paper, onError }: Props) {
   const onAreaSelect = (rect: PdfAreaRect) => {
     if (tool !== "highlight" && tool !== "underline" && tool !== "area") return;
     setEditingId(null);
+    setDraft("");
+    setQuote("");
     setPending({
       kind: tool,
       page: rect.page,
@@ -256,6 +268,8 @@ export function LibraryPdfNotes({ paper, onError }: Props) {
   const onPinAt = (page: number, x: number, y: number) => {
     if (tool !== "pin") return;
     setEditingId(null);
+    setDraft("");
+    setQuote("");
     setPending({ kind: "pin", page, x, y, w: 14, h: 14 });
     setFlash({ page, x, y, width: 14, height: 14, fullWidth: false, nonce: Date.now() });
   };
@@ -304,7 +318,15 @@ export function LibraryPdfNotes({ paper, onError }: Props) {
               onClick={() => {
                 setTool(id);
                 if (id !== "note") setPending(null);
-                if (id !== "select") setEditingId(null);
+                if (id !== "select") {
+                  // Leaving an edit/compose session for a fresh tool — clear
+                  // the draft body/quote too, not just editingId, so stale
+                  // text from a previous edit doesn't bleed into the next
+                  // annotation created with this tool.
+                  setEditingId(null);
+                  setDraft("");
+                  setQuote("");
+                }
               }}
             >
               {label}
@@ -446,6 +468,7 @@ export function LibraryPdfNotes({ paper, onError }: Props) {
               type="button"
               className="btn btn-ghost btn-icon"
               title="Delete annotation"
+              aria-label="Delete annotation"
               onClick={() => {
                 void deleteLibraryAnnotation(paper.citekey, a.id)
                   .then(() => {

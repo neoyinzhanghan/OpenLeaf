@@ -23,8 +23,12 @@ export function redactText(input: string): string {
     [/\/join\/[A-Za-z0-9_-]+/g, "/join/[redacted]"],
     [/\/(?:library-ai|lib-share|ai)\/[A-Za-z0-9_-]{8,}/g, "/[redacted]"],
     [/\b[A-Za-z0-9_-]{24,}\b/g, "[redacted]"],
-    [/[A-Za-z]:\\(?:[^\\\s]+\\)+[^\\\s]+/g, "[path]"],
-    [/\/(?:home|Users|tmp|var|opt|usr)\/[^\s]+/g, "[path]"],
+    // Windows paths with backslashes OR forward slashes (e.g. a path pasted
+    // from a tool that normalizes separators, "C:/Users/neo/...").
+    [/[A-Za-z]:[\\/](?:[^\\/\s]+[\\/])*[^\\/\s]+/g, "[path]"],
+    // Common Unix mount points, including external/network volumes
+    // (/mnt, /media, /srv) and macOS's /Volumes, not just the original set.
+    [/\/(?:home|Users|tmp|var|opt|usr|mnt|media|srv|Volumes)\/[^\s]+/g, "[path]"],
   ];
   for (const [pattern, replacement] of rules) text = text.replace(pattern, replacement);
   return text

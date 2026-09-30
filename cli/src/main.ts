@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { flagBool, flagString, parseArgs } from "./args.js";
+import { flagBool, flagString, parseArgs, parseCommandLine } from "./args.js";
 import { applySafeFixes, CHECK_SCHEMA_VERSION, hasErrors, runChecks } from "./checks.js";
 import { commandExists, installHint, nodeMajor } from "./deps.js";
 import { editorUrl, logPath, openEditor, readInstance, startServer, stopServer, tailLog } from "./instance.js";
@@ -158,9 +158,10 @@ async function showMenu(): Promise<number> {
     out("Run openleaf help for what each command does. This shell is not interactive, so no menu was opened.");
     return 0;
   }
-  const choice = (await promptLine("Action (or press Enter to quit)")).toLowerCase();
+  const choice = (await promptLine("Action (or press Enter to quit)")).trim();
   if (!choice) return 0;
-  return dispatch(choice.split(/\s+/), new Map());
+  const parsed = parseCommandLine(choice.toLowerCase());
+  return dispatch(parsed.positionals, parsed.flags);
 }
 
 async function cmdSetup(flags: Map<string, string | true>): Promise<number> {

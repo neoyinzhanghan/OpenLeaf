@@ -7,6 +7,7 @@ import { enrichPaper } from "./library/enrich.js";
 import { lookupExternal } from "./library/import.js";
 import { getPaper, searchPapers } from "./library/index.js";
 import { proposeVerifiedPaper, verifyProposal, type ProposalInput } from "./library/verifyProposal.js";
+import { assertLibraryAiOutbound } from "./libraryAiOutboundLimit.js";
 import {
   assertLibraryAiAdd,
   assertLibraryAiEnrich,
@@ -227,6 +228,8 @@ async function callTool(auth: LibraryAiAuth, name: string, args: Record<string, 
       };
     }
     case "library_lookup": {
+      assertLibraryAiSearch(session);
+      assertLibraryAiOutbound(session.id);
       const paper = await lookupExternal({
         doi: typeof args.doi === "string" ? args.doi : undefined,
         arxivId: typeof args.arxivId === "string" ? args.arxivId : undefined,
@@ -236,6 +239,8 @@ async function callTool(auth: LibraryAiAuth, name: string, args: Record<string, 
       return { payload: { paper }, isError: false };
     }
     case "library_verify": {
+      assertLibraryAiSearch(session);
+      assertLibraryAiOutbound(session.id);
       bumpVerify(session);
       const result = await verifyProposal(proposalFromArgs(args));
       return { payload: result, isError: !result.ok };

@@ -105,24 +105,64 @@ describe("verifyProposal + library AI mint", () => {
   });
 
   it("accepts DOI-only and queues via proposeVerifiedPaper", async () => {
-    const v = await verifyProposal({ doi: "10.1000/real.paper" });
+    // Real Crossref update-to check now runs pre-add (fixed: it used to be a
+    // stub that always returned "clean" without ever calling Crossref) —
+    // mock the retraction lookup the same way integrity.test.ts does, so
+    // this test doesn't depend on reaching the real network.
+    const cleanRetractionFetch: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.includes("api.crossref.org/works/")) {
+        return new Response(
+          JSON.stringify({ message: { title: ["A Real Calibration Result"], "update-to": [] } }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return new Response("not found", { status: 404 });
+    };
+
+    const v = await verifyProposal({ doi: "10.1000/real.paper" }, { fetchImpl: cleanRetractionFetch });
     assert.equal(v.ok, true);
 
     const { proposeVerifiedPaper } = await import("./verifyProposal.js");
-    const proposed = await proposeVerifiedPaper({ doi: "10.1000/real.paper" });
+    const proposed = await proposeVerifiedPaper(
+      { doi: "10.1000/real.paper" },
+      { fetchImpl: cleanRetractionFetch },
+    );
     assert.equal(proposed.ok, true);
     if (proposed.ok) assert.equal(proposed.decision, "pending");
 
-    const added = await addVerifiedPaper({ doi: "10.1000/real.paper" });
+    const added = await addVerifiedPaper(
+      { doi: "10.1000/real.paper" },
+      { fetchImpl: cleanRetractionFetch },
+    );
     assert.equal(added.ok, true);
     if (added.ok) {
       assert.equal(added.created, true);
       assert.equal(added.paper.doi, "10.1000/real.paper");
     }
 
-    const dup = await verifyProposal({ doi: "10.1000/real.paper" });
+    const dup = await verifyProposal({ doi: "10.1000/real.paper" }, { fetchImpl: cleanRetractionFetch });
     assert.equal(dup.ok, false);
     if (!dup.ok) assert.equal(dup.code, "DUPLICATE");
+  });
+
+  it("rejects (fail-closed) when the retraction check itself fails, instead of fabricating 'clean'", async () => {
+    // Regression: checkRetraction used to swallow every outcome (hit, miss,
+    // network error) into "clean" without ever calling Crossref. Now a
+    // genuine HTTP failure propagates and verifyProposal rejects rather than
+    // silently reporting an unretracted paper as checked-and-clean.
+    const brokenFetch: typeof fetch = async () => new Response("server error", { status: 500 });
+    await assert.rejects(
+      () =>
+        verifyProposal(
+          { doi: "10.1000/real.paper.not-yet-in-library" },
+          { fetchImpl: brokenFetch },
+        ),
+      (e: unknown) => {
+        assert.match((e as Error).message, /crossref/i);
+        return true;
+      },
+    );
   });
 
   it("queues library AI proposals for host Accept/Reject", async () => {

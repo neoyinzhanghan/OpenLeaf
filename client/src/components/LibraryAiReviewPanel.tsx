@@ -106,7 +106,12 @@ export function LibraryAiReviewPanel({ open, onClose, onAccepted, onCountChange 
   };
 
   return (
-    <div className="share-drawer library-share-drawer" role="dialog" aria-label="Review AI library additions">
+    <div
+      className="history-drawer share-drawer library-share-drawer"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Review AI library additions"
+    >
       <div className="share-body">
         <div className="share-cred" style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
           <div>
