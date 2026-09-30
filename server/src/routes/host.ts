@@ -260,9 +260,182 @@ function escapeHtml(value: string): string {
   });
 }
 
-function deviceLabel(userAgent: string): string {
-  const ua = userAgent || "this device";
-  return ua.length > 80 ? `${ua.slice(0, 80)}…` : ua;
+function deviceSummary(userAgent: string): string {
+  const ua = userAgent || "";
+  let device = "This browser";
+  if (/iPhone/i.test(ua)) device = "iPhone";
+  else if (/iPad/i.test(ua)) device = "iPad";
+  else if (/Android/i.test(ua)) device = /Mobile/i.test(ua) ? "Android phone" : "Android";
+  else if (/Macintosh|Mac OS X/i.test(ua)) device = "Mac";
+  else if (/Windows/i.test(ua)) device = "Windows";
+  else if (/CrOS/i.test(ua)) device = "Chromebook";
+  else if (/Linux/i.test(ua)) device = "Linux";
+
+  let browser = "";
+  if (/Edg\/|EdgiOS/i.test(ua)) browser = "Edge";
+  else if (/OPR\/|Opera Mini/i.test(ua)) browser = "Opera";
+  else if (/CriOS|Chrome\//i.test(ua)) browser = "Chrome";
+  else if (/FxiOS|Firefox\//i.test(ua)) browser = "Firefox";
+  else if (/Safari/i.test(ua)) browser = "Safari";
+
+  return browser ? `${device} · ${browser}` : device;
+}
+
+function pairPage(opts: { expired: boolean; device?: string; nonce?: string }): string {
+  const device = escapeHtml(opts.device ?? "This browser");
+  const nonce = escapeHtml(opts.nonce ?? "");
+  const kicker = opts.expired ? "Link expired" : "This device";
+  const title = opts.expired ? "Sign in to OpenLeaf" : "Sign in to OpenLeaf?";
+  const lead = opts.expired
+    ? "This link has expired or was already used. On your computer, create a new phone link, or continue with the host password."
+    : "Your computer asked to sign this phone in. After you confirm, you can open your projects from here.";
+  const deviceRow = opts.expired
+    ? ""
+    : `<p class="device">${device}</p>`;
+  const form = opts.expired
+    ? `<form method="get" action="/">
+<input type="hidden" name="pair" value="invalid">
+<button type="submit">Continue</button>
+</form>`
+    : `<form method="post">
+<input type="hidden" name="nonce" value="${nonce}">
+<button type="submit">Sign in</button>
+</form>`;
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#f4f5f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b0e11" media="(prefers-color-scheme: dark)">
+<title>Sign in to OpenLeaf</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f4f5f7;
+    --card: #ffffff;
+    --ink: #12171d;
+    --muted: #5a6673;
+    --line: #e4e7ec;
+    --accent: #14665e;
+    --accent-ink: #ffffff;
+    --glow: rgba(26, 122, 112, 0.16);
+    --chip: #f3faf8;
+    --chip-ink: #14665e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --bg: #0b0e11;
+      --card: #13181e;
+      --ink: #eef2f6;
+      --muted: #8a96a3;
+      --line: #1e262f;
+      --accent: #3aafa0;
+      --accent-ink: #06211e;
+      --glow: rgba(94, 196, 182, 0.18);
+      --chip: rgba(94, 196, 182, 0.12);
+      --chip-ink: #8fd9cf;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: max(1.25rem, env(safe-area-inset-top)) 1.1rem max(1.5rem, env(safe-area-inset-bottom));
+    background:
+      radial-gradient(720px 360px at 50% -8%, var(--glow), transparent 62%),
+      var(--bg);
+    color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .card {
+    width: min(420px, 100%);
+    display: grid;
+    gap: 0.85rem;
+    padding: 1.45rem 1.35rem 1.3rem;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    box-shadow: 0 1px 2px rgba(18, 23, 29, 0.04), 0 16px 40px rgba(18, 23, 29, 0.08);
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    font-size: 1.02rem;
+  }
+  .brand img { width: 28px; height: 28px; border-radius: 7px; }
+  .kicker {
+    margin: 0.35rem 0 0;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  h1 {
+    margin: 0;
+    font-size: 1.65rem;
+    line-height: 1.15;
+    letter-spacing: -0.03em;
+    font-weight: 700;
+  }
+  .lead {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.95rem;
+    line-height: 1.5;
+  }
+  .device {
+    margin: 0.15rem 0 0.1rem;
+    justify-self: start;
+    padding: 0.35rem 0.7rem;
+    border-radius: 999px;
+    background: var(--chip);
+    color: var(--chip-ink);
+    font-size: 0.82rem;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+  }
+  button {
+    appearance: none;
+    width: 100%;
+    min-height: 48px;
+    margin-top: 0.25rem;
+    border: 0;
+    border-radius: 10px;
+    background: var(--accent);
+    color: var(--accent-ink);
+    font: inherit;
+    font-size: 1rem;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    cursor: pointer;
+  }
+  button:hover { filter: brightness(1.06); }
+  button:focus-visible { outline: 3px solid var(--glow); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<main class="card">
+  <div class="brand"><img src="/logo.png" alt="">OpenLeaf</div>
+  <p class="kicker">${kicker}</p>
+  <h1>${title}</h1>
+  <p class="lead">${lead}</p>
+  ${deviceRow}
+  ${form}
+</main>
+</body>
+</html>`;
 }
 
 function prunePairNonces(now = Date.now()): void {
@@ -278,51 +451,15 @@ pairRouter.get("/:token", (req, res) => {
     pairNonces.delete(token);
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("X-Robots-Tag", "noindex");
-    res.type("html").send(`<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex">
-<title>Sign in to OpenLeaf</title>
-</head>
-<body>
-<main>
-<h1>Sign in to OpenLeaf on this device?</h1>
-<p>This link has expired or was already used.</p>
-<form method="get" action="/">
-<input type="hidden" name="pair" value="invalid">
-<button type="submit">Sign in</button>
-</form>
-</main>
-</body>
-</html>`);
+    res.type("html").send(pairPage({ expired: true }));
     return;
   }
   const nonce = crypto.randomBytes(24).toString("base64url");
   pairNonces.set(token, { nonce, expiresAt: Date.now() + 10 * 60_000 });
-  const label = escapeHtml(deviceLabel(req.get("user-agent") ?? ""));
+  const device = deviceSummary(req.get("user-agent") ?? "");
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("X-Robots-Tag", "noindex");
-  res.type("html").send(`<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex">
-<title>Sign in to OpenLeaf</title>
-</head>
-<body>
-<main>
-<h1>Sign in to OpenLeaf on this device?</h1>
-<p>${label}</p>
-<form method="post">
-<input type="hidden" name="nonce" value="${nonce}">
-<button type="submit">Sign in</button>
-</form>
-</main>
-</body>
-</html>`);
+  res.type("html").send(pairPage({ expired: false, device, nonce }));
 });
 
 pairRouter.post("/:token", (req, res) => {

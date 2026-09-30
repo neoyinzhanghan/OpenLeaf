@@ -151,6 +151,8 @@ describe("remote host access", () => {
       assert.equal(got.headers["set-cookie"], undefined);
       assert.equal(listDevices().length, before);
       assert.match(got.body, /Sign in to OpenLeaf/);
+      assert.match(got.body, /iPhone/);
+      assert.doesNotMatch(got.body, /Mozilla iPhone Safari/);
       assert.equal(got.headers["cache-control"], "no-store");
       assert.equal(got.headers["x-robots-tag"], "noindex");
 
