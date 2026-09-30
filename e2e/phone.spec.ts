@@ -44,7 +44,8 @@ test("phone pairing signs in once and the device shows up on the computer", asyn
   const again = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true });
   const second = await again.newPage();
   await second.goto(url);
-  await second.getByRole("button", { name: "Sign in" }).click();
+  await expect(second.locator("body")).toContainText("expired or was already used");
+  await second.getByRole("button", { name: "Continue" }).click();
   await expect(second.locator("body")).toContainText("expired or was already used");
   await expect(second.getByRole("heading", { name: "Projects" })).toHaveCount(0);
   await phone.close();
