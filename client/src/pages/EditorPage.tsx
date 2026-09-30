@@ -36,6 +36,7 @@ import {
 import type { AppConfig, FileAccessLevel, FileChangeDiff, GitCommitInfo, PaperRecord, ProjectMeta, TimelineView, TreeNode } from "../api/types";
 import { guestLogout, hostLogout, listProjectAiReview, acceptAiReview, rejectAiReview, type AiReviewCollaborator, type AiReviewHunk } from "../api/share";
 import { flushCollab, useProjectCollab } from "../collab/useProjectCollab";
+import { rememberProject } from "../lib/lastProject";
 import { BinaryPane } from "../components/BinaryPane";
 import { BranchTreePanel } from "../components/BranchTreePanel";
 import { CodeEditor, type EditorChangeMarks, type EditorSuggestionMark, type CitationGutterMark } from "../components/CodeEditor";
@@ -254,6 +255,10 @@ export function EditorPage() {
   viewingGitHashRef.current = viewingGitHash;
   const [branchLabel, setBranchLabel] = useState(guest?.share.branchName || "main");
   const [project, setProject] = useState<ProjectMeta | null>(null);
+  useEffect(() => {
+    if (!id) return;
+    rememberProject({ id, name: project?.name || id });
+  }, [id, project?.name]);
   const collab = useProjectCollab(project?.id === id ? id || undefined : undefined, guestIdentity, branchId);
   const [shareOpen, setShareOpen] = useState(false);
   const [fileAccessOpen, setFileAccessOpen] = useState(false);
@@ -2348,7 +2353,7 @@ export function EditorPage() {
             <>
               <Link
                 to="/library"
-                className="btn btn-quiet toolbar-wide-only"
+                className="btn btn-quiet"
                 title="Open the personal citation library (independent of this project)"
               >
                 Library
@@ -2384,7 +2389,7 @@ export function EditorPage() {
           {!readOnly && timelineCanEdit && !mergeSession && (
             <button
               type="button"
-              className={dirty ? "btn btn-primary" : "btn btn-quiet"}
+              className={`${dirty ? "btn btn-primary" : "btn btn-quiet"} toolbar-wide-only`}
               disabled={commitBusy || status === "saving"}
               onClick={() => void onIntentionalCommit()}
               title={
@@ -2409,11 +2414,11 @@ export function EditorPage() {
           {!readOnly && timelineCanEdit && (
             <button
               type="button"
-              className={
+              className={`${
                 dirty || status === "saving" || status === "compiling"
                   ? "btn btn-primary"
                   : "btn btn-quiet"
-              }
+              } toolbar-wide-only`}
               onClick={() => void save({ compile: true })}
               disabled={
                 !activePath ||
@@ -2443,7 +2448,7 @@ export function EditorPage() {
           {(readOnly || Boolean(viewingGitHash)) && canCompile && (
             <button
               type="button"
-              className="btn btn-primary"
+              className="btn btn-primary toolbar-wide-only"
               onClick={() => void runCompile()}
               disabled={status === "compiling"}
               title={
@@ -2526,6 +2531,52 @@ export function EditorPage() {
                   >
                     Leave session
                     <span className="toolbar-menu-hint">{guest.guest.name}</span>
+                  </button>
+                )}
+                {narrow && !readOnly && timelineCanEdit && !mergeSession && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={commitBusy || status === "saving"}
+                    onClick={() => {
+                      setToolbarMoreOpen(false);
+                      void onIntentionalCommit();
+                    }}
+                  >
+                    {commitBusy ? "Committing…" : "Commit"}
+                  </button>
+                )}
+                {narrow && !readOnly && timelineCanEdit && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={
+                      !activePath ||
+                      !fileReady ||
+                      editMode === "binary" ||
+                      tooLargeBytes != null ||
+                      status === "saving" ||
+                      status === "compiling"
+                    }
+                    onClick={() => {
+                      setToolbarMoreOpen(false);
+                      void save({ compile: true });
+                    }}
+                  >
+                    {status === "compiling" ? "Compiling…" : canCompile ? "Recompile" : "Save"}
+                  </button>
+                )}
+                {narrow && (readOnly || Boolean(viewingGitHash)) && canCompile && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={status === "compiling"}
+                    onClick={() => {
+                      setToolbarMoreOpen(false);
+                      void runCompile();
+                    }}
+                  >
+                    {status === "compiling" ? "Compiling…" : "Recompile"}
                   </button>
                 )}
                 {narrow && (

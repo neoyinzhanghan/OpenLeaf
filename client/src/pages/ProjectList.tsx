@@ -5,6 +5,7 @@ import { hostGateway, hostLogout, type HostGatewayView } from "../api/share";
 import type { ProjectMeta } from "../api/types";
 import { HostAccessPanel } from "../components/HostAccessPanel";
 import { ThemePicker } from "../components/ThemeToggle";
+import { readLastProject, type LastProject } from "../lib/lastProject";
 import { useSession } from "../session/SessionContext";
 
 function slugifyProjectId(raw: string): string {
@@ -18,6 +19,10 @@ function slugifyProjectId(raw: string): string {
 
 export function ProjectList() {
   const { session, refresh } = useSession();
+  const [lastProject, setLastProject] = useState<LastProject | null>(null);
+  useEffect(() => {
+    setLastProject(readLastProject());
+  }, []);
   const [params] = useSearchParams();
   const remoteHost = session.kind === "host" && session.remote;
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
@@ -203,6 +208,17 @@ export function ProjectList() {
           )}
         </div>
       </main>
+      <nav className={`phone-tabbar${lastProject ? " has-project" : ""}`} aria-label="Primary">
+        <Link to="/" aria-current="page">
+          Projects
+        </Link>
+        {lastProject ? (
+          <Link to={`/p/${encodeURIComponent(lastProject.id)}`} className="phone-tabbar-project">
+            <span>{lastProject.name}</span>
+          </Link>
+        ) : null}
+        <Link to="/library">Library</Link>
+      </nav>
     </div>
   );
 }

@@ -7228,9 +7228,30 @@ button.lib-badge:hover {
     gap: 0.1rem;
   }
 
-  .topbar-nav .btn {
-    padding: 0.3rem 0.45rem;
+  .topbar .brand,
+  .topbar-nav,
+  .topbar-end,
+  .topbar .theme-picker {
+    height: 44px;
+    align-items: center;
+  }
+
+  .topbar .brand-mark {
+    line-height: 1;
+  }
+
+  .topbar-nav .btn,
+  .topbar-end .btn,
+  .topbar .theme-picker-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 44px;
     min-height: 44px;
+    margin: 0;
+    padding: 0 0.55rem;
+    line-height: 1;
+    box-sizing: border-box;
   }
 
   .topbar-end {
@@ -7245,10 +7266,18 @@ button.lib-badge:hover {
 
   .editor-page.is-narrow .editor-toolbar {
     flex-wrap: nowrap;
+    align-items: center;
     overflow: visible;
-    gap: 0.25rem;
-    padding-left: max(0.45rem, env(safe-area-inset-left, 0px));
-    padding-right: max(0.45rem, env(safe-area-inset-right, 0px));
+    gap: 0.35rem;
+    min-height: 56px;
+    padding-top: max(0px, env(safe-area-inset-top, 0px));
+    padding-bottom: 0;
+    padding-left: max(0.75rem, env(safe-area-inset-left, 0px));
+    padding-right: max(0.5rem, env(safe-area-inset-right, 0px));
+  }
+
+  .editor-page.is-narrow .toolbar-logo {
+    display: none;
   }
 
   .editor-page.is-narrow .toolbar-cluster:first-child {
@@ -7275,6 +7304,7 @@ button.lib-badge:hover {
   .editor-page.is-narrow .toolbar-cluster,
   .editor-page.is-narrow .toolbar-actions {
     flex-wrap: nowrap;
+    align-items: center;
   }
 
   .editor-page.is-narrow .toolbar-actions {
@@ -7293,8 +7323,14 @@ button.lib-badge:hover {
   .editor-page.is-narrow .toolbar-actions > .btn,
   .editor-page.is-narrow .toolbar-actions > a.btn,
   .editor-page.is-narrow .editor-toolbar .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 44px;
     min-height: 44px;
-    padding: 0.28rem 0.45rem;
+    margin: 0;
+    padding: 0 0.55rem;
+    line-height: 1;
     box-sizing: border-box;
   }
 
@@ -7308,10 +7344,15 @@ button.lib-badge:hover {
     font-size: 13px;
   }
 
-  .toolbar-project-name {
-    max-width: 5.5rem;
+  .editor-page.is-narrow .toolbar-project-name {
+    align-self: center;
+    height: 44px;
+    margin: 0;
+    max-width: none;
     min-width: 0;
     flex: 1 1 auto;
+    font-size: 16px;
+    line-height: 44px;
   }
 
   .history-drawer,
@@ -7694,8 +7735,10 @@ button.lib-badge:hover {
 .library-phone-search,
 .library-phone-meta,
 .library-phone-detailbar,
+.library-phone-title,
 .library-phone-sheet,
-.library-lit-cards {
+.library-lit-cards,
+.phone-tabbar {
   display: none;
 }
 
@@ -7716,6 +7759,15 @@ button.lib-badge:hover {
   .topbar button {
     min-height: 44px;
     box-sizing: border-box;
+  }
+
+  .topbar a.btn,
+  .topbar button.btn,
+  .topbar .theme-picker-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
   }
 
   .app-shell input:not([type="checkbox"]):not([type="radio"]),
@@ -7765,14 +7817,101 @@ button.lib-badge:hover {
 }
 
 @media (max-width: 639px) {
+  html:has(.library-shell),
+  body:has(.library-shell),
+  #root:has(.library-shell),
+  html:has(.home),
+  body:has(.home),
+  #root:has(.home) {
+    height: auto;
+    min-height: 100%;
+    max-height: none;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
   .library-shell {
     height: auto;
     min-height: 100dvh;
-    overflow-x: hidden;
+    max-height: none;
+    overflow: visible;
   }
 
-  .library-shell > .topbar {
-    display: none;
+  .phone-tabbar {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 25;
+    background: var(--bg-elevated);
+    border-top: 1px solid var(--line);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .phone-tabbar a {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 52px;
+    min-height: 52px;
+    min-width: 0;
+    padding: 0 8px;
+    font-size: 15px;
+    font-weight: 650;
+    line-height: 1;
+    color: var(--ink-muted);
+    text-decoration: none;
+    box-sizing: border-box;
+  }
+
+  .phone-tabbar.has-project {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr);
+  }
+
+  .phone-tabbar a[aria-current="page"] {
+    color: var(--ink);
+  }
+
+  .phone-tabbar-project {
+    color: var(--ink);
+  }
+
+  .phone-tabbar-project span {
+    display: block;
+    width: max-content;
+    max-width: 100%;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .home {
+    margin-bottom: 0;
+    padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .topbar .brand {
+    flex: 0 0 auto;
+    min-width: max-content;
+  }
+
+  .topbar {
+    gap: 0.2rem;
+    padding-left: max(0.6rem, env(safe-area-inset-left, 0px));
+    padding-right: max(0.35rem, env(safe-area-inset-right, 0px));
+  }
+
+  .topbar-nav .btn,
+  .topbar-end .btn,
+  .topbar .theme-picker-trigger {
+    padding: 0 0.4rem;
+  }
+
+  .topbar a.topbar-wide-only {
+    display: none !important;
   }
 
   .library-page,
@@ -7795,18 +7934,12 @@ button.lib-badge:hover {
     gap: 8px;
     height: 56px;
     padding: 0 16px;
-    padding-top: env(safe-area-inset-top, 0px);
     box-sizing: border-box;
     position: sticky;
-    top: 0;
+    top: calc(var(--toolbar-h) + env(safe-area-inset-top, 0px));
     z-index: 6;
     background: var(--bg-elevated);
     border-bottom: 1px solid var(--line);
-    transition: transform 160ms ease;
-  }
-
-  html[data-library-bar="hidden"] .library-phone-bar {
-    transform: translateY(calc(-100% - env(safe-area-inset-top, 0px)));
   }
 
   .library-phone-bar strong {
@@ -7838,7 +7971,7 @@ button.lib-badge:hover {
     gap: 8px;
     overflow-x: auto;
     position: sticky;
-    top: 56px;
+    top: calc(var(--toolbar-h) + 56px + env(safe-area-inset-top, 0px));
     z-index: 5;
     padding: 8px 16px;
     background: var(--bg);
@@ -7857,7 +7990,7 @@ button.lib-badge:hover {
   }
 
   .library-list {
-    padding: 0 16px 24px;
+    padding: 0 16px calc(80px + env(safe-area-inset-bottom, 0px));
   }
 
   .library-item {
@@ -7930,8 +8063,14 @@ button.lib-badge:hover {
     inset: 0;
     z-index: 30;
     background: var(--bg);
-    overflow: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
     padding: 0 16px calc(16px + env(safe-area-inset-bottom));
+  }
+
+  .library-master.has-selection .library-detail > * {
+    flex: 0 0 auto;
   }
 
   .library-phone-detailbar {
@@ -7945,17 +8084,52 @@ button.lib-badge:hover {
     z-index: 2;
   }
 
-  .library-phone-detailbar strong {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 16px;
+  .library-phone-detailbar .library-star {
+    margin-left: auto;
+    flex: 0 0 auto;
   }
 
-  .library-back,
-  .library-detail-head {
+  .library-detail .library-phone-detailbar a,
+  .library-phone-detailbar > button {
+    word-break: normal;
+    overflow-wrap: normal;
+    white-space: nowrap;
+    flex: 0 0 auto;
+  }
+
+  .library-detail .library-phone-detailbar a.library-phone-return {
+    flex: 1 1 auto;
+    min-width: 0;
+    justify-content: flex-start;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .library-phone-title {
+    display: block;
+    margin: 4px 0 12px;
+    font-size: 22px;
+    line-height: 1.3;
+    font-weight: 650;
+    letter-spacing: -0.02em;
+    overflow-wrap: anywhere;
+  }
+
+  .library-section,
+  .library-section-body,
+  .library-authors-full,
+  .library-abstract {
+    overflow: visible;
+    max-height: none;
+  }
+
+  .library-section-body,
+  .library-authors-full {
+    overflow-wrap: anywhere;
+  }
+
+  .library-shell .library-back,
+  .library-shell .library-detail-head {
     display: none;
   }
 

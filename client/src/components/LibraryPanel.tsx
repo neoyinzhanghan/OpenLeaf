@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   bulkPatchLibraryPapers,
   checkLibraryIntegrity,
@@ -24,6 +25,7 @@ import {
 import type { LibraryCollections, LibrarySort, PaperRecord } from "../api/types";
 import { listLibraryAiLinks } from "../api/libraryAi";
 import { copyText } from "../lib/clipboard";
+import { readLastProject } from "../lib/lastProject";
 import {
   TOPIC_SUGGESTIONS,
   SORT_OPTIONS,
@@ -688,6 +690,7 @@ export function LibraryPanel({
   if (!open) return null;
 
   const isPage = variant === "page";
+  const lastProject = readLastProject();
 
   return (
     <aside
@@ -710,7 +713,7 @@ export function LibraryPanel({
             <path d="M20 20l-3.5-3.5" />
           </svg>
         </button>
-        <button type="button" className="btn btn-primary" onClick={() => setImportOpen(true)}>
+        <button type="button" className="btn btn-primary" aria-pressed={importOpen} onClick={() => setImportOpen((v) => !v)}>
           + Add
         </button>
         <button
@@ -1319,7 +1322,17 @@ export function LibraryPanel({
                 <button type="button" className="btn btn-ghost" onClick={() => setSelectedKey(null)} aria-label="Back">
                   ←
                 </button>
-                <strong>{selected.title}</strong>
+                <Link to="/" className="btn btn-ghost library-phone-projects">
+                  Projects
+                </Link>
+                {lastProject ? (
+                  <Link
+                    to={`/p/${encodeURIComponent(lastProject.id)}`}
+                    className="btn btn-ghost library-phone-return"
+                  >
+                    {lastProject.name}
+                  </Link>
+                ) : null}
                 <button
                   type="button"
                   className={`library-star${selected.starred ? " is-on" : ""}`}
@@ -1375,6 +1388,7 @@ export function LibraryPanel({
                   </div>
                 ) : null}
               </div>
+              <h2 className="library-phone-title">{selected.title}</h2>
               <button
                 type="button"
                 className="btn btn-ghost library-back"

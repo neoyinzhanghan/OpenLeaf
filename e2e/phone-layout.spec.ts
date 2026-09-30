@@ -106,7 +106,7 @@ async function assertPhoneChrome(page: Page, opts?: { firstPaper?: boolean }): P
       if (!title) issues.push("no paper title");
       else {
         const top = title.getBoundingClientRect().top;
-        if (top >= 160) issues.push(`first paper at ${Math.round(top)}px`);
+        if (top >= 190) issues.push(`first paper at ${Math.round(top)}px`);
       }
     }
     return issues.slice(0, 12);
