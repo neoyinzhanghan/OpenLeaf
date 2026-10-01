@@ -252,7 +252,10 @@ test("a paired phone cannot unlock a protected file", async ({ page, browser }) 
   const mobile = await phone.newPage();
   await mobile.goto(url);
   await mobile.getByRole("button", { name: "Sign in" }).click();
-  await mobile.getByRole("link", { name: id }).click();
+  const card = mobile.getByRole("link", { name: `Open ${id}` });
+  const box = await card.boundingBox();
+  if (!box) throw new Error("project card missing");
+  await card.click({ position: { x: 24, y: box.height - 12 } });
   await mobile.getByRole("button", { name: "Files", exact: true }).click();
   const settings = mobile.getByRole("button", { name: /openleaf\.json/ });
   await expect(settings).toBeVisible();

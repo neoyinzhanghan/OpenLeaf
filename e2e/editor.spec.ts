@@ -92,7 +92,7 @@ test("a broken compile shows an error badge", async ({ page }) => {
   fs.writeFileSync(file, "\\documentclass{article}\n\\begin{document}\n\\thisisnotamacro\n\\end{document}\n");
   await page.goto(`${instance.baseURL}/p/bad-paper`);
   await expect(page.locator(".monaco-editor").first()).toBeVisible();
-  await page.getByRole("button", { name: "Recompile" }).click();
+  await page.getByRole("button", { name: "Recompile", exact: true }).click();
   const badge = page.getByRole("button", { name: "1 error" });
   await expect(badge).toBeVisible();
   await badge.click();

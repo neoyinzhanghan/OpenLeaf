@@ -849,8 +849,8 @@ a {
   display: block;
   margin: 0.1rem 0.35rem 0.35rem;
   padding: 0 0.25rem;
-  max-width: 28rem;
-  font-size: 0.72rem;
+  max-width: min(28rem, calc(100vw - 2rem));
+  font-size: 13px;
   line-height: 1.45;
   font-weight: 500;
   color: var(--ink-faint);

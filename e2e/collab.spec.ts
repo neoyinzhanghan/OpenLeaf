@@ -175,7 +175,7 @@ test("recompile of an unchanged project is not an error", async ({ page }) => {
   expect(first.ok).toBe(true);
   await page.goto(`${instance.baseURL}/p/${id}`);
   await expect(page.locator(".monaco-editor").first()).toBeVisible();
-  await page.getByRole("button", { name: "Recompile" }).click();
+  await page.getByRole("button", { name: "Recompile", exact: true }).click();
   await expect(page.locator(".status-pill").first()).not.toHaveText("Error", { timeout: 60_000 });
   await expect(page.locator(".status-pill.err")).toHaveCount(0);
   await expect(page.locator("body")).not.toContainText("Showing the last successful PDF");
