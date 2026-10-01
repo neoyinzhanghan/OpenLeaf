@@ -1,15 +1,16 @@
 /**
  * Verify-first gate for AI-proposed library citations.
  *
- * Stricter than host integrity: Scholar-only / bare URLs do not count as verified.
- * DOI or arXiv must resolve (or title + OpenAlex soft-match). Structured reject
- * payloads tell ChatGPT how to retry.
+ * Stricter than host integrity: Scholar, GitHub, and bare publisher HTML do not count.
+ * A DOI, an arXiv id, or an OpenReview forum/pdf note must resolve
+ * (or title + OpenAlex soft-match that itself has a DOI or arXiv id).
  */
 import { findLikelyDuplicate, titlesSoftMatch } from "./dedupe.js";
 import { lookupExternal, detectLink } from "./import.js";
 import { addPaper, deletePaper } from "./index.js";
 import { checkPaperIntegrity, checkCrossrefRetraction } from "./integrity.js";
 import { normalizeArxivId } from "./sources/arxiv.js";
+import { lookupOpenReviewNote, openReviewNoteIdFromUrl } from "./sources/openreview.js";
 import { type ResolvedPaper } from "./sources/index.js";
 import { normalizeDoi } from "./paperUrl.js";
 import type { CreatePaperInput, PaperAuthor, PaperRecord } from "./types.js";
@@ -46,7 +47,7 @@ export type VerifyAccept = {
   decision: "accept";
   resolved: ResolvedPaper;
   checks: {
-    identifier: "doi" | "arxiv" | "title";
+    identifier: "doi" | "arxiv" | "openreview" | "title";
     titleMatch: boolean;
     retraction: "clean" | "retracted" | "corrected";
   };
@@ -92,6 +93,36 @@ function asAuthors(authors: PaperAuthor[] | null | undefined): PaperAuthor[] {
   return Array.isArray(authors) ? authors.filter((a) => a?.family?.trim()) : [];
 }
 
+/** Title + first-author duplicate, including a published DOI of an existing preprint. */
+async function duplicateReject(resolved: ResolvedPaper): Promise<VerifyReject | null> {
+  const dup = await findLikelyDuplicate({
+    doi: resolved.doi,
+    arxivId: resolved.arxivId,
+    title: resolved.title,
+    authors: resolved.authors,
+  });
+  if (!dup) return null;
+  return reject(
+    "DUPLICATE",
+    `Already in library as ${dup.paper.citekey} (matched by ${dup.match}).`,
+    `Use library_get("${dup.paper.citekey}") instead of adding again.`,
+    {
+      existingCitekey: dup.paper.citekey,
+      expected: {
+        title: dup.paper.title,
+        doi: dup.paper.doi,
+        arxivId: dup.paper.arxivId,
+        year: dup.paper.year,
+        venue: dup.paper.venue,
+        authors: dup.paper.authors,
+        url: dup.paper.url,
+        abstract: dup.paper.abstract,
+        source: dup.paper.source,
+      },
+    },
+  );
+}
+
 /** Pull DOI / arXiv out of a pasted URL when the AI only sent `url`. */
 function hydrateFromUrl(input: ProposalInput): ProposalInput {
   const url = input.url?.trim();
@@ -121,8 +152,9 @@ async function checkRetraction(
 }
 
 /**
- * Verify a proposed citation without writing. Prefer DOI → arXiv → title+OpenAlex.
- * Never accept Scholar-only or unresolved bare URLs.
+ * Verify a proposed citation without writing.
+ * Prefer DOI → arXiv → OpenReview note → title+OpenAlex.
+ * Scholar pages, GitHub repos, and unresolved publisher HTML stay rejected.
  */
 export async function verifyProposal(
   raw: ProposalInput,
@@ -202,6 +234,8 @@ export async function verifyProposal(
         },
       );
     }
+    const dup = await duplicateReject(resolved);
+    if (dup) return dup;
     const retraction = await checkRetraction(doi, opts?.fetchImpl);
     if (retraction === "retracted") {
       return reject(
@@ -249,6 +283,8 @@ export async function verifyProposal(
         },
       );
     }
+    const dup = await duplicateReject(resolved);
+    if (dup) return dup;
     return {
       ok: true,
       decision: "accept",
@@ -262,11 +298,74 @@ export async function verifyProposal(
   }
 
   if (url && /^https?:\/\//i.test(url)) {
-    // Generic URL with no scraped DOI/arXiv — refuse (Scholar / publisher HTML alone is not enough).
+    const noteId = openReviewNoteIdFromUrl(url);
+    if (noteId) {
+      const looked = await lookupOpenReviewNote(noteId, opts?.fetchImpl ?? fetch);
+      if (!looked.ok) {
+        if (looked.reason === "blocked") {
+          return reject(
+            "UNRESOLVABLE_URL",
+            `OpenReview note ${noteId} could not be read (HTTP ${looked.status}).`,
+            "OpenReview did not return this note. Retry later, or supply a DOI or arXiv id. Scholar pages and GitHub repositories are not a substitute for the forum note.",
+            {
+              retry: {
+                preferred: "provide-identifier",
+                example: { url: `https://openreview.net/forum?id=${noteId}` },
+              },
+            },
+          );
+        }
+        return reject(
+          "UNRESOLVABLE_URL",
+          `OpenReview note ${noteId} was not found.`,
+          "Check the forum id, or supply a DOI or arXiv id.",
+          { retry: { preferred: "provide-identifier" } },
+        );
+      }
+      const resolved = looked.paper;
+      if (title && !titlesSoftMatch(title, resolved.title)) {
+        return reject(
+          "TITLE_MISMATCH",
+          `Proposed title does not match OpenReview note ${noteId}.`,
+          "Retry with only the forum URL, or use expected.title.",
+          {
+            expected: resolved,
+            retry: {
+              preferred: "provide-identifier",
+              example: { url: `https://openreview.net/forum?id=${noteId}` },
+            },
+          },
+        );
+      }
+      const dup = await duplicateReject(resolved);
+      if (dup) return dup;
+      let retraction: "clean" | "retracted" | "corrected" = "clean";
+      if (resolved.doi) {
+        retraction = await checkRetraction(resolved.doi, opts?.fetchImpl);
+        if (retraction === "retracted") {
+          return reject(
+            "RETRACTED",
+            `OpenReview note ${noteId} points at retracted DOI ${resolved.doi}.`,
+            "Do not add retracted papers. Pick a different source.",
+            { expected: resolved },
+          );
+        }
+      }
+      return {
+        ok: true,
+        decision: "accept",
+        resolved,
+        checks: {
+          identifier: "openreview",
+          titleMatch: !title || titlesSoftMatch(title, resolved.title),
+          retraction,
+        },
+      };
+    }
     return reject(
       "UNRESOLVABLE_URL",
-      `URL could not be reduced to a DOI or arXiv id: ${url}`,
-      "Paste a DOI (10.…) or arXiv abs link instead of a publisher/Scholar page.",
+      `URL could not be reduced to a DOI, arXiv id, or OpenReview note: ${url}`,
+      "Paste a DOI (10.…), an arXiv abs link, or an OpenReview forum URL (openreview.net/forum?id=…). Scholar pages, GitHub repositories, and publisher HTML alone are not enough.",
       { retry: { preferred: "provide-identifier" } },
     );
   }
@@ -316,33 +415,8 @@ export async function verifyProposal(
     );
   }
 
-  const titleDup = await findLikelyDuplicate({
-    doi: resolved.doi,
-    arxivId: resolved.arxivId,
-    title: resolved.title,
-    authors: resolved.authors,
-  });
-  if (titleDup) {
-    return reject(
-      "DUPLICATE",
-      `Already in library as ${titleDup.paper.citekey} (matched by ${titleDup.match}).`,
-      `Use library_get("${titleDup.paper.citekey}") instead of adding again.`,
-      {
-        existingCitekey: titleDup.paper.citekey,
-        expected: {
-          title: titleDup.paper.title,
-          doi: titleDup.paper.doi,
-          arxivId: titleDup.paper.arxivId,
-          year: titleDup.paper.year,
-          venue: titleDup.paper.venue,
-          authors: titleDup.paper.authors,
-          url: titleDup.paper.url,
-          abstract: titleDup.paper.abstract,
-          source: titleDup.paper.source,
-        },
-      },
-    );
-  }
+  const titleDup = await duplicateReject(resolved);
+  if (titleDup) return titleDup;
 
   return {
     ok: true,

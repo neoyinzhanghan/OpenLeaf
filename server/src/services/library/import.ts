@@ -9,6 +9,7 @@ import { findLikelyDuplicate } from "./dedupe.js";
 import { addPaper, findByDoi, getPaper, listAllRecords } from "./index.js";
 import { paperDir } from "./paths.js";
 import { getSourceClients, type ResolvedPaper } from "./sources/index.js";
+import { lookupOpenReviewNote, openReviewNoteIdFromUrl } from "./sources/openreview.js";
 import { normalizeArxivId } from "./sources/arxiv.js";
 import type { CreatePaperInput, PaperRecord } from "./types.js";
 
@@ -86,7 +87,11 @@ export async function lookupExternal(input: {
     if (detected.kind === "arxiv") {
       return clients.arxiv.lookupId(detected.value);
     }
-    // Generic URL: try to scrape a DOI from the page, else fail softly.
+    const noteId = openReviewNoteIdFromUrl(detected.value);
+    if (noteId) {
+      const looked = await lookupOpenReviewNote(noteId);
+      return looked.ok ? looked.paper : null;
+    }
     return null;
   }
   if (input.title) {

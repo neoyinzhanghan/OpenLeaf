@@ -41,6 +41,7 @@ export type LibraryAiHostView = {
   libraryAiUrl: string | null;
   token: string | null;
   starterPrompt: string | null;
+  cursorPrompt: string | null;
   mcpUrl: string | null;
   mcpConfig: string | null;
 };
@@ -58,7 +59,7 @@ export type LibraryAiProposal = {
   arxivId: string | null;
   url: string | null;
   abstract: string;
-  identifier: "doi" | "arxiv" | "title";
+  identifier: "doi" | "arxiv" | "openreview" | "title";
 };
 
 export function listLibraryAiLinks(): Promise<{ sessions: LibraryAiHostView[]; pendingCount: number }> {
@@ -73,6 +74,7 @@ export function mintLibraryAiLink(body: {
   session: LibraryAiHostView;
   libraryAiUrl: string;
   starterPrompt: string;
+  cursorPrompt: string;
   mcpUrl: string;
   mcpConfig: string;
 }> {

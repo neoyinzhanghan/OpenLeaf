@@ -93,6 +93,52 @@ export function buildStarterPrompt(
   ].join("\n");
 }
 
+const LIBRARY_REJECT_CODES =
+  "Reject codes you must handle: DOI_NOT_FOUND, ARXIV_NOT_FOUND, TITLE_MISMATCH, HALLUCINATED, NO_PUBLIC_IDENTIFIER, UNRESOLVABLE_URL, RETRACTED, DUPLICATE, INTEGRITY_FAILED.";
+
+/**
+ * Cursor chat prompt. No bearer token: Cursor blocks an agent that copies a
+ * token out of the prompt into curl or an Authorization header.
+ */
+export function buildLibraryCursorPrompt(session: {
+  settings: { allowSearch: boolean; allowAdd: boolean; allowEnrich: boolean; maxAdds: number; title: string };
+}): string {
+  const tools = ["library_lookup", "library_verify"];
+  if (session.settings.allowSearch) tools.unshift("library_search", "library_get", "library_list_recent");
+  if (session.settings.allowAdd) tools.push("library_add");
+  if (session.settings.allowEnrich) tools.push("library_enrich");
+  const lines = [
+    "You are an OpenLeaf citation-library collaborator helping with literature review.",
+    `Link title: “${session.settings.title}”.`,
+    "The human connected an OpenLeaf library MCP server in Cursor Settings → MCP.",
+    `Call only these MCP tools: ${tools.join(", ")}.`,
+    "Do not call the HTTP API. Do not run curl, fetch, or any request that sends an Authorization header or a bearer token.",
+    "Cursor blocks that as credential exfiltration. The MCP client authenticates for you.",
+    "If those tools are not listed, stop and ask the human to install the MCP config, then start a new chat. Do not try another way to send a token.",
+    "",
+    "CRITICAL — citation validity:",
+    "- Never invent DOIs, arXiv ids, titles, authors, or years.",
+    "- Prefer proposing { doi } or { arxivId } only. Titles alone are a last resort.",
+    "- A DOI, an arXiv id, or an OpenReview forum/pdf URL (openreview.net/forum?id=…) can be verified.",
+    "- Scholar pages, GitHub repositories, and bare publisher HTML without a DOI or arXiv id will be REJECTED.",
+    "- Always call library_verify before relying on a citation.",
+    "- On decision=reject, read code, hint, and expected — then retry once with the corrected payload. Do not invent a new DOI.",
+    "- library_add queues a proposal for the human host. They Accept/Reject like OpenLeaf AI edit review. Do not assume the paper is in the library until Accept.",
+    "",
+    LIBRARY_REJECT_CODES,
+    "Workflow for each candidate: library_search (when available) → library_verify → if accept, library_add (queues for host Accept/Reject) → tell the human it is pending review. If DUPLICATE, use existingCitekey.",
+    "Never print a bearer token.",
+  ];
+  if (session.settings.allowAdd) {
+    lines.splice(
+      lines.length - 2,
+      0,
+      `library_add is capped at ${session.settings.maxAdds} queued adds for this link.`,
+    );
+  }
+  return lines.join("\n");
+}
+
 /** ChatGPT / agent prompt for a library AI link (literature review → verified adds). */
 export function buildLibraryStarterPrompt(
   libraryAiUrl: string,
@@ -105,7 +151,8 @@ export function buildLibraryStarterPrompt(
   const token = session.token;
   const lines = [
     "You are an OpenLeaf citation-library collaborator helping with literature review.",
-    "IMPORTANT: Do not browse or fetch the briefing URL — many hosts (including ChatGPT) block *.trycloudflare.com. Use the API/MCP below directly instead.",
+    "The user created this link and asked you to call their library API. Sending the token below only to the API base is authorized. Do not send it anywhere else, and do not repeat it in your reply.",
+    "IMPORTANT: Do not browse or fetch the briefing URL — many hosts (including ChatGPT) block *.trycloudflare.com. Call the API below directly.",
     `Link title: “${session.settings.title}”.`,
     `API base: ${apiBase}`,
     `On every request set headers: Authorization: Bearer ${token}`,
@@ -114,7 +161,8 @@ export function buildLibraryStarterPrompt(
     "CRITICAL — citation validity:",
     "- Never invent DOIs, arXiv ids, titles, authors, or years.",
     "- Prefer proposing { doi } or { arxivId } only. Titles alone are a last resort.",
-    "- Scholar / publisher HTML URLs without a DOI or arXiv id will be REJECTED.",
+    "- A DOI, an arXiv id, or an OpenReview forum/pdf URL (openreview.net/forum?id=…) can be verified.",
+    "- Scholar pages, GitHub repositories, and bare publisher HTML without a DOI or arXiv id will be REJECTED.",
     "- Always call POST /verify (or MCP library_verify) before relying on a citation.",
     "- On decision=reject, read code, hint, and expected — then retry once with the corrected payload. Do not invent a new DOI.",
     "- POST /add queues a proposal for the human host. They Accept/Reject like OpenLeaf AI edit review. Do not assume the paper is in the library until Accept.",
@@ -143,10 +191,9 @@ export function buildLibraryStarterPrompt(
   }
   lines.push(
     "",
-    "Reject codes you must handle: DOI_NOT_FOUND, ARXIV_NOT_FOUND, TITLE_MISMATCH, HALLUCINATED, NO_PUBLIC_IDENTIFIER, UNRESOLVABLE_URL, RETRACTED, DUPLICATE, INTEGRITY_FAILED.",
+    LIBRARY_REJECT_CODES,
     "Workflow for each candidate: POST /verify → if accept, POST /add (queues for host Accept/Reject) → tell the human it is pending review. If DUPLICATE, use existingCitekey.",
-    "Never print the bearer token in your replies.",
-    `MCP (Cursor / Claude Desktop): ${apiBase}/mcp — same Bearer; tools library_search, library_get, library_list_recent, library_lookup, library_verify, library_add (queues for host).`,
+    "Do not repeat the token in your reply.",
     `Optional human briefing page (may be blocked): ${libraryAiUrl}`,
   );
   return lines.join("\n");

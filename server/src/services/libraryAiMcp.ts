@@ -115,7 +115,7 @@ const TOOLS = [
   {
     name: "library_verify",
     description:
-      "Verify a proposed citation WITHOUT saving. Returns decision=accept|reject with code/hint/expected so you can retry. Prefer DOI or arXiv. Scholar-only URLs are rejected.",
+      "Verify a proposed citation WITHOUT saving. Returns decision=accept|reject with code/hint/expected so you can retry. Prefer a DOI, an arXiv id, or an OpenReview forum URL. Scholar and GitHub links are rejected.",
     inputSchema: {
       type: "object",
       properties: {
@@ -282,7 +282,7 @@ function instructionsFor(auth: LibraryAiAuth): string {
   return [
     "OpenLeaf citation library AI collaborator.",
     "Verify every proposed citation before treating it as real.",
-    "Prefer DOI or arXiv. On reject, read code/hint/expected and retry once — never invent identifiers.",
+    "Prefer a DOI, an arXiv id, or an OpenReview forum URL. On reject, read code/hint/expected and retry once — never invent identifiers.",
     `allowSearch=${auth.session.settings.allowSearch} allowAdd=${auth.session.settings.allowAdd} allowEnrich=${auth.session.settings.allowEnrich}`,
     `adds used ${auth.session.addCount}/${auth.session.settings.maxAdds}`,
   ].join(" ");

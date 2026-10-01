@@ -61,7 +61,6 @@ export function LibraryAiLinkPanel({ open, onClose }: Props) {
   const [maxAdds, setMaxAdds] = useState(50);
   const [ttlMinutes, setTtlMinutes] = useState<number | null>(7 * 24 * 60);
   const [lastPrompt, setLastPrompt] = useState<string | null>(null);
-  const [lastMcp, setLastMcp] = useState<string | null>(null);
   const [lastUrl, setLastUrl] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -104,7 +103,6 @@ export function LibraryAiLinkPanel({ open, onClose }: Props) {
         },
       });
       setLastPrompt(minted.starterPrompt);
-      setLastMcp(minted.mcpConfig);
       setLastUrl(minted.libraryAiUrl);
       setSessions((prev) => [minted.session, ...prev.filter((s) => s.id !== minted.session.id)]);
       setRiskAck(false);
@@ -151,8 +149,9 @@ export function LibraryAiLinkPanel({ open, onClose }: Props) {
         </div>
 
         <p className="muted library-hint">
-          Mint a Bearer token for ChatGPT (or Cursor MCP). Every add is verify-first, then queued for
-          your review — same pattern as OpenLeaf AI edit Accept/Reject.
+          Paste the prompt into ChatGPT or Claude in the browser. They call your library API with the
+          token in that prompt. Each add is checked online, then waits in your review queue until you
+          Accept it.
         </p>
 
         {error ? <div className="share-error">{error}</div> : null}
@@ -238,16 +237,11 @@ export function LibraryAiLinkPanel({ open, onClose }: Props) {
 
         {lastPrompt ? (
           <div className="library-share-invite">
-            <p className="muted">Paste into ChatGPT (preferred over opening the URL):</p>
+            <p className="muted">Paste this into ChatGPT or Claude. Do not open the link in the browser first.</p>
             <div className="library-share-invite-actions">
-              <CopyButton value={lastPrompt} label="ChatGPT prompt" primary>
-                Copy ChatGPT prompt
+              <CopyButton value={lastPrompt} label="prompt" primary>
+                Copy prompt
               </CopyButton>
-              {lastMcp ? (
-                <CopyButton value={lastMcp} label="MCP config">
-                  Copy MCP config
-                </CopyButton>
-              ) : null}
               {lastUrl ? <CopyButton value={lastUrl} label="briefing URL" /> : null}
             </div>
             <pre className="library-share-invite-url">{lastPrompt.slice(0, 420)}…</pre>
@@ -270,11 +264,6 @@ export function LibraryAiLinkPanel({ open, onClose }: Props) {
                 {s.starterPrompt ? (
                   <CopyButton value={s.starterPrompt} label="prompt">
                     Prompt
-                  </CopyButton>
-                ) : null}
-                {s.mcpConfig ? (
-                  <CopyButton value={s.mcpConfig} label="MCP">
-                    MCP
                   </CopyButton>
                 ) : null}
                 <button

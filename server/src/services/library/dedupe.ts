@@ -19,6 +19,23 @@ export function normalizeTitleForMatch(title: string): string {
     .trim();
 }
 
+/**
+ * First-author families. Exact match, or a compound surname whose last word
+ * is the other family ("El Nahhas" / "Nahhas"). Short names stay exact so
+ * "Li" does not match "Liang".
+ */
+export function authorFamiliesCompatible(a: string, b: string): boolean {
+  const na = a.trim().toLowerCase().replace(/\s+/g, " ");
+  const nb = b.trim().toLowerCase().replace(/\s+/g, " ");
+  if (!na || !nb) return true;
+  if (na === nb) return true;
+  const [shorter, longer] = na.length <= nb.length ? [na, nb] : [nb, na];
+  if (shorter.length < 5) return false;
+  if (!longer.endsWith(shorter)) return false;
+  const boundary = longer[longer.length - shorter.length - 1];
+  return boundary === " " || boundary === "-";
+}
+
 /** Soft title match: exact normalized equality or containment of the first 40 chars. */
 export function titlesSoftMatch(a: string, b: string): boolean {
   const la = normalizeTitleForMatch(a);
@@ -77,8 +94,8 @@ export async function findLikelyDuplicate(
   for (const r of all) {
     if (!titlesSoftMatch(title, r.title)) continue;
     if (family) {
-      const other = r.authors[0]?.family?.trim().toLowerCase() ?? "";
-      if (other && other !== family) continue;
+      const other = r.authors[0]?.family?.trim() ?? "";
+      if (other && !authorFamiliesCompatible(family, other)) continue;
     }
     return { paper: r, match: "title" };
   }

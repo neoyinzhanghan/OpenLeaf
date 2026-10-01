@@ -11,7 +11,7 @@ const { loadConfig } = await import("../../config.js");
 loadConfig(true);
 
 const { setSourceClientsForTests } = await import("./sources/index.js");
-const { closeIndexDb, reindexLibrary, addPaper } = await import("./index.js");
+const { closeIndexDb, reindexLibrary, addPaper, deletePaper } = await import("./index.js");
 const { verifyProposal, addVerifiedPaper } = await import("./verifyProposal.js");
 const {
   mintLibraryAi,
@@ -36,7 +36,27 @@ describe("verifyProposal + library AI mint", () => {
   before(async () => {
     setSourceClientsForTests({
       crossref: {
-        lookupDoi: async (doi) => (doi.includes("10.1000/real") ? { ...realPaper, doi } : null),
+        lookupDoi: async (doi) => {
+          if (doi.includes("not-yet-in-library")) {
+            return {
+              ...realPaper,
+              doi,
+              title: "A Paper Not Yet In The Library",
+              authors: [{ given: "Grace", family: "Hopper" }],
+            };
+          }
+          if (doi.includes("10.1000/stamp.published")) {
+            return {
+              ...realPaper,
+              doi,
+              title: "From Whole-slide Image to Biomarker Prediction Protocol",
+              authors: [{ given: "Omar", family: "El Nahhas" }],
+              venue: "Nature Protocols",
+              year: 2024,
+            };
+          }
+          return doi.includes("10.1000/real") ? { ...realPaper, doi } : null;
+        },
       },
       openalex: {
         lookupDoi: async () => null,
@@ -102,6 +122,104 @@ describe("verifyProposal + library AI mint", () => {
     const v = await verifyProposal({ arxivId: "2401.55555" });
     assert.equal(v.ok, true);
     if (v.ok) assert.equal(v.checks.identifier, "arxiv");
+  });
+
+  it("accepts an OpenReview forum note and still rejects GitHub", async () => {
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.includes("api2.openreview.net/notes?id=FNBQOPj18N")) {
+        return new Response(
+          JSON.stringify({
+            notes: [
+              {
+                id: "FNBQOPj18N",
+                cdate: Date.UTC(2024, 6, 1),
+                content: {
+                  title: { value: "eva: Evaluation framework for pathology foundation models" },
+                  authors: { value: ["kaiko.ai", "Ioannis Gatopoulos"] },
+                  abstract: { value: "A modular evaluation framework." },
+                  venue: { value: "MIDL 2024" },
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.includes("api2.openreview.net/notes?id=BlockedNote1")) {
+        return new Response("blocked", { status: 403 });
+      }
+      return new Response("not found", { status: 404 });
+    };
+
+    const ok = await verifyProposal(
+      { url: "https://openreview.net/forum?id=FNBQOPj18N" },
+      { fetchImpl },
+    );
+    assert.equal(ok.ok, true);
+    if (ok.ok) {
+      assert.equal(ok.checks.identifier, "openreview");
+      assert.equal(ok.resolved.title, "eva: Evaluation framework for pathology foundation models");
+      assert.equal(ok.resolved.authors[0]?.family, "kaiko.ai");
+      assert.equal(ok.resolved.authors[1]?.family, "Gatopoulos");
+      assert.equal(ok.resolved.year, 2024);
+      assert.equal(ok.resolved.url, "https://openreview.net/forum?id=FNBQOPj18N");
+    }
+
+    const pdf = await verifyProposal(
+      { url: "https://openreview.net/pdf?id=FNBQOPj18N" },
+      { fetchImpl },
+    );
+    assert.equal(pdf.ok, true);
+
+    const github = await verifyProposal({ url: "https://github.com/kaiko-ai/eva" });
+    assert.equal(github.ok, false);
+    if (!github.ok) assert.equal(github.code, "UNRESOLVABLE_URL");
+
+    const blocked = await verifyProposal(
+      { url: "https://openreview.net/forum?id=BlockedNote1" },
+      { fetchImpl },
+    );
+    assert.equal(blocked.ok, false);
+    if (!blocked.ok) {
+      assert.equal(blocked.code, "UNRESOLVABLE_URL");
+      assert.match(blocked.hint, /OpenReview/i);
+      assert.match(blocked.reason, /HTTP 403/);
+    }
+  });
+
+  it("treats a published DOI as a duplicate of the stored preprint", async () => {
+    const preprint = await addPaper({
+      title: "From Whole-slide Image to Biomarker Prediction Protocol",
+      authors: [{ given: "Omar S. M. El", family: "Nahhas" }],
+      arxivId: "2312.10944",
+      year: 2023,
+      venue: "arXiv",
+      source: "arxiv",
+    });
+    const cleanRetractionFetch: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.includes("api.crossref.org/works/")) {
+        return new Response(JSON.stringify({ message: { "update-to": [] } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    };
+    try {
+      const dup = await verifyProposal(
+        { doi: "10.1000/stamp.published" },
+        { fetchImpl: cleanRetractionFetch },
+      );
+      assert.equal(dup.ok, false);
+      if (!dup.ok) {
+        assert.equal(dup.code, "DUPLICATE");
+        assert.equal(dup.existingCitekey, preprint.citekey);
+      }
+    } finally {
+      await deletePaper(preprint.citekey);
+    }
   });
 
   it("accepts DOI-only and queues via proposeVerifiedPaper", async () => {
@@ -205,7 +323,12 @@ describe("verifyProposal + library AI mint", () => {
     });
     assert.match(minted.libraryAiUrl, /\/library-ai\//);
     assert.match(minted.starterPrompt, /library_verify|POST \/verify/);
+    assert.match(minted.starterPrompt, /Authorization: Bearer/);
     assert.match(minted.mcpConfig, /Authorization/);
+    assert.match(minted.cursorPrompt, /library_verify/);
+    assert.match(minted.cursorPrompt, /credential exfiltration/);
+    assert.equal(minted.cursorPrompt.includes(minted.session.token), false);
+    assert.equal(minted.cursorPrompt.includes("Authorization: Bearer"), false);
 
     const auth = resolveLibraryAiToken(minted.session.token);
     assert.ok(auth);

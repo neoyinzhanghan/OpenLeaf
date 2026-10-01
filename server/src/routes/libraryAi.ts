@@ -188,6 +188,7 @@ libraryAiHostRouter.post("/", (req, res) => {
       session: libraryAiHostView(minted.session, loadConfig().port),
       libraryAiUrl: minted.libraryAiUrl,
       starterPrompt: minted.starterPrompt,
+      cursorPrompt: minted.cursorPrompt,
       mcpUrl: minted.mcpUrl,
       mcpConfig: minted.mcpConfig,
     });

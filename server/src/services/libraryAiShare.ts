@@ -3,12 +3,13 @@
  * to search / verify / add papers into the host citation library.
  *
  * Unlike project AI links (sandbox forks), this mutates the real library — but
- * every add is gated by verifyProposal (DOI/arXiv must resolve; no Scholar-only).
+ * every add is gated by verifyProposal (DOI, arXiv, or OpenReview must resolve; no Scholar/GitHub).
  */
 import crypto from "node:crypto";
 import { loadConfig } from "../config.js";
 import { getHostGateway } from "./hostGateway.js";
 import {
+  buildLibraryCursorPrompt,
   buildLibraryMcpConfigJson,
   buildLibraryStarterPrompt,
   mcpUrlFromApiBase,
@@ -122,6 +123,7 @@ export function mintLibraryAi(input: {
   session: LibraryAiSession;
   libraryAiUrl: string;
   starterPrompt: string;
+  cursorPrompt: string;
   mcpUrl: string;
   mcpConfig: string;
 } {
@@ -164,6 +166,7 @@ export function mintLibraryAi(input: {
     session,
     libraryAiUrl,
     starterPrompt: buildLibraryStarterPrompt(libraryAiUrl, session, apiBase),
+    cursorPrompt: buildLibraryCursorPrompt(session),
     mcpUrl,
     mcpConfig: buildLibraryMcpConfigJson({ mcpUrl, token: session.token, title: settings.title }),
   };
@@ -212,6 +215,7 @@ export function libraryAiHostView(session: LibraryAiSession, port?: number) {
       libraryAiUrl && apiBase
         ? buildLibraryStarterPrompt(libraryAiUrl, session, apiBase)
         : null,
+    cursorPrompt: libraryAiUrl && apiBase ? buildLibraryCursorPrompt(session) : null,
     mcpUrl,
     mcpConfig:
       mcpUrl && !dead
@@ -246,16 +250,17 @@ export function libraryAiBrief(auth: LibraryAiAuth): Record<string, unknown> {
     briefingUrl: `${publicUrl}/library-ai/${session.token}`,
     mcp: `${apiBase}/mcp`,
     rules: [
-      "Every add is verify-first: DOI or arXiv must resolve in Crossref/OpenAlex/arXiv.",
+      "Every add is verify-first: a DOI, arXiv id, or OpenReview forum note must resolve.",
       "Successful adds are queued for host Accept/Reject — not written until Accept.",
       "On reject, read code/hint/expected and retry once — never invent a DOI.",
-      "Scholar-only or bare publisher URLs are rejected.",
+      "Scholar pages, GitHub repositories, and bare publisher URLs are rejected.",
     ],
     starterPrompt: buildLibraryStarterPrompt(
       `${publicUrl}/library-ai/${session.token}`,
       session,
       apiBase,
     ),
+    cursorPrompt: buildLibraryCursorPrompt(session),
   };
 }
 

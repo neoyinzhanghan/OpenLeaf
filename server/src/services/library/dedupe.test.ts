@@ -11,7 +11,7 @@ const { loadConfig } = await import("../../config.js");
 loadConfig(true);
 
 const { addPaper, closeIndexDb, reindexLibrary } = await import("./index.js");
-const { findByArxiv, findLikelyDuplicate, titlesSoftMatch } = await import("./dedupe.js");
+const { authorFamiliesCompatible, findByArxiv, findLikelyDuplicate, titlesSoftMatch } = await import("./dedupe.js");
 const { paperToRis, exportLibraryPapers } = await import("./cite.js");
 const {
   addAnnotation,
@@ -28,6 +28,13 @@ describe("library dedupe / export / annotations", () => {
   after(() => {
     closeIndexDb();
     fs.rmSync(libraryRoot, { recursive: true, force: true });
+  });
+
+  it("treats a trailing compound surname as the same family", () => {
+    assert.equal(authorFamiliesCompatible("El Nahhas", "Nahhas"), true);
+    assert.equal(authorFamiliesCompatible("Nahhas", "El Nahhas"), true);
+    assert.equal(authorFamiliesCompatible("Li", "Liang"), false);
+    assert.equal(authorFamiliesCompatible("Smith", "Blacksmith"), false);
   });
 
   it("soft-matches titles", () => {
