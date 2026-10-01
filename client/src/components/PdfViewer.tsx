@@ -131,6 +131,7 @@ type ScrollAnchor = {
   page: number;
   /** Fraction through the anchored page wrap (viewport midpoint) */
   offsetRatio: number;
+  scrollLeft: number;
 };
 
 function clampScale(scale: number): number {
@@ -159,7 +160,7 @@ function captureScrollAnchor(scroller: HTMLElement, container: HTMLElement): Scr
   }
   const page = Number(best.dataset.page) || 1;
   const offsetRatio = best.offsetHeight > 0 ? (mid - best.offsetTop) / best.offsetHeight : 0;
-  return { page, offsetRatio };
+  return { page, offsetRatio, scrollLeft: scroller.scrollLeft };
 }
 
 function restoreScrollAnchor(
@@ -168,15 +169,19 @@ function restoreScrollAnchor(
   anchor: ScrollAnchor | null,
 ): void {
   if (!anchor) return;
-  const wrap = container.querySelector(
-    `.pdf-page-wrap[data-page="${anchor.page}"]`,
-  ) as HTMLElement | null;
+  const wraps = [...container.querySelectorAll(".pdf-page-wrap")] as HTMLElement[];
+  if (wraps.length === 0) return;
+  const maxPage = wraps.reduce((max, wrap) => Math.max(max, Number(wrap.dataset.page) || 1), 1);
+  const page = Math.min(Math.max(1, anchor.page), maxPage);
+  const ratio = page === anchor.page ? anchor.offsetRatio : 1;
+  const wrap = container.querySelector(`.pdf-page-wrap[data-page="${page}"]`) as HTMLElement | null;
   if (!wrap) return;
-  const mid = wrap.offsetTop + anchor.offsetRatio * wrap.offsetHeight;
+  const mid = wrap.offsetTop + ratio * wrap.offsetHeight;
   const top = Math.max(0, mid - scroller.clientHeight / 2);
   const prev = scroller.style.scrollBehavior;
   scroller.style.scrollBehavior = "auto";
   scroller.scrollTop = top;
+  scroller.scrollLeft = anchor.scrollLeft;
   scroller.style.scrollBehavior = prev;
 }
 
@@ -230,6 +235,8 @@ export function PdfViewer({
   const renderedScaleRef = useRef(1);
   const fittedRef = useRef(false);
   const scrolledFlashNonceRef = useRef<number | null>(null);
+  /** Place to return to after a recompile replaces the PDF URL. */
+  const pendingAnchorRef = useRef<ScrollAnchor | null>(null);
   const pageSizesRef = useRef<Array<{ width: number; height: number }>>([]);
   const paintTokenRef = useRef(0);
 
@@ -300,22 +307,31 @@ export function PdfViewer({
   }, [highlight]);
 
   // Load / replace the PDF document only when the URL changes.
+  // A recompile keeps the pages on screen until the new file is ready, so the
+  // scroll position can be put back on the same page instead of the top.
   useEffect(() => {
-    // Always release the previous PDF before starting a new load (or clearing).
-    dropResidentDoc();
-    setPageCount(0);
-    setPagesReady(false);
-
     if (!url) {
+      pendingAnchorRef.current = null;
+      dropResidentDoc();
+      setPageCount(0);
+      setPagesReady(false);
       setLoading(false);
       setError(null);
       return;
     }
 
+    const scroller = scrollRef.current;
+    const container = containerRef.current;
+    if (scroller && container) {
+      const anchor = captureScrollAnchor(scroller, container);
+      if (anchor) pendingAnchorRef.current = anchor;
+    }
+
     let cancelled = false;
     let settledDoc: PDFDocumentProxy | null = null;
     const loadingTask = pdfjs.getDocument({ url, worker: getPdfWorker() });
-    setLoading(true);
+    const replacing = docRef.current != null;
+    if (!replacing) setLoading(true);
     setError(null);
 
     (async () => {
@@ -342,6 +358,7 @@ export function PdfViewer({
           await doc.destroy().catch(() => undefined);
           return;
         }
+        const previous = docRef.current;
         paintTokenRef.current += 1;
         docRef.current = doc;
         settledDoc = null; // ownership moved to docRef
@@ -350,8 +367,9 @@ export function PdfViewer({
         setPagesReady(false);
         setPageCount(doc.numPages);
         setDocVersion((v) => v + 1);
+        if (previous && previous !== doc) previous.destroy().catch(() => undefined);
       } catch (err) {
-        if (!cancelled) {
+        if (!cancelled && !docRef.current) {
           setError(
             err instanceof Error
               ? /missing pdf|unexpected server response|404/i.test(err.message)
@@ -368,20 +386,12 @@ export function PdfViewer({
 
     return () => {
       cancelled = true;
-      paintTokenRef.current += 1;
       void Promise.resolve(loadingTask.destroy()).catch(() => undefined);
-      // If load finished but we never handed off (or handed off then URL changed),
-      // destroy whatever this effect still owns.
+      // Leave the current document painted. The next load replaces it, and
+      // unmount drops it. Clearing here is what sent the preview back to page 1.
       if (settledDoc) {
         settledDoc.destroy().catch(() => undefined);
         settledDoc = null;
-      }
-      if (docRef.current) {
-        const owned = docRef.current;
-        docRef.current = null;
-        pageSizesRef.current = [];
-        clearPdfDom(containerRef.current);
-        owned.destroy().catch(() => undefined);
       }
     };
   }, [url]);
@@ -403,7 +413,9 @@ export function PdfViewer({
     const token = ++paintTokenRef.current;
     const renderScale = scale;
     const sizes = pageSizesRef.current;
-    const anchor = scroller ? captureScrollAnchor(scroller, container) : null;
+    const hadPages = container.querySelector(".pdf-page-wrap") != null;
+    const anchor =
+      (hadPages ? captureScrollAnchor(scroller, container) : null) ?? pendingAnchorRef.current;
     const inflight = new Map<number, { cancel: () => void }>();
     const painting = new Set<number>();
     const visible = new Set<number>();
@@ -547,8 +559,21 @@ export function PdfViewer({
       const height = (size?.height ?? 792) * renderScale;
       ensureWrap(pageNum, width, height);
     }
+    for (const node of [...container.querySelectorAll(".pdf-page-wrap")]) {
+      const pageNum = Number((node as HTMLElement).dataset.page);
+      if (!pageNum || pageNum > pageCount) node.remove();
+    }
 
     if (scroller) restoreScrollAnchor(scroller, container, anchor);
+    if (anchor) pendingAnchorRef.current = anchor;
+    let scrollFrame: number | null = null;
+    if (anchor) {
+      scrollFrame = window.requestAnimationFrame(() => {
+        scrollFrame = null;
+        if (cancelled || token !== paintTokenRef.current) return;
+        restoreScrollAnchor(scroller, container, anchor);
+      });
+    }
     renderedScaleRef.current = renderScale;
     setPagesReady(true);
 
@@ -736,6 +761,7 @@ export function PdfViewer({
 
     return () => {
       cancelled = true;
+      if (scrollFrame != null) window.cancelAnimationFrame(scrollFrame);
       if (visibilityFrame != null) window.cancelAnimationFrame(visibilityFrame);
       resizeObserver.disconnect();
       observer.disconnect();
@@ -1066,7 +1092,7 @@ export function PdfViewer({
           <p>{emptyHint || "Compile the project to build a preview for this branch."}</p>
         </div>
       )}
-      {loading && <div className="empty-hint">Loading PDF…</div>}
+      {loading && pageCount === 0 && <div className="empty-hint">Loading PDF…</div>}
       {error && (
         <div className="error-banner" style={{ margin: "1rem" }}>
           {error}

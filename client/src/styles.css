@@ -3942,6 +3942,7 @@ button.lib-badge:hover {
   overflow: auto;
   padding: 1.25rem 1rem;
   scroll-behavior: smooth;
+  overflow-anchor: none;
 }
 
 .pdf-page-wrap {

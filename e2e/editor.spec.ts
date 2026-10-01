@@ -86,6 +86,38 @@ test("two editors keep both edits and show presence", async ({ browser }) => {
   await other.close();
 });
 
+test("recompile keeps the PDF scrolled to the same place", async ({ page }) => {
+  await createProject("pdf-scroll");
+  const file = path.join(instance.projects, "pdf-scroll", "main.tex");
+  const pages = Array.from({ length: 8 }, (_, i) => `\\section{Section ${i + 1}}\nThis is page ${i + 1} of the scroll test.\n\\newpage`).join("\n");
+  fs.writeFileSync(file, `\\documentclass{article}\n\\begin{document}\n${pages}\n\\end{document}\n`);
+  const compiled = await fetch(`${instance.baseURL}/api/projects/pdf-scroll/compile`, {
+    method: "POST",
+    headers: { Origin: instance.baseURL },
+  });
+  expect(compiled.ok, await compiled.text()).toBe(true);
+  await page.goto(`${instance.baseURL}/p/pdf-scroll`);
+  const scroller = page.locator(".pdf-scroll");
+  await expect(page.locator(".pdf-page-wrap").nth(5)).toBeAttached();
+  await expect
+    .poll(async () => scroller.evaluate((el) => el.scrollHeight - el.clientHeight))
+    .toBeGreaterThan(800);
+  await scroller.evaluate((el) => {
+    el.style.scrollBehavior = "auto";
+    el.scrollTop = Math.round(el.scrollHeight * 0.62);
+  });
+  const before = await scroller.evaluate((el) => el.scrollTop);
+  expect(before).toBeGreaterThan(500);
+  const reloaded = page.waitForResponse(
+    (res) => res.url().includes("/api/projects/pdf-scroll/pdf") && res.ok(),
+  );
+  await page.getByRole("button", { name: "Recompile", exact: true }).click();
+  await reloaded;
+  await expect
+    .poll(async () => scroller.evaluate((el) => el.scrollTop), { timeout: 15_000 })
+    .toBeGreaterThan(before * 0.6);
+});
+
 test("a broken compile shows an error badge", async ({ page }) => {
   await createProject("bad-paper");
   const file = path.join(instance.projects, "bad-paper", "main.tex");
