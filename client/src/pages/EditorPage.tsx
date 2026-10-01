@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import type * as Y from "yjs";
 import {
   checkoutProjectTimeline,
@@ -38,6 +38,7 @@ import { guestLogout, hostLogout, listProjectAiReview, acceptAiReview, rejectAiR
 import { flushCollab, useProjectCollab } from "../collab/useProjectCollab";
 import { rememberProject } from "../lib/lastProject";
 import { BinaryPane } from "../components/BinaryPane";
+import { CopyPathMenuItem, ProjectNameField } from "../components/ProjectHostActions";
 import { BranchTreePanel } from "../components/BranchTreePanel";
 import { CodeEditor, type EditorChangeMarks, type EditorSuggestionMark, type CitationGutterMark } from "../components/CodeEditor";
 import { CompareBaselinePicker } from "../components/CompareBaselinePicker";
@@ -231,6 +232,7 @@ function normDiffPath(p: string): string {
 
 export function EditorPage() {
   const { id = "" } = useParams();
+  const navigate = useNavigate();
   const guest = useGuest();
   const { session, refresh: refreshSession } = useSession();
   const isRemoteHost = session.kind === "host" && session.remote;
@@ -1048,7 +1050,8 @@ export function EditorPage() {
         setStatus("idle");
       } catch (err) {
         if (!cancelled && activePathRef.current === pathBeingLoaded) {
-          setError(err instanceof Error ? err.message : "Failed to read file");
+          const msg = err instanceof Error ? err.message : "Failed to read file";
+          setError(msg === "File not found" ? `File not found: ${pathBeingLoaded}` : msg);
           setFileReady(false);
         }
       }
@@ -2207,9 +2210,20 @@ export function EditorPage() {
               Projects
             </Link>
           )}
-          <span className="toolbar-project-name" title={project?.id ?? id}>
-            {project?.id ?? id}
-          </span>
+          {!isGuest && project ? (
+            <ProjectNameField
+              project={project}
+              variant="toolbar"
+              onRenamed={(next) => {
+                setProject(next);
+                if (next.id !== id) navigate(`/p/${encodeURIComponent(next.id)}`);
+              }}
+            />
+          ) : (
+            <span className="toolbar-project-name" title={project?.name ?? project?.id ?? id}>
+              {project?.name ?? project?.id ?? id}
+            </span>
+          )}
           <div className="toolbar-meta toolbar-wide-only">
             <span
               className={`status-pill ${
@@ -2639,6 +2653,12 @@ export function EditorPage() {
                   </>
                 )}
                 {narrow && (canHistory || !isGuest) && <div className="toolbar-menu-sep" />}
+                {!isGuest && project?.path ? (
+                  <>
+                    <CopyPathMenuItem path={project.path} />
+                    <div className="toolbar-menu-sep" />
+                  </>
+                ) : null}
                 {narrow && <div className="toolbar-menu-label" role="presentation">Sharing</div>}
                 {!isGuest && !(session.kind === "host" && session.remote) && (
                   <button

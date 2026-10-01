@@ -1,21 +1,14 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { createProject, listProjects } from "../api/client";
+import { createProjectNamed, listProjects } from "../api/client";
 import { hostGateway, hostLogout, type HostGatewayView } from "../api/share";
 import type { ProjectMeta } from "../api/types";
 import { HostAccessPanel } from "../components/HostAccessPanel";
+import { ProjectCard } from "../components/ProjectHostActions";
 import { ThemePicker } from "../components/ThemeToggle";
-import { readLastProject, type LastProject } from "../lib/lastProject";
+import { readLastProject, rememberProject, type LastProject } from "../lib/lastProject";
+import { projectFolderName } from "../projectFolder";
 import { useSession } from "../session/SessionContext";
-
-function slugifyProjectId(raw: string): string {
-  return raw
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 64);
-}
 
 export function ProjectList() {
   const { session, refresh } = useSession();
@@ -32,7 +25,8 @@ export function ProjectList() {
   const [loading, setLoading] = useState(true);
   const [gateway, setGateway] = useState<HostGatewayView | null>(null);
   const [phoneOpen, setPhoneOpen] = useState(false);
-  const slug = slugifyProjectId(name);
+  const title = name.trim();
+  const folder = title ? projectFolderName(title) : null;
 
   const refreshProjects = async () => {
     setProjects(await listProjects());
@@ -74,12 +68,11 @@ export function ProjectList() {
 
   const onCreate = async (e: FormEvent) => {
     e.preventDefault();
-    const id = slugifyProjectId(name);
-    if (!id) return;
+    if (!title || !folder) return;
     setBusy(true);
     setError(null);
     try {
-      await createProject(id, "example-article");
+      await createProjectNamed(title, "example-article");
       setName("");
       await refreshProjects();
     } catch (err) {
@@ -161,18 +154,17 @@ export function ProjectList() {
             placeholder="My first paper"
             aria-label="New project name"
           />
-          <button className="btn btn-primary" type="submit" disabled={busy || !slug}>
+          <button className="btn btn-primary" type="submit" disabled={busy || !title || !folder}>
             {busy ? "Creating…" : "Create from example"}
           </button>
         </form>
-        {name.trim() && slug ? (
+        {title && folder && folder !== title ? (
           <p className="home-actions-hint">
-            Project id: <code>{slug}</code>
+            Folder name: <code>{folder}</code>
           </p>
         ) : null}
         <p className="home-actions-hint">
-          Seeds a starter article you can rename and rewrite. The name becomes a project id of letters, numbers,{" "}
-          <code>.</code> <code>_</code> and <code>-</code>.
+          Seeds a starter article you can rename and rewrite. Click a project title to rename it. Spaces are fine.
         </p>
         {!remoteHost && <HostAccessPanel open={phoneOpen} onClose={() => setPhoneOpen(false)} />}
 
@@ -186,17 +178,18 @@ export function ProjectList() {
           )}
           {!loading &&
             projects.map((p) => (
-              <Link key={p.id} to={`/p/${encodeURIComponent(p.id)}`} className="project-item">
-                <div>
-                  <h2>{p.name}</h2>
-                  <p>
-                    {p.mainFile} · {p.engine}
-                  </p>
-                </div>
-                <span className="project-item-go" aria-hidden>
-                  →
-                </span>
-              </Link>
+              <ProjectCard
+                key={p.id}
+                project={p}
+                onRenamed={(next) => {
+                  const prev = readLastProject();
+                  if (prev && (prev.id === p.id || prev.id === next.id)) {
+                    rememberProject({ id: next.id, name: next.name });
+                    setLastProject({ id: next.id, name: next.name });
+                  }
+                  void refreshProjects();
+                }}
+              />
             ))}
           {!loading && projects.length === 0 && !error && (
             <div className="empty-hint empty-hint-card">

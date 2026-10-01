@@ -9,6 +9,7 @@ import {
   type Identity,
   type LatexEngine,
 } from "../config.js";
+import { normalizeDisplayName, projectFolderName } from "./projectFolder.js";
 
 /** Never list or zip these system dirs. Build artifacts (`.openleaf`) stay visible. */
 export const SKIP_DIRS = new Set([".git", "node_modules"]);
@@ -40,6 +41,8 @@ export type StoredFileAccessRule = {
 export type PaperflowProjectConfig = {
   mainFile: string;
   engine?: LatexEngine;
+  /** Title shown in the app. The folder name may be a path-safe form of this. */
+  name?: string;
   /** Project-specific collab identities (authoritative for this project). */
   identities?: Identity[];
   /** Host file-access rules. Preserved across config patches so they stay in git. */
@@ -73,10 +76,15 @@ export function defaultProjectIdentities(): Identity[] {
 }
 
 function assertSafeProjectId(id: string): string {
-  if (!id || id.includes("/") || id.includes("\\") || id === "." || id === "..") {
-    throw Object.assign(new Error("Invalid project id"), { status: 400 });
-  }
-  if (!/^[a-zA-Z0-9._-]+$/.test(id)) {
+  if (
+    !id ||
+    id.length > 255 ||
+    id === "." ||
+    id === ".." ||
+    id.startsWith(".") ||
+    /[\\/\u0000-\u001F\u007F]/.test(id) ||
+    /[. ]$/.test(id)
+  ) {
     throw Object.assign(new Error("Invalid project id"), { status: 400 });
   }
   return id;
@@ -200,9 +208,11 @@ export async function readProjectConfig(id: string): Promise<PaperflowProjectCon
   try {
     const raw = JSON.parse(await fs.readFile(cfgPath, "utf8")) as Partial<PaperflowProjectConfig>;
     const rules = raw.fileAccess?.rules;
+    const storedName = typeof raw.name === "string" ? raw.name.trim() : "";
     return {
       mainFile: raw.mainFile ?? "main.tex",
       engine: raw.engine ?? globalEngine,
+      name: storedName || undefined,
       identities: Array.isArray(raw.identities) ? raw.identities : undefined,
       fileAccess: Array.isArray(rules) ? { rules } : undefined,
     };
@@ -242,10 +252,12 @@ export async function writeProjectConfig(
   const next: PaperflowProjectConfig = {
     mainFile: patch.mainFile ?? current.mainFile,
     engine: patch.engine ?? current.engine,
+    name: patch.name === undefined ? current.name : patch.name,
     identities: patch.identities ?? current.identities,
     fileAccess: patch.fileAccess !== undefined ? patch.fileAccess : current.fileAccess,
   };
   if (!next.identities) delete next.identities;
+  if (!next.name) delete next.name;
   if (!next.fileAccess) delete next.fileAccess;
   const cfgPath = resolveProjectPath(id, "openleaf.json");
   await fs.writeFile(cfgPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
@@ -267,7 +279,7 @@ export async function listProjects(): Promise<ProjectMeta[]> {
     const cfg = await readProjectConfig(entry.name);
     projects.push({
       id: entry.name,
-      name: entry.name,
+      name: cfg.name || entry.name,
       mainFile: cfg.mainFile,
       engine: cfg.engine ?? loadConfig().latex.engine,
       path: path.join(root, entry.name),
@@ -285,11 +297,68 @@ export async function getProject(id: string): Promise<ProjectMeta> {
   const cfg = await readProjectConfig(id);
   return {
     id,
-    name: id,
+    name: cfg.name || id,
     mainFile: cfg.mainFile,
     engine: cfg.engine ?? loadConfig().latex.engine,
     path: dir,
   };
+}
+
+/** Guests edit one project. They do not receive this computer's folder path. */
+export function projectMetaForCaller(meta: ProjectMeta, accessMode: "host" | "guest" | undefined): ProjectMeta {
+  if (accessMode === "guest") return { ...meta, path: "" };
+  return meta;
+}
+
+function retargetAbs(value: string, fromRoot: string, toRoot: string): string {
+  const trim = (p: string) => p.replace(/[\\/]+$/, "");
+  const from = trim(fromRoot);
+  const to = trim(toRoot);
+  if (value === from) return to;
+  if (value.startsWith(from + path.sep)) return to + value.slice(from.length);
+  if (value.startsWith(from + "/")) return to + value.slice(from.length);
+  return value;
+}
+
+/** Git worktrees store absolute paths. A folder rename has to rewrite them. */
+function retargetGitWorktrees(fromRoot: string, toRoot: string): void {
+  const gitDir = path.join(toRoot, ".git");
+  if (!fsSync.existsSync(gitDir) || !fsSync.statSync(gitDir).isDirectory()) return;
+  const wtRoot = path.join(gitDir, "worktrees");
+  if (!fsSync.existsSync(wtRoot)) return;
+  for (const name of fsSync.readdirSync(wtRoot)) {
+    const gitdirFile = path.join(wtRoot, name, "gitdir");
+    if (!fsSync.existsSync(gitdirFile)) continue;
+    const oldPointer = fsSync.readFileSync(gitdirFile, "utf8").trim();
+    const nextPointer = retargetAbs(oldPointer, fromRoot, toRoot);
+    if (nextPointer !== oldPointer) fsSync.writeFileSync(gitdirFile, `${nextPointer}\n`);
+    if (!fsSync.existsSync(nextPointer) || !fsSync.statSync(nextPointer).isFile()) continue;
+    const link = fsSync.readFileSync(nextPointer, "utf8");
+    const updated = link.replace(/^gitdir:\s*(.*)$/m, (_line, target: string) => {
+      return `gitdir: ${retargetAbs(target.trim(), fromRoot, toRoot)}`;
+    });
+    if (updated !== link) fsSync.writeFileSync(nextPointer, updated);
+  }
+}
+
+/** Save a display name. The folder moves only when its path-safe form changes. */
+export async function renameProject(fromId: string, displayName: string): Promise<ProjectMeta> {
+  const from = assertSafeProjectId(fromId);
+  const name = normalizeDisplayName(displayName);
+  const current = await getProject(from);
+  if (name === current.name) return current;
+  const to = projectFolderName(name);
+  if (to !== from) {
+    const src = projectDir(from);
+    const dest = projectDir(to);
+    if (fsSync.existsSync(dest)) {
+      throw Object.assign(new Error("A project with that folder name already exists"), { status: 409 });
+    }
+    await fs.rename(src, dest);
+    retargetGitWorktrees(src, dest);
+  }
+  await writeProjectConfig(to, { name });
+  return getProject(to);
 }
 
 async function buildTree(absDir: string, relBase: string): Promise<TreeNode[]> {

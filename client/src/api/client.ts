@@ -336,6 +336,20 @@ export function createProject(id: string, fromTemplate?: string): Promise<Projec
   });
 }
 
+export function createProjectNamed(name: string, fromTemplate?: string): Promise<ProjectMeta> {
+  return request("/api/projects", {
+    method: "POST",
+    body: JSON.stringify({ name, fromTemplate }),
+  });
+}
+
+export function renameProject(id: string, name: string): Promise<ProjectMeta> {
+  return request(`/api/projects/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  });
+}
+
 export function getFileAccess(id: string): Promise<FileAccessView> {
   return request(`/api/projects/${encodeURIComponent(id)}/file-access`);
 }

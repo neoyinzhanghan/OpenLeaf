@@ -57,6 +57,16 @@ function getHub(room: ProjectRoom): RoomHub {
   return hub;
 }
 
+/** `URL.pathname` keeps `%20`. Project folders may contain spaces. */
+function decodeCollabPart(value: string): string {
+  if (!value) return "";
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 function parseCollabUrl(
   req: IncomingMessage,
 ): { projectId: string; identityId: string; branchId: string } | null {
@@ -66,7 +76,7 @@ function parseCollabUrl(
     if (!url.pathname.startsWith("/collab")) return null;
 
     const parts = url.pathname.replace(/^\/collab\/?/, "").split("/").filter(Boolean);
-    const projectId = parts[0] || url.searchParams.get("project") || "";
+    const projectId = decodeCollabPart(parts[0] || "") || url.searchParams.get("project") || "";
     const identityId = url.searchParams.get("identity") || "";
     const branchId = (url.searchParams.get("branch") || "main").trim() || "main";
     if (!projectId || !identityId) return null;

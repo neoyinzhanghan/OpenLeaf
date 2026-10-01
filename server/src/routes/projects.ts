@@ -5,11 +5,13 @@ import { z, ZodError } from "zod";
 import { compileProject } from "../services/compiler.js";
 import {
   clearCollabSnapshot,
+  closeProjectRooms,
   flushProjectRoom,
   getOrCreateRoom,
   notifyProjectCommentsChanged,
   notifyProjectTreeChange,
   reseedProjectRoom,
+  setProjectRenaming,
 } from "../services/collab/room.js";
 import {
   addCommentReply,
@@ -38,9 +40,11 @@ import {
   listProjects,
   mkdirPath,
   pdfPathAbs,
+  projectMetaForCaller,
   readFile,
   readProjectConfig,
   renamePath,
+  renameProject,
   writeFile,
   writeProjectConfig,
 } from "../services/projectFs.js";
@@ -149,9 +153,10 @@ async function identityFromRequest(
   return ident;
 }
 
-projectsRouter.get("/", async (_req, res) => {
+projectsRouter.get("/", async (req, res) => {
   try {
-    res.json(await listProjects());
+    const projects = await listProjects();
+    res.json(projects.map((project) => projectMetaForCaller(project, req.access?.mode)));
   } catch (err) {
     res.status(statusOf(err)).json({ error: publicErrorMessage(err) });
   }
@@ -159,12 +164,27 @@ projectsRouter.get("/", async (_req, res) => {
 
 projectsRouter.post("/", async (req, res) => {
   const schema = z.object({
-    id: z.string().regex(/^[a-zA-Z0-9._-]+$/),
+    id: z.string().min(1).max(255).optional(),
+    name: z.string().min(1).max(120).optional(),
     fromTemplate: z.string().optional(),
   });
   try {
     const body = schema.parse(req.body);
-    const project = await createProject(body.id, body.fromTemplate ?? "example-article");
+    const template = body.fromTemplate ?? "example-article";
+    if (body.name !== undefined) {
+      const { normalizeDisplayName, projectFolderName } = await import("../services/projectFolder.js");
+      const display = normalizeDisplayName(body.name);
+      const id = projectFolderName(display);
+      await createProject(id, template);
+      if (display !== id) await writeProjectConfig(id, { name: display });
+      res.status(201).json(await getProject(id));
+      return;
+    }
+    if (!body.id) {
+      res.status(400).json({ error: "Enter a project name" });
+      return;
+    }
+    const project = await createProject(body.id, template);
     res.status(201).json(project);
   } catch (err) {
     res.status(statusOf(err)).json({ error: publicErrorMessage(err) });
@@ -174,9 +194,56 @@ projectsRouter.post("/", async (req, res) => {
 projectsRouter.get("/:id", async (req, res) => {
   try {
     await ensureInitialSnapshot(req.params.id);
-    res.json(await getProject(req.params.id));
+    res.json(projectMetaForCaller(await getProject(req.params.id), req.access?.mode));
   } catch (err) {
     res.status(statusOf(err)).json({ error: publicErrorMessage(err) });
+  }
+});
+
+projectsRouter.patch("/:id", async (req, res) => {
+  if (req.access?.mode === "guest") {
+    res.status(403).json({ error: "Only the host can rename a project" });
+    return;
+  }
+  const schema = z.object({
+    name: z.string().min(1).max(120),
+  });
+  const fromId = req.params.id;
+  let locked = false;
+  try {
+    const body = schema.parse(req.body);
+    const { normalizeDisplayName, projectFolderName } = await import("../services/projectFolder.js");
+    const display = normalizeDisplayName(body.name);
+    const current = await getProject(fromId);
+    if (display === current.name) {
+      res.json(projectMetaForCaller(current, req.access?.mode));
+      return;
+    }
+    const nextFolder = projectFolderName(display);
+    if (nextFolder !== fromId) {
+      const { listSharesForProject } = await import("../services/share.js");
+      const { listLiveAi } = await import("../services/aiShare.js");
+      const sharing = listSharesForProject(fromId).some(
+        (session) => session.status === "active" || session.status === "starting",
+      );
+      if (sharing) {
+        res.status(409).json({ error: "Stop the share link before renaming this project." });
+        return;
+      }
+      if (listLiveAi(fromId).length > 0) {
+        res.status(409).json({ error: "Revoke AI collaborator links before renaming this project." });
+        return;
+      }
+      setProjectRenaming(fromId, true);
+      locked = true;
+      await closeProjectRooms(fromId);
+    }
+    const project = await renameProject(fromId, display);
+    res.json(projectMetaForCaller(project, req.access?.mode));
+  } catch (err) {
+    res.status(statusOf(err)).json({ error: publicErrorMessage(err) });
+  } finally {
+    if (locked) setProjectRenaming(fromId, false);
   }
 });
 

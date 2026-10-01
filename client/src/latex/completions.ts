@@ -185,6 +185,20 @@ export function createCompletionProvider(
   };
 }
 
+/**
+ * When someone types the closing brace of `\begin{name}`, return the matching
+ * `\end{name}` block to insert. Names that are not in the suggestion list
+ * (for example `itemized`) still close.
+ */
+export function latexBeginEndInsert(lineBeforeCursor: string, restOfLine: string, followingText: string): string | null {
+  const match = /\\begin\{([A-Za-z@*]+)\}$/.exec(lineBeforeCursor);
+  if (!match) return null;
+  if (restOfLine.trim() !== "") return null;
+  const env = match[1]!;
+  if (followingText.includes(`\\end{${env}}`)) return null;
+  return `\n\t\n\\end{${env}}`;
+}
+
 export function extractCitations(bibText: string): string[] {
   const keys = new Set<string>();
   for (const m of bibText.matchAll(/@\w+\s*\{\s*([^,\s]+)\s*,/g)) {

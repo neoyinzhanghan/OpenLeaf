@@ -4,6 +4,7 @@ import { editor as monacoEditor, type editor } from "monaco-editor/esm/vs/editor
 import type { Awareness } from "y-protocols/awareness";
 import type * as Y from "yjs";
 import { bindYTextToMonaco, sealModelUndo, type YMonacoBinding } from "../collab/bindYTextToMonaco";
+import { latexBeginEndInsert } from "../latex/completions";
 import {
   BIBTEX_LANGUAGE,
   LATEX_LANGUAGE,
@@ -327,6 +328,38 @@ export function CodeEditor({
         endColumn: pos.column,
         quote: lineText,
       });
+    });
+
+    const typingEditor = ed as typeof ed & { onDidType(listener: (text: string) => void): { dispose(): void } };
+    typingEditor.onDidType((typed: string) => {
+      if (typed !== "}" || readOnlyRef.current) return;
+      const model = ed.getModel();
+      const pos = ed.getPosition();
+      if (!model || !pos || model.getLanguageId() !== LATEX_LANGUAGE) return;
+      const line = model.getLineContent(pos.lineNumber);
+      const before = line.slice(0, pos.column - 1);
+      const rest = line.slice(pos.column - 1);
+      const endLine = Math.min(model.getLineCount(), pos.lineNumber + 4);
+      const following = model.getValueInRange({
+        startLineNumber: pos.lineNumber,
+        startColumn: pos.column,
+        endLineNumber: endLine,
+        endColumn: model.getLineMaxColumn(endLine),
+      });
+      const insert = latexBeginEndInsert(before, rest, following);
+      if (!insert) return;
+      ed.executeEdits("latex-begin-end", [
+        {
+          range: {
+            startLineNumber: pos.lineNumber,
+            startColumn: pos.column,
+            endLineNumber: pos.lineNumber,
+            endColumn: pos.column,
+          },
+          text: insert,
+        },
+      ]);
+      ed.setPosition({ lineNumber: pos.lineNumber + 1, column: 2 });
     });
 
     ed.onMouseDown((e) => {
@@ -901,9 +934,9 @@ export function CodeEditor({
           fontLigatures: false,
           suggestOnTriggerCharacters: true,
           quickSuggestions: {
-            other: true,
-            comments: false,
-            strings: true,
+            other: "on",
+            comments: "off",
+            strings: "on",
           },
           suggest: {
             showWords: false,

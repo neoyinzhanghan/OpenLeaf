@@ -655,10 +655,11 @@ a {
 }
 
 .project-item {
+  position: relative;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 1rem;
+  gap: 0.75rem 1rem;
   padding: 1rem 1.15rem;
   background: var(--bg-elevated);
   border: 1px solid var(--line);
@@ -671,6 +672,10 @@ a {
     transform 160ms ease;
 }
 
+.project-item:has(.project-card-more[aria-expanded="true"]) {
+  z-index: 3;
+}
+
 .project-item:hover {
   border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
   background: color-mix(in srgb, var(--bg-elevated) 92%, var(--accent-soft));
@@ -681,6 +686,27 @@ a {
 .project-item:hover .project-item-go {
   color: var(--accent-strong);
   transform: translateX(2px);
+}
+
+.project-item-hit {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+}
+
+.project-item.is-renaming .project-item-hit {
+  pointer-events: none;
+}
+
+.project-item-main {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-width: 0;
+  pointer-events: none;
+  color: inherit;
+  text-decoration: none;
 }
 
 .project-item h2 {
@@ -696,8 +722,148 @@ a {
   font-size: 0.84rem;
 }
 
-.project-item-go {
+.project-name {
+  pointer-events: auto;
+  min-width: 0;
+}
+
+.project-name.is-toolbar {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 14rem;
+}
+
+.project-name-form {
+  display: inline-flex;
+  min-width: 0;
+}
+
+.project-name-btn {
+  appearance: none;
+  display: inline-block;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+  cursor: text;
+  border-radius: 2px;
+}
+
+.project-name-btn:hover {
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--ink-faint) 80%, transparent);
+}
+
+.project-name-btn:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 3px;
+}
+
+.project-name-input {
+  margin: 0;
+  padding: 0 0 0.05rem;
+  border: 0;
+  border-bottom: 1px solid var(--accent);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: inherit;
+  outline: none;
+  max-width: 100%;
+}
+
+.project-name-hint,
+.project-name-error {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--ink-faint);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.project-name.is-toolbar .project-name-btn,
+.project-name.is-toolbar .project-name-form,
+.project-name.is-toolbar .project-name-input {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.project-name.is-toolbar .project-name-input {
+  box-sizing: border-box;
+  padding: 0.12rem 0.35rem 0.14rem;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+}
+
+.project-name.is-toolbar .project-name-error {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  z-index: 6;
+  display: block;
+  width: max-content;
+  max-width: min(22rem, 70vw);
+  margin: 0;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--line));
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-sm);
+  white-space: normal;
+}
+
+.project-name-error {
+  color: var(--danger, #b42318);
+}
+
+.project-card-menu-wrap {
+  position: relative;
+  z-index: 2;
   flex: 0 0 auto;
+  pointer-events: auto;
+}
+
+.project-card-more {
+  color: var(--ink-faint);
+}
+
+.project-card-menu {
+  min-width: 12rem;
+  max-width: min(32rem, calc(100vw - 2rem));
+}
+
+.project-path {
+  display: block;
+  margin: 0.1rem 0.35rem 0.35rem;
+  padding: 0 0.25rem;
+  max-width: 28rem;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  font-weight: 500;
+  color: var(--ink-faint);
+  word-break: break-all;
+  user-select: text;
+  cursor: text;
+}
+
+.project-item-go {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
+  pointer-events: none;
   color: var(--ink-faint);
   font-size: 1.1rem;
   line-height: 1;
@@ -785,6 +951,12 @@ a {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.project-name-input.toolbar-project-name.is-editing {
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .toolbar-meta {
@@ -7353,6 +7525,11 @@ button.lib-badge:hover {
     flex: 1 1 auto;
     font-size: 16px;
     line-height: 44px;
+  }
+
+  .editor-page.is-narrow .project-name.is-toolbar,
+  .editor-page.is-narrow .project-name-input.toolbar-project-name.is-editing {
+    max-width: 7.5rem;
   }
 
   .history-drawer,

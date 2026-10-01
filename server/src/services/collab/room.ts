@@ -842,6 +842,14 @@ export class ProjectRoom {
 
 const rooms = new Map<string, ProjectRoom>();
 const roomCreating = new Map<string, Promise<ProjectRoom>>();
+const renamingIds = new Set<string>();
+
+/** Block new rooms while the project folder is moving to a new id. */
+export function setProjectRenaming(projectId: string, on: boolean): void {
+  if (on) renamingIds.add(projectId);
+  else renamingIds.delete(projectId);
+}
+
 let generationCounter = 0;
 
 /** Tips sealed during prune/delete — blocks new collab rooms and disk flushes. */
@@ -884,10 +892,28 @@ export function getProjectRooms(projectId: string): ProjectRoom[] {
   return [...rooms.values()].filter((r) => r.key.startsWith(prefix));
 }
 
+/** Flush every open editor for this project and drop the rooms before the folder moves. */
+export async function closeProjectRooms(projectId: string): Promise<void> {
+  const prefix = `${projectId}::`;
+  const pending = [...roomCreating.entries()].filter(([key]) => key.startsWith(prefix));
+  await Promise.all(pending.map(([, creating]) => creating.catch(() => undefined)));
+  for (const room of getProjectRooms(projectId)) {
+    roomCreating.delete(room.key);
+    try {
+      await room.destroy();
+    } finally {
+      if (rooms.get(room.key) === room) rooms.delete(room.key);
+    }
+  }
+}
+
 export async function getOrCreateRoom(
   projectId: string,
   branchId = "main",
 ): Promise<ProjectRoom> {
+  if (renamingIds.has(projectId)) {
+    throw Object.assign(new Error("This project is being renamed"), { status: 409 });
+  }
   const key = roomKey(projectId, branchId);
   if (isBranchRoomSealed(projectId, branchId)) {
     throw Object.assign(new Error("This tip was pruned and cannot be opened"), { status: 410 });
@@ -949,6 +975,11 @@ export async function getOrCreateRoom(
       if (raced && raced !== room) {
         await room.destroy({ skipFlush: true });
         return raced;
+      }
+      if (renamingIds.has(projectId)) {
+        await room.destroy();
+        roomCreating.delete(key);
+        throw Object.assign(new Error("This project is being renamed"), { status: 409 });
       }
       rooms.set(key, room);
       roomCreating.delete(key);
