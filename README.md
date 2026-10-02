@@ -9,10 +9,13 @@
 ```bash
 git clone https://github.com/neoyinzhanghan/OpenLeaf.git
 cd OpenLeaf
+node --version  # Requires Node 22.13+; latest Node 22 recommended
 npm ci
 node cli/bin/openleaf.js setup --non-interactive --display-name "Your Name"
 node cli/bin/openleaf.js open
 ```
+
+If your Node version is older, install the latest Node 22 release from [nodejs.org](https://nodejs.org/). If you already use `nvm`, run `nvm install 22` followed by `nvm use 22` in the same terminal, then check `node --version` again before running `npm ci`.
 
 `npm ci` installs the `openleaf` command on your PATH, next to Node. The same terminal may not see that directory yet, so the first setup uses `node cli/bin/openleaf.js`. A new terminal can run `openleaf help`. `openleaf install-cli --add-to-path` writes a PATH line into the shell startup file. `openleaf uninstall-cli` removes the command when it points at this checkout.
 
@@ -48,7 +51,7 @@ This computer does not ask you to sign in. A phone on the same Wi-Fi, and a publ
 
 ## Prerequisites
 
-Node.js 20 or newer, from [nodejs.org](https://nodejs.org/). Node 22 is what this release is tested with (see `.nvmrc`). Prefer `npm ci` over `npm install` so the lockfile is the install. Git is needed for per-project history. A TeX install must provide `pdflatex` and `bibtex`. `latexmk` is recommended. `latexdiff` is optional and is only used for track-changes PDFs.
+Node.js 22.13+ on the 22.x line, 23.4+ on the 23.x line, or 24+, from [nodejs.org](https://nodejs.org/). The citation library requires built-in `node:sqlite` without an experimental flag. Node 22 is what this release is tested with (see `.nvmrc`). Prefer `npm ci` over `npm install` so the lockfile is the install. Git is needed for per-project history. A TeX install must provide `pdflatex` and `bibtex`. `latexmk` is recommended. `latexdiff` is optional and is only used for track-changes PDFs.
 
 OpenLeaf looks for TeX in the usual install locations even when a GUI shell does not put them on `PATH` (MacTeX, Homebrew, MiKTeX, TeX Live, TinyTeX). Setup and `openleaf doctor` print the install step for the computer you are on. They do not run the installer for you.
 

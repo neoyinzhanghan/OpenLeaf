@@ -59,9 +59,9 @@ export function commandExists(bin: string): Promise<boolean> {
   });
 }
 
-export function nodeMajor(): number {
-  const match = /^v(\d+)/.exec(process.version);
-  return match ? Number(match[1]) : 0;
+export function nodeMajor(): boolean {
+  const [major, minor] = process.versions.node.split(".").map(Number);
+  return (major === 22 && minor >= 13) || (major === 23 && minor >= 4) || major >= 24;
 }
 
 export function platformLabel(): string {
