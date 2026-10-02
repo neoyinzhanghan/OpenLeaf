@@ -8,6 +8,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+const [nodeMajor, nodeMinor] = process.versions.node.split(".").map(Number);
+if (nodeMajor < 22 || (nodeMajor === 22 && nodeMinor < 13) || (nodeMajor === 23 && nodeMinor < 4)) {
+  console.error(`OpenLeaf requires Node.js 22.13 or newer with node:sqlite support; you are running ${process.version}.`);
+  console.error("Install the latest Node.js 22 release from https://nodejs.org/ or run: nvm install 22 && nvm use 22");
+  process.exit(1);
+}
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "../..");
 const main = path.join(here, "../src/main.ts");
