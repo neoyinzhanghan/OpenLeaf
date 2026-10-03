@@ -80,6 +80,78 @@ function worktreePath(projectId: string, branchId: string): string {
   return path.join(projectDir(projectId), ".openleaf", "worktrees", safe);
 }
 
+/** Not part of the manuscript. A fork must not copy the source project's git dir, timeline, or build output. */
+const WORKTREE_OVERLAY_SKIP = new Set([".git", ".openleaf", "out", "node_modules"]);
+
+function liveWorktreeRoot(projectId: string, branch: TimelineBranch): string | null {
+  if (branch.id === "main" || branch.sacred) {
+    const dir = projectDir(projectId);
+    return fsSync.existsSync(dir) ? dir : null;
+  }
+  const wt = worktreePath(projectId, branch.id);
+  return fsSync.existsSync(wt) ? wt : null;
+}
+
+/**
+ * Copy the source tip's working copy onto a freshly checked-out fork.
+ * Uncommitted and untracked manuscript files live only on that working copy;
+ * the git commit the fork starts from can still be the original template.
+ */
+async function overlayLiveWorktree(srcRoot: string, destRoot: string): Promise<void> {
+  if (path.resolve(srcRoot) === path.resolve(destRoot)) return;
+  const srcPaths = new Set<string>();
+
+  async function walk(rel: string): Promise<void> {
+    const entries = await fs.readdir(path.join(srcRoot, rel), { withFileTypes: true });
+    for (const ent of entries) {
+      if (!rel && WORKTREE_OVERLAY_SKIP.has(ent.name)) continue;
+      if (ent.isSymbolicLink()) continue;
+      const child = rel ? `${rel}/${ent.name}` : ent.name;
+      if (ent.isDirectory()) {
+        srcPaths.add(`${child}/`);
+        await walk(child);
+      } else if (ent.isFile()) {
+        srcPaths.add(child);
+      }
+    }
+  }
+  await walk("");
+
+  async function removeExtras(rel: string): Promise<void> {
+    let entries: fsSync.Dirent[];
+    try {
+      entries = await fs.readdir(path.join(destRoot, rel), { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const ent of entries) {
+      if (!rel && WORKTREE_OVERLAY_SKIP.has(ent.name)) continue;
+      const child = rel ? `${rel}/${ent.name}` : ent.name;
+      const destPath = path.join(destRoot, child);
+      if (ent.isDirectory() && !ent.isSymbolicLink()) {
+        if (!srcPaths.has(`${child}/`)) {
+          await fs.rm(destPath, { recursive: true, force: true });
+        } else {
+          await removeExtras(child);
+        }
+      } else if (!srcPaths.has(child)) {
+        await fs.rm(destPath, { force: true });
+      }
+    }
+  }
+  await removeExtras("");
+
+  for (const rel of srcPaths) {
+    if (rel.endsWith("/")) {
+      await fs.mkdir(path.join(destRoot, rel), { recursive: true });
+      continue;
+    }
+    const to = path.join(destRoot, rel);
+    await fs.mkdir(path.dirname(to), { recursive: true });
+    await fs.copyFile(path.join(srcRoot, rel), to);
+  }
+}
+
 function err(status: number, message: string): Error {
   return Object.assign(new Error(message), { status });
 }
@@ -676,7 +748,32 @@ export async function forkBranch(
   await saveTimeline(projectId, state);
 
   // Materialize worktree for the new branch
-  await ensureBranchRoot(projectId, branch.id);
+  const destRoot = await ensureBranchRoot(projectId, branch.id);
+
+  // A leaf forked from the live tip starts as the document on screen, not the last
+  // commit. That commit can still be the example template if the manuscript was never saved to git.
+  if (from.id === fromBranch.headNodeId) {
+    try {
+      const { flushProjectRoom } = await import("./collab/room.js");
+      await flushProjectRoom(projectId, { branchId: from.branchId, commit: false });
+    } catch {
+      /* no live room — the working copy on disk is the document */
+    }
+    const srcRoot = liveWorktreeRoot(projectId, fromBranch);
+    if (srcRoot) await overlayLiveWorktree(srcRoot, destRoot);
+    const dirty = await runGit(projectId, ["status", "--porcelain"], {
+      cwd: destRoot,
+      allowFailure: true,
+    });
+    if (dirty.stdout.trim()) {
+      const snapped = await intentionalCommit(projectId, {
+        branchId: branch.id,
+        message: "Start from the current working copy",
+      });
+      const saved = await loadTimeline(projectId);
+      return { branch: getBranch(saved, branch.id), timeline: snapped.timeline };
+    }
+  }
 
   return {
     branch,
