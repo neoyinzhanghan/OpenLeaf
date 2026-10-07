@@ -6,6 +6,7 @@ import { compileProjectAtRoot, texEnv, type CompileResult } from "./compiler.js"
 import { getProject, pdfPathAbs, projectDir, readProjectConfig } from "./projectFs.js";
 import { getProjectCommit, isGitEnabled, type GitCommitInfo } from "./projectGit.js";
 import { ensureSnapshotRoot } from "./timeline.js";
+import { detectMovedParagraphs, renderMovedParagraphs, TEXT_MOVED_PREAMBLE } from "./trackChangesParagraphs.js";
 import { alignMovedSections, SECTION_MOVED_PREAMBLE } from "./trackChangesSections.js";
 import { prepareTableBlocks, renderTableBlocks, unwrapHeadingTargets } from "./trackChangesTables.js";
 
@@ -13,7 +14,7 @@ const HASH_RE = /^[0-9a-f]{7,40}$/i;
 const LATEXDIFF_TIMEOUT_MS = 120_000;
 const MARKER = ".openleaf-track-changes-ok";
 /** Bump when marked-tex post-processing changes so old scratch PDFs are rebuilt. */
-const MARKER_VERSION = "4";
+const MARKER_VERSION = "5";
 
 /** Treat these as atomic replacements so cell-level latexdiff does not break compile. */
 export const LATEXDIFF_PICTURE_ENV =
@@ -482,24 +483,43 @@ async function generateTrackChangesUnlocked(
     ...markupArgs,
   ];
 
-  const build = async (cellTables: boolean): Promise<CompileResult> => {
+  /** Table cells and moved paragraphs get their own markup; `false` is the plain fallback. */
+  const build = async (enhanced: boolean): Promise<CompileResult> => {
     await fsPromises.rm(scratch, { recursive: true, force: true });
     await copySnapshotTree(newSnap, scratch);
 
     const workDir = path.join(scratch, ".openleaf", "latexdiff");
     await fsPromises.mkdir(workDir, { recursive: true });
-    const prepared = cellTables ? prepareTableBlocks(oldSrc, newSrc) : null;
+    const prepared = enhanced ? prepareTableBlocks(oldSrc, newSrc) : null;
     const aligned = alignMovedSections(prepared?.old ?? oldSrc, prepared?.new ?? newSrc);
     if (aligned.moved.length) {
       onChunk?.(`[openleaf] sections moved: ${aligned.moved.join("; ")}\n`);
     }
+    const moves = enhanced ? detectMovedParagraphs(aligned.old, aligned.new) : null;
+    if (moves?.blocks.size) {
+      onChunk?.(`[openleaf] paragraphs moved between sections: ${moves.blocks.size}\n`);
+    }
     const oldFlatPath = path.join(workDir, "old-flat.tex");
     const newFlatPath = path.join(workDir, "new-flat.tex");
-    await fsPromises.writeFile(oldFlatPath, aligned.old, "utf8");
-    await fsPromises.writeFile(newFlatPath, aligned.new, "utf8");
+    await fsPromises.writeFile(oldFlatPath, moves?.old ?? aligned.old, "utf8");
+    await fsPromises.writeFile(newFlatPath, moves?.new ?? aligned.new, "utf8");
+
+    let mini = 0;
+    const miniDiff = async (oldBody: string, newBody: string): Promise<string> => {
+      mini += 1;
+      const doc = (body: string) => `\\documentclass{article}\n\\begin{document}\n${body}\n\\end{document}\n`;
+      const a = path.join(workDir, `block-${mini}-old.tex`);
+      const b = path.join(workDir, `block-${mini}-new.tex`);
+      await fsPromises.writeFile(a, doc(oldBody), "utf8");
+      await fsPromises.writeFile(b, doc(newBody), "utf8");
+      const r = await runTool("latexdiff", [...ldArgs, a, b], workDir, LATEXDIFF_TIMEOUT_MS);
+      const m = /\\begin\{document\}\n?([\s\S]*?)\n?\\end\{document\}/.exec(r.stdout);
+      if (r.code !== 0 || !m) throw new Error("latexdiff failed on a table or moved-text block");
+      return m[1];
+    };
 
     onChunk?.(
-      cellTables
+      enhanced
         ? `[openleaf] latexdiff (${prepared!.blocks.size} table(s) diffed cell-by-cell)\n`
         : "[openleaf] latexdiff (tables as atomic replacements)\n",
     );
@@ -521,24 +541,15 @@ async function generateTrackChangesUnlocked(
     }
     let tex = annotated.tex;
     if (prepared) {
-      let mini = 0;
-      const rendered = await renderTableBlocks(tex, prepared.blocks, async (oldBody, newBody) => {
-        mini += 1;
-        const doc = (body: string) => `\\documentclass{article}\n\\begin{document}\n${body}\n\\end{document}\n`;
-        const a = path.join(workDir, `table-${mini}-old.tex`);
-        const b = path.join(workDir, `table-${mini}-new.tex`);
-        await fsPromises.writeFile(a, doc(oldBody), "utf8");
-        await fsPromises.writeFile(b, doc(newBody), "utf8");
-        const r = await runTool("latexdiff", [...ldArgs, a, b], workDir, LATEXDIFF_TIMEOUT_MS);
-        const m = /\\begin\{document\}\n?([\s\S]*?)\n?\\end\{document\}/.exec(r.stdout);
-        if (r.code !== 0 || !m) throw new Error("latexdiff failed on a table caption block");
-        return m[1];
-      });
+      const rendered = await renderTableBlocks(tex, prepared.blocks, miniDiff);
       tex = rendered.tex;
       const s = rendered.stats;
       onChunk?.(
         `[openleaf] tables: ${s.cellLevel} changed (cell-level), ${s.added} new, ${s.moved} moved, ${s.atomic} atomic\n`,
       );
+    }
+    if (moves?.blocks.size) {
+      tex = injectPreamble(await renderMovedParagraphs(tex, moves.blocks, miniDiff), TEXT_MOVED_PREAMBLE);
     }
     if (aligned.moved.length) tex = injectPreamble(tex, SECTION_MOVED_PREAMBLE);
     await fsPromises.writeFile(diffOut, tex, "utf8");
@@ -550,11 +561,13 @@ async function generateTrackChangesUnlocked(
   try {
     compiled = await build(true);
     if (!compiled.ok) {
-      onChunk?.("[openleaf] markup PDF did not compile with cell-level tables; retrying with atomic tables\n");
+      onChunk?.(
+        "[openleaf] markup PDF did not compile with cell-level tables and moved-text markup; retrying with plain latexdiff\n",
+      );
     }
   } catch (e) {
     if ((e as { status?: number }).status) throw e;
-    onChunk?.(`[openleaf] cell-level table markup failed (${(e as Error).message}); retrying with atomic tables\n`);
+    onChunk?.(`[openleaf] table / moved-text markup failed (${(e as Error).message}); retrying with plain latexdiff\n`);
   }
   if (!compiled?.ok) {
     tableMarkup = "atomic";

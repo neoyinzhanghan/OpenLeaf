@@ -29,6 +29,12 @@ const { diffTabular, findTableUnits, matchTableUnits, prepareTableBlocks, unwrap
   "./trackChangesTables.js"
 );
 const { alignMovedSections } = await import("./trackChangesSections.js");
+const { detectMovedParagraphs } = await import("./trackChangesParagraphs.js");
+
+const ETHICS =
+  "This study was conducted in accordance with the Declaration of Helsinki and was approved by the institutional review board with a waiver of consent.";
+const FILLER_A = "The first section describes the cohort and the slides that were scanned at the center over the whole period.";
+const FILLER_B = "The second section reports how the model was trained and evaluated against the held-out patient partitions.";
 
 const latexdiffInstalled = await hasLatexdiff();
 
@@ -338,6 +344,46 @@ A.
   });
 });
 
+describe("paragraph move detection", () => {
+  it("lifts a paragraph that moved to another section and leaves in-place edits alone", () => {
+    const oldTex = `\\begin{document}
+\\section{Intro}
+
+${FILLER_A}
+
+${ETHICS}
+
+\\section{Methods}
+
+${FILLER_B}
+\\end{document}`;
+    const newTex = `\\begin{document}
+\\section{Intro}
+
+${FILLER_A.replace("whole", "entire")}
+
+\\section{Methods}
+
+${FILLER_B}
+
+${ETHICS.replace("was approved", "was reviewed")}
+\\end{document}`;
+    const r = detectMovedParagraphs(oldTex, newTex);
+    assert.equal(r.blocks.size, 1);
+    assert.equal(r.blocks.get(1)!.old, ETHICS);
+    assert.doesNotMatch(r.old, /Declaration of Helsinki/);
+    assert.match(r.new, /\\OpenLeafMovedText\{1\}\n\\end\{document\}/);
+    assert.match(r.new, /entire period/);
+  });
+
+  it("ignores paragraphs inside tables, figures, and other environments", () => {
+    const cell = `\\begin{tabular}{p{5cm}}\nfirst\n\n${ETHICS}\n\\end{tabular}`;
+    const oldTex = `\\begin{document}\n${cell}\n\n${FILLER_A}\n\\end{document}`;
+    const newTex = `\\begin{document}\n${FILLER_A}\n\n${cell}\n\\end{document}`;
+    assert.equal(detectMovedParagraphs(oldTex, newTex).blocks.size, 0);
+  });
+});
+
 describe("generateTrackChanges", () => {
   after(() => {
     setLatexdiffAvailableForTests(null);
@@ -523,6 +569,24 @@ ${table("3712", "Slide counts for the externally prepared cohort.")}
     assert.match(marked, /\\DIFadd\{attention ?\}/);
     assert.doesNotMatch(marked, /\\DIFadd\{[^}]*Accuracy figures/);
     assert.doesNotMatch(marked, /\\DIFdel\{[^}]*Accuracy figures/);
+  });
+
+  it("shows a paragraph moved between sections once, with its own edits", { skip: !latexdiffInstalled }, async () => {
+    const doc = (intro: string[], methods: string[]) =>
+      `\\documentclass{article}\n\\begin{document}\n\\section{Introduction}\n\n${intro.join("\n\n")}\n\n\\section{Methods}\n\n${methods.join("\n\n")}\n\\end{document}\n`;
+    const { dir, oldHash, newHash } = await twoCommitProject(
+      "tc-para-move",
+      { "main.tex": doc([FILLER_A, ETHICS], [FILLER_B]) },
+      { "main.tex": doc([FILLER_A], [FILLER_B, ETHICS.replace("was approved", "was reviewed")]) },
+    );
+    const result = await generateTrackChanges("tc-para-move", oldHash, newHash);
+    assert.equal(result.ok, true, result.log.slice(-800));
+    const marked = fs.readFileSync(path.join(dir, result.scratchRelative, "main.tex"), "utf8");
+    assert.match(marked, /\\OpenLeafTextMoved\n/);
+    assert.match(marked, /\\DIFdel\{approved ?\}/);
+    assert.match(marked, /\\DIFadd\{reviewed ?\}/);
+    assert.equal((marked.match(/Declaration of Helsinki/g) ?? []).length, 1);
+    assert.doesNotMatch(marked, /\\DIF(?:add|del)\{[^}]*Declaration of Helsinki/);
   });
 
   it("falls back to atomic tables when cell markup does not compile", { skip: !latexdiffInstalled }, async () => {

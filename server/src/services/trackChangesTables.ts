@@ -125,7 +125,7 @@ export function skipSpace(s: string, i: number): number {
   return i;
 }
 
-type EnvSpan = {
+export type EnvSpan = {
   name: string;
   start: number;
   /** Just past `\begin{name}` */
@@ -136,7 +136,7 @@ type EnvSpan = {
   parent: number;
 };
 
-function scanEnvs(masked: string): EnvSpan[] {
+export function scanEnvs(masked: string): EnvSpan[] {
   const out: EnvSpan[] = [];
   const stack: number[] = [];
   const re = /\\(begin|end)\s*\{([^}]+)\}/g;
@@ -831,7 +831,7 @@ async function markUnit(
   return wrapper.slice(0, at) + tab + wrapper.slice(at + slot.length);
 }
 
-function uncommentedIndexOf(tex: string, needle: string): number[] {
+export function uncommentedIndexOf(tex: string, needle: string): number[] {
   const masked = maskComments(tex);
   const hits: number[] = [];
   for (let i = masked.indexOf(needle); i >= 0; i = masked.indexOf(needle, i + needle.length)) {
