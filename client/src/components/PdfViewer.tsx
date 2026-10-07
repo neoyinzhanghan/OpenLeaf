@@ -12,8 +12,29 @@ pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
 let sharedPdfWorker: pdfjs.PDFWorker | null = null;
 
 function getPdfWorker(): pdfjs.PDFWorker {
-  if (!sharedPdfWorker) sharedPdfWorker = new pdfjs.PDFWorker();
+  if (!sharedPdfWorker || sharedPdfWorker.destroyed) sharedPdfWorker = new pdfjs.PDFWorker();
   return sharedPdfWorker;
+}
+
+/**
+ * PDF.js destroys the worker attached to a loading task. This viewer reuses one
+ * worker, so detach it first. Otherwise the next document (leaving Differences,
+ * which swaps the markup PDF back to the normal one) calls sendWithPromise on null.
+ */
+function destroyLoadingTask(task: pdfjs.PDFDocumentLoadingTask | null | undefined): void {
+  if (!task) return;
+  (task as pdfjs.PDFDocumentLoadingTask & { _worker?: unknown })._worker = null;
+  void Promise.resolve(task.destroy()).catch(() => undefined);
+}
+
+function destroyPdfDocument(doc: PDFDocumentProxy | null | undefined): void {
+  if (!doc) return;
+  try {
+    (doc.loadingTask as pdfjs.PDFDocumentLoadingTask & { _worker?: unknown })._worker = null;
+  } catch {
+    /* loading task already released */
+  }
+  void doc.destroy().catch(() => undefined);
 }
 
 if (import.meta.hot) {
@@ -284,7 +305,7 @@ export function PdfViewer({
     docRef.current = null;
     pageSizesRef.current = [];
     clearPdfDom(containerRef.current);
-    prev?.destroy().catch(() => undefined);
+    destroyPdfDocument(prev);
   };
 
   useEffect(() => {
@@ -329,6 +350,7 @@ export function PdfViewer({
 
     let cancelled = false;
     let settledDoc: PDFDocumentProxy | null = null;
+    let handedOff = false;
     const loadingTask = pdfjs.getDocument({ url, worker: getPdfWorker() });
     const replacing = docRef.current != null;
     if (!replacing) setLoading(true);
@@ -340,7 +362,7 @@ export function PdfViewer({
         settledDoc = doc;
         if (cancelled) {
           settledDoc = null;
-          await doc.destroy().catch(() => undefined);
+          destroyPdfDocument(doc);
           return;
         }
         const sizes: Array<{ width: number; height: number }> = [];
@@ -355,19 +377,20 @@ export function PdfViewer({
         }
         if (cancelled) {
           settledDoc = null;
-          await doc.destroy().catch(() => undefined);
+          destroyPdfDocument(doc);
           return;
         }
         const previous = docRef.current;
         paintTokenRef.current += 1;
         docRef.current = doc;
         settledDoc = null; // ownership moved to docRef
+        handedOff = true;
         pageSizesRef.current = sizes;
         renderedScaleRef.current = scaleRef.current;
         setPagesReady(false);
         setPageCount(doc.numPages);
         setDocVersion((v) => v + 1);
-        if (previous && previous !== doc) previous.destroy().catch(() => undefined);
+        if (previous && previous !== doc) destroyPdfDocument(previous);
       } catch (err) {
         if (!cancelled && !docRef.current) {
           setError(
@@ -386,11 +409,14 @@ export function PdfViewer({
 
     return () => {
       cancelled = true;
-      void Promise.resolve(loadingTask.destroy()).catch(() => undefined);
-      // Leave the current document painted. The next load replaces it, and
-      // unmount drops it. Clearing here is what sent the preview back to page 1.
+      // A handed-off document stays on screen until the next file replaces it.
+      // Destroying its loading task here also kills the shared worker, and the
+      // following PDF then throws "sendWithPromise" of null.
+      if (handedOff) return;
+      paintTokenRef.current += 1;
+      destroyLoadingTask(loadingTask);
       if (settledDoc) {
-        settledDoc.destroy().catch(() => undefined);
+        destroyPdfDocument(settledDoc);
         settledDoc = null;
       }
     };
@@ -606,7 +632,9 @@ export function PdfViewer({
       return (
         name === "RenderingCancelledException" ||
         message.includes("Rendering cancelled") ||
-        message.includes("Cannot use the same canvas")
+        message.includes("Cannot use the same canvas") ||
+        message.includes("sendWithPromise") ||
+        message.includes("Worker was destroyed")
       );
     };
 
