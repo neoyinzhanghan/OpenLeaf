@@ -203,7 +203,7 @@ Use `--generate` to write a new password into `config/host-credentials.txt`, or 
 
 ### Version history
 
-Each project gets its own git repo under `projects/<id>/` (ignored by the OpenLeaf repo’s `.gitignore`). Explicit saves and file-tree mutations auto-commit; background collab flushes do not. Use **History** in the UI to browse and restore. Disable with `"git": { "enabled": false }` in config.
+Each project gets its own git repo under `projects/<id>/` (ignored by the OpenLeaf repo’s `.gitignore`). Explicit saves and file-tree mutations auto-commit; background collab flushes do not. Use **History** in the UI to browse and restore. Local git branches besides `main` (not OpenLeaf `ol/…` forks) show up as extra threads so you can explore their checkpoints (and PDFs) without merging them first. Disable with `"git": { "enabled": false }` in config.
 
 **Highlight additions** (PDF toolbar) diffs manuscript `.tex` files against a chosen snapshot and paints those added lines on the preview via SyncTeX — the same yellow you’d get from `\hl{...}`, without wrapping source. Toggle off for a clean view; the downloaded PDF is unchanged. Pick a baseline from the dropdown or **Highlight since** in History. `misc/` notes are ignored. Recompile after edits so SyncTeX boxes match the current PDF.
 

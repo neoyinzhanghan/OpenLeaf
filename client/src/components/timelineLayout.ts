@@ -109,6 +109,15 @@ export function aiBranchLabel(name: string): string {
   return name.startsWith("ai/") ? name.slice(3) : name;
 }
 
+export function isImportedGitBranch(
+  branch: { importedGit?: boolean; gitRef?: string | null; id?: string | null } | null | undefined,
+): boolean {
+  if (!branch) return false;
+  if (branch.importedGit) return true;
+  const ref = branch.gitRef?.trim() ?? "";
+  return Boolean(ref) && ref !== "main" && !ref.startsWith("ol/") && Boolean(branch.id?.startsWith("git-"));
+}
+
 export function formatWhen(iso: string): string {
   try {
     return new Date(iso).toLocaleString(undefined, {

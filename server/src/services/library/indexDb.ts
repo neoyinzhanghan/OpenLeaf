@@ -7,11 +7,46 @@
  * with "attempt to write a readonly database". Detect inode churn and reopen.
  */
 import fs from "node:fs";
-import { DatabaseSync } from "node:sqlite";
+import { createRequire } from "node:module";
 import type { PaperRecord } from "./types.js";
 import { cacheDir, indexDbPath } from "./paths.js";
 
-let db: DatabaseSync | null = null;
+type SqliteStatement = {
+  run(...args: unknown[]): unknown;
+  all(...args: unknown[]): unknown[];
+};
+
+type SqliteDatabase = {
+  exec(sql: string): void;
+  prepare(sql: string): SqliteStatement;
+  close(): void;
+};
+
+type SqliteModule = {
+  DatabaseSync: new (path: string) => SqliteDatabase;
+};
+
+/** Node 22.13+ ships this builtin. Node 20 does not, and a static import kills the process. */
+function loadSqlite(): SqliteModule | null {
+  try {
+    return createRequire(import.meta.url)("node:sqlite") as SqliteModule;
+  } catch {
+    return null;
+  }
+}
+
+const sqlite = loadSqlite();
+let warned = false;
+
+function warnMissingSqlite(): void {
+  if (warned) return;
+  warned = true;
+  console.warn(
+    "[openleaf] node:sqlite is not in this Node, so the citation search index is off. Node 22.13+ provides it.",
+  );
+}
+
+let db: SqliteDatabase | null = null;
 /** Inode of the file `db` was opened against; null when closed. */
 let dbInode: number | null = null;
 
@@ -28,7 +63,11 @@ function currentInode(path: string): number | null {
   }
 }
 
-function openDb(): DatabaseSync {
+function openDb(): SqliteDatabase | null {
+  if (!sqlite) {
+    warnMissingSqlite();
+    return null;
+  }
   const path = indexDbPath();
   const ino = currentInode(path);
   if (db && dbInode != null && ino === dbInode) return db;
@@ -37,7 +76,7 @@ function openDb(): DatabaseSync {
   if (db) closeIndexDb();
 
   fs.mkdirSync(cacheDir(), { recursive: true });
-  db = new DatabaseSync(path);
+  db = new sqlite.DatabaseSync(path);
   dbInode = currentInode(path);
   db.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS papers_fts USING fts5(
@@ -67,13 +106,17 @@ export function closeIndexDb(): void {
   }
 }
 
-function withDb<T>(fn: (database: DatabaseSync) => T): T {
+function withDb<T>(fn: (database: SqliteDatabase) => T): T | undefined {
+  const database = openDb();
+  if (!database) return undefined;
   try {
-    return fn(openDb());
+    return fn(database);
   } catch (err) {
     if (!isSqliteReadonlyError(err)) throw err;
     closeIndexDb();
-    return fn(openDb());
+    const reopened = openDb();
+    if (!reopened) return undefined;
+    return fn(reopened);
   }
 }
 
@@ -118,6 +161,7 @@ export function rebuildIndex(records: PaperRecord[]): void {
   const p = indexDbPath();
   if (fs.existsSync(p)) fs.unlinkSync(p);
   const database = openDb();
+  if (!database) return;
   const insert = database.prepare(
     `INSERT INTO papers_fts (citekey, title, authors, abstract, venue, tags, notes, year)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -160,16 +204,22 @@ export function searchIndex(query: string, limit = 50): string[] | null {
     .map((t) => t.replace(/["']/g, ""))
     .filter(Boolean);
   if (tokens.length === 0) return null;
+  if (!sqlite) {
+    warnMissingSqlite();
+    return null;
+  }
   const ftsQuery = tokens.map((t) => `"${t}"*`).join(" ");
   try {
-    return withDb((database) => {
-      const rows = database
-        .prepare(
-          `SELECT citekey FROM papers_fts WHERE papers_fts MATCH ? ORDER BY rank LIMIT ?`,
-        )
-        .all(ftsQuery, limit) as Array<{ citekey: string }>;
-      return rows.map((r) => r.citekey);
-    });
+    return (
+      withDb((database) => {
+        const rows = database
+          .prepare(
+            `SELECT citekey FROM papers_fts WHERE papers_fts MATCH ? ORDER BY rank LIMIT ?`,
+          )
+          .all(ftsQuery, limit) as Array<{ citekey: string }>;
+        return rows.map((r) => r.citekey);
+      }) ?? null
+    );
   } catch {
     // Malformed FTS query → treat as no matches rather than crashing.
     return [];

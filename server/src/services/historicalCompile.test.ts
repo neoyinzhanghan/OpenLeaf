@@ -107,4 +107,23 @@ describe("historical checkpoint compile", () => {
     assert.ok(fs.existsSync(path.join(dir, ".openleaf", "out", "main.pdf")));
     assert.notEqual(newHash, oldHash);
   });
+
+  it(
+    "live tip compile picks up uncommitted working-tree edits",
+    { skip: pdflatexInstalled ? false : "pdflatex is not installed" },
+    async () => {
+    const committedPdf = fs.readFileSync(path.join(dir, ".openleaf", "out", "main.pdf"));
+    fs.writeFileSync(
+      path.join(dir, "main.tex"),
+      "\\documentclass{article}\\begin{document}UNCOMMITTEDMARKERQZ\\end{document}\n",
+      "utf8",
+    );
+    const result = await compileProject(id, undefined, { branchId: "main" });
+    assert.equal(result.ok, true, result.log.slice(-500));
+    const livePdf = fs.readFileSync(path.join(dir, ".openleaf", "out", "main.pdf"));
+    assert.notDeepEqual(livePdf, committedPdf);
+    const headTex = await git(dir, ["show", "HEAD:main.tex"]);
+    assert.match(headTex, /NEW/);
+    assert.match(fs.readFileSync(path.join(dir, "main.tex"), "utf8"), /UNCOMMITTEDMARKERQZ/);
+  });
 });

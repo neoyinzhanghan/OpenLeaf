@@ -4650,6 +4650,29 @@ button.lib-badge:hover {
     min-width: 44px;
   }
 }
+.tl-git-explore {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0 0.75rem 0.7rem;
+  padding: 0.35rem 0.55rem;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg-elevated);
+  font-size: 0.8rem;
+}
+.tl-git-explore-label {
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+.tl-git-explore select {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
 
 .host-gateway-url-row {
   display: flex;
