@@ -6,13 +6,14 @@ import { compileProjectAtRoot, texEnv, type CompileResult } from "./compiler.js"
 import { getProject, pdfPathAbs, projectDir, readProjectConfig } from "./projectFs.js";
 import { getProjectCommit, isGitEnabled, type GitCommitInfo } from "./projectGit.js";
 import { ensureSnapshotRoot } from "./timeline.js";
+import { alignMovedSections, SECTION_MOVED_PREAMBLE } from "./trackChangesSections.js";
 import { prepareTableBlocks, renderTableBlocks, unwrapHeadingTargets } from "./trackChangesTables.js";
 
 const HASH_RE = /^[0-9a-f]{7,40}$/i;
 const LATEXDIFF_TIMEOUT_MS = 120_000;
 const MARKER = ".openleaf-track-changes-ok";
 /** Bump when marked-tex post-processing changes so old scratch PDFs are rebuilt. */
-const MARKER_VERSION = "3";
+const MARKER_VERSION = "4";
 
 /** Treat these as atomic replacements so cell-level latexdiff does not break compile. */
 export const LATEXDIFF_PICTURE_ENV =
@@ -29,8 +30,9 @@ const DEL_BLOCK_RE = /\\DIFdelbegin[\s\S]*?\\DIFdelend/g;
 
 export type TableAnnotations = { changed: number; removed: number };
 
-function injectTableNotePreamble(tex: string, snippet: string): string {
-  if (tex.includes("%DIF OPENLEAF TABLE NOTES")) return tex;
+/** `snippet`'s first line is its marker; it is injected once before \begin{document}. */
+function injectPreamble(tex: string, snippet: string): string {
+  if (tex.includes(snippet.split("\n")[0])) return tex;
   const begin = tex.indexOf("\\begin{document}");
   if (begin < 0) return snippet + tex;
   return `${tex.slice(0, begin)}${snippet}${tex.slice(begin)}`;
@@ -70,7 +72,7 @@ export function annotateReplacedTables(tex: string): { tex: string; tables: Tabl
         "\\providecommand{\\OpenLeafTableRemoved}{\\par\\noindent{\\protect\\color{red}\\small\\itshape Table removed.}\\par}",
       );
     }
-    marked = injectTableNotePreamble(marked, `${macros.join("\n")}\n`);
+    marked = injectPreamble(marked, `${macros.join("\n")}\n`);
   }
   return { tex: marked, tables: { changed, removed } };
 }
@@ -487,10 +489,14 @@ async function generateTrackChangesUnlocked(
     const workDir = path.join(scratch, ".openleaf", "latexdiff");
     await fsPromises.mkdir(workDir, { recursive: true });
     const prepared = cellTables ? prepareTableBlocks(oldSrc, newSrc) : null;
+    const aligned = alignMovedSections(prepared?.old ?? oldSrc, prepared?.new ?? newSrc);
+    if (aligned.moved.length) {
+      onChunk?.(`[openleaf] sections moved: ${aligned.moved.join("; ")}\n`);
+    }
     const oldFlatPath = path.join(workDir, "old-flat.tex");
     const newFlatPath = path.join(workDir, "new-flat.tex");
-    await fsPromises.writeFile(oldFlatPath, prepared?.old ?? oldSrc, "utf8");
-    await fsPromises.writeFile(newFlatPath, prepared?.new ?? newSrc, "utf8");
+    await fsPromises.writeFile(oldFlatPath, aligned.old, "utf8");
+    await fsPromises.writeFile(newFlatPath, aligned.new, "utf8");
 
     onChunk?.(
       cellTables
@@ -534,6 +540,7 @@ async function generateTrackChangesUnlocked(
         `[openleaf] tables: ${s.cellLevel} changed (cell-level), ${s.added} new, ${s.moved} moved, ${s.atomic} atomic\n`,
       );
     }
+    if (aligned.moved.length) tex = injectPreamble(tex, SECTION_MOVED_PREAMBLE);
     await fsPromises.writeFile(diffOut, tex, "utf8");
     return compileProjectAtRoot(id, onChunk, scratch);
   };

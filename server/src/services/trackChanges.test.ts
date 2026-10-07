@@ -28,6 +28,7 @@ const { ensureSnapshotRoot, snapshotRootIfPresent } = await import("./timeline.j
 const { diffTabular, findTableUnits, matchTableUnits, prepareTableBlocks, unwrapHeadingTargets } = await import(
   "./trackChangesTables.js"
 );
+const { alignMovedSections } = await import("./trackChangesSections.js");
 
 const latexdiffInstalled = await hasLatexdiff();
 
@@ -264,6 +265,79 @@ a & ${cell} \\\\
   });
 });
 
+describe("section move alignment", () => {
+  const order = (tex: string) => [...tex.matchAll(/\\(?:sub)?section\{([^}]*)\}/g)].map((m) => m[1]);
+
+  it("reorders the old body into the new section order and flags only the moved section", () => {
+    const oldTex = `\\begin{document}
+Title page.
+\\section{Introduction}\\label{intro}
+Intro text.
+\\section{Methods}\\label{methods}
+Methods text.
+\\section{Ethics statement}
+Ethics text.
+\\section{Results}\\label{results}
+Results text.
+\\section{Discussion}
+Discussion text.
+\\bibliography{refs}
+\\end{document}`;
+    const newTex = `\\begin{document}
+Title page.
+\\section{Introduction}\\label{intro}
+Intro text.
+\\section{Results}\\label{results}
+Results text, revised.
+\\section{Discussion}
+Discussion text.
+\\section{Methods}\\label{methods}
+Methods text.
+\\bibliography{refs}
+\\end{document}`;
+    const r = alignMovedSections(oldTex, newTex);
+    assert.deepEqual(r.moved, ["Methods"]);
+    assert.deepEqual(order(r.old), ["Introduction", "Results", "Discussion", "Methods", "Ethics statement"]);
+    assert.deepEqual(order(r.new), order(newTex));
+    assert.match(r.old, /\\section\{Methods\}\\label\{methods\}\n\\OpenLeafSectionMoved\n/);
+    assert.match(r.new, /\\section\{Methods\}\\label\{methods\}\n\\OpenLeafSectionMoved\n/);
+    assert.equal((r.new.match(/OpenLeafSectionMoved/g) ?? []).length, 1);
+    assert.match(r.old, /Title page\.\n\\section\{Introduction\}/);
+    assert.match(r.old, /\\bibliography\{refs\}\n\\end\{document\}$/);
+  });
+
+  it("matches renamed headings by title similarity and aligns subsections within a section", () => {
+    const oldTex = `\\begin{document}
+\\section{Results}
+\\subsection{Classification on internal and external test sets}
+A.
+\\subsection{Attention maps}
+B.
+\\end{document}`;
+    const newTex = `\\begin{document}
+\\section{Results}
+\\subsection{Attention maps}
+B.
+\\subsection{Classification on internal and externally prepared test sets}
+A.
+\\end{document}`;
+    const r = alignMovedSections(oldTex, newTex);
+    assert.equal(r.moved.length, 1);
+    assert.deepEqual(order(r.old), [
+      "Results",
+      "Attention maps",
+      "Classification on internal and external test sets",
+    ]);
+  });
+
+  it("leaves documents without moves untouched", () => {
+    const tex = "\\begin{document}\n\\section{A}\nx\n\\section{B}\ny\n\\end{document}";
+    const r = alignMovedSections(tex, tex.replace("y", "z"));
+    assert.equal(r.old, tex);
+    assert.deepEqual(r.moved, []);
+  });
+});
+
 describe("generateTrackChanges", () => {
   after(() => {
     setLatexdiffAvailableForTests(null);
@@ -428,6 +502,27 @@ ${table("3712", "Slide counts for the externally prepared cohort.")}
     assert.match(marked, /\\OpenLeafTableMoved/);
     assert.match(marked, /\\subsection\{[^}]*\\DIFadd\{/);
     assert.equal((marked.match(/^\\begin\{tabular\}/gm) ?? []).length, 1);
+  });
+
+  it("diffs a moved section against its old text instead of deleting and re-adding it", { skip: !latexdiffInstalled }, async () => {
+    const doc = (sections: string[]) =>
+      `\\documentclass{article}\n\\begin{document}\n${sections.join("\n")}\n\\end{document}\n`;
+    const intro = "\\section{Introduction}\nOpening words stay put.";
+    const methods = (w: string) => `\\section{Methods}\nWe trained the ${w} model on slides.`;
+    const results = "\\section{Results}\nAccuracy figures were reported here.";
+    const { dir, oldHash, newHash } = await twoCommitProject(
+      "tc-section-move",
+      { "main.tex": doc([intro, methods("baseline"), results]) },
+      { "main.tex": doc([intro, results, methods("attention")]) },
+    );
+    const result = await generateTrackChanges("tc-section-move", oldHash, newHash);
+    assert.equal(result.ok, true, result.log.slice(-800));
+    const marked = fs.readFileSync(path.join(dir, result.scratchRelative, "main.tex"), "utf8");
+    assert.match(marked, /\\OpenLeafSectionMoved/);
+    assert.match(marked, /We trained the \\DIFdelbegin \\DIFdel\{baseline ?\}/);
+    assert.match(marked, /\\DIFadd\{attention ?\}/);
+    assert.doesNotMatch(marked, /\\DIFadd\{[^}]*Accuracy figures/);
+    assert.doesNotMatch(marked, /\\DIFdel\{[^}]*Accuracy figures/);
   });
 
   it("falls back to atomic tables when cell markup does not compile", { skip: !latexdiffInstalled }, async () => {

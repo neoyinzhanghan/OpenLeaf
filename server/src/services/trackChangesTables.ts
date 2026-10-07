@@ -90,7 +90,7 @@ function stripComments(tex: string): string {
 }
 
 /** Index just past the group that opens at `open` (`{`, `[` or `(`), or -1. */
-function groupEnd(s: string, open: number): number {
+export function groupEnd(s: string, open: number): number {
   const o = s[open];
   const c = o === "{" ? "}" : o === "[" ? "]" : o === "(" ? ")" : "";
   if (!c) return -1;
@@ -120,7 +120,7 @@ function groupEnd(s: string, open: number): number {
   return -1;
 }
 
-function skipSpace(s: string, i: number): number {
+export function skipSpace(s: string, i: number): number {
   while (i < s.length && /\s/.test(s[i])) i += 1;
   return i;
 }
@@ -193,7 +193,7 @@ function captionText(text: string): string | null {
   return text.slice(open + 1, end - 1);
 }
 
-function wordSet(s: string): Set<string> {
+export function wordSet(s: string): Set<string> {
   const words = s
     .replace(/\\[A-Za-z@]+\*?/g, " ")
     .replace(/[{}$&\\[\]%~^_]/g, " ")
@@ -203,7 +203,7 @@ function wordSet(s: string): Set<string> {
   return new Set(words);
 }
 
-function jaccard(a: Set<string>, b: Set<string>): number {
+export function jaccard(a: Set<string>, b: Set<string>): number {
   if (!a.size && !b.size) return 1;
   let inter = 0;
   for (const x of a) if (b.has(x)) inter += 1;
