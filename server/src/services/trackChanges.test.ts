@@ -25,6 +25,9 @@ const {
   setLatexdiffAvailableForTests,
 } = await import("./trackChanges.js");
 const { ensureSnapshotRoot, snapshotRootIfPresent } = await import("./timeline.js");
+const { diffTabular, findTableUnits, matchTableUnits, prepareTableBlocks, unwrapHeadingTargets } = await import(
+  "./trackChangesTables.js"
+);
 
 const latexdiffInstalled = await hasLatexdiff();
 
@@ -175,6 +178,92 @@ more prose
   });
 });
 
+describe("heading and table markup helpers", () => {
+  it("unwraps pandoc hypertarget heading wrappers so latexdiff sees the heading", () => {
+    const tex = `\\begin{document}
+\\hypertarget{methods}{%
+\\section{Methods}\\label{methods}}
+
+\\hypertarget{anchor}{Not a heading}
+\\end{document}`;
+    const out = unwrapHeadingTargets(tex);
+    assert.match(out, /^\\section\{Methods\}\\label\{methods\}$/m);
+    assert.doesNotMatch(out, /hypertarget\{methods\}/);
+    assert.match(out, /\\hypertarget\{anchor\}\{Not a heading\}/);
+  });
+
+  it("marks only the changed cells of a tabular", () => {
+    const oldTab = `\\begin{tabular}{lrr}
+\\toprule
+Name & A & B \\\\
+\\midrule
+WSIs & 3711 & 10 \\\\
+Kept & 1 & 2 \\\\
+Gone & 5 & 6 \\\\
+\\bottomrule
+\\end{tabular}`;
+    const newTab = `\\begin{tabular}{lrr}
+\\toprule
+Name & A & B \\\\
+\\midrule
+WSIs & 3712 & 10 \\\\
+Kept & 1 & 2 \\\\
+Fresh & 7 & 8 \\\\
+\\bottomrule
+\\end{tabular}`;
+    const out = diffTabular(oldTab, newTab);
+    assert.ok(out);
+    assert.match(out, /WSIs & \s*\\DIFdel\{3711\} \\DIFadd\{3712\}\s*& 10/);
+    assert.match(out, /^Kept & 1 & 2 \\\\$/m);
+    assert.match(out, /\\DIFdel\{Gone\}/);
+    assert.match(out, /\\DIFadd\{Fresh\}/);
+    assert.match(out, /\\toprule[\s\S]*\\midrule[\s\S]*\\bottomrule/);
+    assert.equal((out.match(/\\midrule/g) ?? []).length, 1);
+  });
+
+  it("keeps \\multicolumn structure and uses color-only markup for \\shortstack", () => {
+    const oldTab = "\\begin{tabular}{lrr}\n & \\multicolumn{2}{c}{\\textbf{External Test}} \\\\\n\\end{tabular}";
+    const newTab =
+      "\\begin{tabular}{lrr}\n & \\multicolumn{2}{c}{\\textbf{\\shortstack{Externally\\\\prepared}}} \\\\\n\\end{tabular}";
+    const out = diffTabular(oldTab, newTab);
+    assert.ok(out);
+    assert.match(out, /\\multicolumn\{2\}\{c\}\{\\DIFdel\{\\textbf\{External Test\}\} \\OpenLeafCellAdd\{\\textbf\{\\shortstack/);
+  });
+
+  it("returns null when the column count changes", () => {
+    assert.equal(
+      diffTabular("\\begin{tabular}{ll}\na & b \\\\\n\\end{tabular}", "\\begin{tabular}{lll}\na & b & c \\\\\n\\end{tabular}"),
+      null,
+    );
+  });
+
+  it("pairs a moved table by label and widens the unit to its caption wrapper", () => {
+    const table = (cell: string) => `\\begin{center}
+\\begin{minipage}{\\textwidth}
+\\captionof{table}{Cohort summary.}
+\\label{tab:cohort}
+\\begin{tabular}{ll}
+a & ${cell} \\\\
+\\end{tabular}
+\\end{minipage}
+\\end{center}`;
+    const oldTex = `\\begin{document}\nIntro.\n${table("1")}\nMethods.\n\\end{document}`;
+    const newTex = `\\begin{document}\nIntro.\nMethods.\n${table("2")}\n\\end{document}`;
+    const oldUnits = findTableUnits(oldTex);
+    const newUnits = findTableUnits(newTex);
+    assert.equal(oldUnits.length, 1);
+    assert.match(oldUnits[0].text, /^\\begin\{center\}[\s\S]*\\end\{center\}$/);
+    assert.equal(oldUnits[0].label, "tab:cohort");
+    const pairs = matchTableUnits(oldUnits, newUnits);
+    assert.equal(pairs[0].old, oldUnits[0]);
+
+    const prepared = prepareTableBlocks(oldTex, newTex);
+    assert.match(prepared.old, /Intro\.\n\\OpenLeafTableBlock\{1\}\nMethods\./);
+    assert.match(prepared.new, /Methods\.\n\\OpenLeafTableBlock\{1\}\n/);
+    assert.doesNotMatch(prepared.new, /tabular/);
+  });
+});
+
 describe("generateTrackChanges", () => {
   after(() => {
     setLatexdiffAvailableForTests(null);
@@ -291,7 +380,72 @@ describe("generateTrackChanges", () => {
     assert.match(marked, /\\DIF(add|addbegin|del|delbegin)/i);
   });
 
-  it("still compiles when a tabular cell changes (atomic table replace)", { skip: !latexdiffInstalled }, async () => {
+  it("marks headings, moved tables, and changed cells", { skip: !latexdiffInstalled }, async () => {
+    const table = (cell: string, caption: string) => `\\begin{table}[h]
+\\caption{${caption}}
+\\label{tab:counts}
+\\begin{tabular}{lr}
+\\hline
+Slides & ${cell} \\\\
+\\hline
+\\end{tabular}
+\\end{table}`;
+    const oldTex = `\\documentclass{article}
+\\usepackage{hyperref}
+\\begin{document}
+\\hypertarget{intro}{%
+\\section{Introduction}\\label{intro}}
+Some intro.
+${table("3711", "Slide counts for the external cohort.")}
+\\hypertarget{design}{%
+\\subsubsection{Study design}\\label{design}}
+Design text.
+\\end{document}
+`;
+    const newTex = `\\documentclass{article}
+\\usepackage{hyperref}
+\\begin{document}
+\\hypertarget{intro}{%
+\\section{Introduction}\\label{intro}}
+Some intro.
+\\hypertarget{design}{%
+\\subsection{Study design and data}\\label{design}}
+Design text.
+${table("3712", "Slide counts for the externally prepared cohort.")}
+\\end{document}
+`;
+    const { dir, oldHash, newHash } = await twoCommitProject(
+      "tc-table-move",
+      { "main.tex": oldTex },
+      { "main.tex": newTex },
+    );
+    const result = await generateTrackChanges("tc-table-move", oldHash, newHash);
+    assert.equal(result.ok, true, result.log.slice(-800));
+    assert.equal(result.tableMarkup, "cells");
+    const marked = fs.readFileSync(path.join(dir, result.scratchRelative, "main.tex"), "utf8");
+    assert.match(marked, /\\DIFdel\{3711\} \\DIFadd\{3712\}/);
+    assert.match(marked, /\\DIFadd(?:FL)?\{externally prepared/);
+    assert.match(marked, /\\OpenLeafTableMoved/);
+    assert.match(marked, /\\subsection\{[^}]*\\DIFadd\{/);
+    assert.equal((marked.match(/^\\begin\{tabular\}/gm) ?? []).length, 1);
+  });
+
+  it("falls back to atomic tables when cell markup does not compile", { skip: !latexdiffInstalled }, async () => {
+    const doc = (cell: string) =>
+      `\\documentclass{article}\n\\begin{document}\n\\begin{tabular}{ll}\na & ${cell} \\\\\n\\end{tabular}\n\\end{document}\n`;
+    const { dir, oldHash, newHash } = await twoCommitProject(
+      "tc-table-fallback",
+      { "main.tex": doc("plain") },
+      { "main.tex": doc("\\verb|x_y|") },
+    );
+    const result = await generateTrackChanges("tc-table-fallback", oldHash, newHash);
+    assert.equal(result.ok, true, result.log.slice(-800));
+    assert.equal(result.tableMarkup, "atomic");
+    const marked = fs.readFileSync(path.join(dir, result.scratchRelative, "main.tex"), "utf8");
+    assert.match(marked, /Table changed/);
+  });
+
+  it("still compiles when a tabular cell changes", { skip: !latexdiffInstalled }, async () => {
     const oldTex = `\\documentclass{article}
 \\usepackage{array}
 \\begin{document}
@@ -316,8 +470,9 @@ a & 2 \\\\
     const result = await generateTrackChanges("tc-table", oldHash, newHash);
     assert.equal(result.ok, true, result.log.slice(-800));
     assert.ok(result.pdfRelative);
+    assert.equal(result.tableMarkup, "cells");
     const marked = fs.readFileSync(path.join(dir, result.scratchRelative, "main.tex"), "utf8");
-    assert.match(marked, /\\OpenLeafTableChanged/);
-    assert.match(marked, /Table changed/);
+    assert.match(marked, /a & \s*\\DIFdel\{1\} \\DIFadd\{2\}/);
+    assert.doesNotMatch(marked, /\\OpenLeafTableMoved\n/);
   });
 });
