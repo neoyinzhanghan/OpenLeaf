@@ -32,6 +32,8 @@ export type ReviewCtx = {
   slug: string;
   branchName: string;
   parentBranchName: string;
+  /** Who is accepting or rejecting. Omitted callers are the local host. */
+  actor?: import("./fileAccess.js").FileAccessActor;
 };
 
 type ReviewState = {
@@ -179,6 +181,8 @@ async function readCurrent(ctx: ReviewCtx, rel: string): Promise<string | null> 
 }
 
 async function writeCurrent(ctx: ReviewCtx, rel: string, content: string | null): Promise<void> {
+  const { assertCanWrite } = await import("./fileAccess.js");
+  await assertCanWrite(ctx.projectId, rel, ctx.actor ?? "local");
   const root = await sandboxRoot(ctx);
   if (content == null) {
     try {

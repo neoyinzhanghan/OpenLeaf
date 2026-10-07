@@ -77,6 +77,23 @@ describe("host metadata path guards", () => {
     assert.equal(isGuestForbiddenWritePath("Comments.JSON"), true);
     assert.equal(isGuestForbiddenWritePath("main.tex"), false);
   });
+
+  it("blocks latexmk rc files and git metadata, including rename targets", () => {
+    for (const rel of ["latexmkrc", ".latexmkrc", "notes/local.latexmkrc", ".git/config", ".git/hooks/pre-commit", ".GIT/config"]) {
+      assert.equal(isGuestForbiddenWritePath(rel), true, rel);
+    }
+    const prefix = `/api/projects/${encodeURIComponent(session().projectId)}`;
+    const renamed = guestRouteDenial(
+      req(`${prefix}/fs/rename`, "POST", { from: "main.tex", to: "latexmkrc" }),
+      session(),
+    );
+    assert.equal(renamed?.status, 403);
+  });
+
+  it("also blocks citations.json for guest file/fs writes (mirrors comments.json)", () => {
+    assert.equal(isGuestForbiddenWritePath("citations.json"), true);
+    assert.equal(isGuestForbiddenWritePath("Citations.JSON"), true);
+  });
 });
 
 describe("guestRouteDenial", () => {
@@ -93,6 +110,11 @@ describe("guestRouteDenial", () => {
 
   it("blocks guest writes to comments.json via the file API", () => {
     const denial = guestRouteDenial(req(`${prefix}/files/comments.json`, "PUT"), s);
+    assert.equal(denial?.status, 403);
+  });
+
+  it("blocks guest writes to citations.json via the file API", () => {
+    const denial = guestRouteDenial(req(`${prefix}/files/citations.json`, "PUT"), s);
     assert.equal(denial?.status, 403);
   });
 

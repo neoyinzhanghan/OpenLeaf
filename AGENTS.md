@@ -23,6 +23,19 @@ For human setup and usage, see [README.md](README.md).
 | `projects/<id>/misc/` | Notes, drafts, and other non-compiled material |
 | `projects/<id>/openleaf.json` | `mainFile`, `engine`, `identities[]` |
 | `projects/<id>/comments.json` | Review threads (author, file:line, replies); git-tracked |
+| `library/` | Personal citation library (sibling of `projects/`; gitignored) |
+| `library/papers/<citekey>/record.json` | Canonical paper metadata (source of truth) |
+| `library/papers/<citekey>/annotations.json` | PDF annotations: highlight / underline / area / pin / note (optional) |
+| `library/papers/<citekey>/attachment.pdf` | Optional full-text PDF |
+| `library/collections.json` | Named collections |
+| `library/.cache/index.sqlite` | Derived FTS5 index — rebuild from `record.json`, never authoritative |
+| `projects/<id>/citations.json` | Claim-support instances (file:line); git-tracked |
+| `server/src/services/library/` | Library service layer (REST + MCP share this) |
+| `POST /api/library/mcp` | Host-only MCP (8 tools); do not wire into Share without risk-ack |
+| Library paper shares | Host `GET/POST/DELETE /api/library-share` + `POST …/import`; guests `/api/lib-share/:token` (join/notes/bundle/pdf). Invite path `/lib-share/:token` on host gateway — token is the credential |
+| Library AI links | Host `GET/POST/DELETE /api/library-ai` (riskAck required). AI Bearer tools + MCP at `/api/library-ai/v1/*`; briefing `/library-ai/:token`. Adds are verify-first then **queued** for host Accept/Reject (`GET/POST /api/library-ai/review`). |
+| Library PDFs | Local `papers/<citekey>/attachment.pdf`. List shows PDF / PDF↓ badges. `GET …/pdf-source`, `POST …/fetch-pdf` downloads arXiv or Unpaywall OA PDF into the record. |
+| Library integrity | A paper is `verified` when it has a public http(s) URL (DOI/arXiv preferred). Unresolved only if no link — then `integrity.reason` explains why. Hallucinated titles with no source/link are removed (`scripts/recheck-unresolved-papers.ts`). Library AI adds are stricter: Scholar-only / bare URLs are rejected. |
 
 ## Conventions
 
@@ -38,7 +51,7 @@ For human setup and usage, see [README.md](README.md).
 ## Config knobs
 
 - File: `config/default.json` / `config/local.json`
-- Env: `OPENLEAF_HOST`, `OPENLEAF_PORT`, `OPENLEAF_CLIENT_PORT` (Vite UI in dev), `OPENLEAF_PROJECTS_ROOT` (relative or absolute), `OPENLEAF_ENGINE`
+- Env: `OPENLEAF_HOST`, `OPENLEAF_PORT`, `OPENLEAF_CLIENT_PORT` (Vite UI in dev), `OPENLEAF_PROJECTS_ROOT` (relative or absolute), `OPENLEAF_LIBRARY_ROOT` (citation library; default `./library`), `OPENLEAF_ENGINE`, `OPENLEAF_DISPLAY_NAME`, `OPENLEAF_CONFIG_DIR`, `OPENLEAF_REPO_ROOT`, `OPENLEAF_HOST_GATEWAY` (`0` keeps the public tunnel off)
 - HTTP: `GET/PATCH /api/config`
 - Dev proxy: `client/vite.config.ts` reads `OPENLEAF_PORT` / `OPENLEAF_CLIENT_PORT` (no manual proxy edit needed)
 - Identities (collab): **per project** in `projects/<id>/openleaf.json` → `identities[]`. Seeded from `defaultIdentities` in app config on create. `GET/PUT /api/projects/:id/identities`. UI toggles among that project's presets (stored per-project in localStorage).
@@ -46,6 +59,16 @@ For human setup and usage, see [README.md](README.md).
 - Git backups: each project is its own git repo; **intentional Commit** creates timeline nodes (`.openleaf/timeline.json`). Autosave / Save flush the CRDT working copy to disk without committing. Background CRDT flush does **not** commit. `GET /api/projects/:id/timeline`, `POST .../timeline/commit|fork|checkout`. Share links are bound to one branch (one link per branch; multiple links OK). Toggle via `git.enabled`. Local git branches besides `main` (not OpenLeaf `ol/…` forks) are imported as extra timeline threads so you can explore their checkpoints in History. `GET /api/projects/:id/diff-highlights?since=<hash>` maps added manuscript `.tex` lines (not `misc/`) onto PDF boxes via SyncTeX. Optional experimental PDF-toolbar **Markup PDF** toggle builds the same `latexdiff` PDF as **Download track-changes PDF** and serves it in the preview (`GET /api/projects/:id/pdf?mode=track-changes&from=&to=` after `POST /track-changes`).
 
 ## Commands
+
+Ordinary use after `npm install` (no build required to run the CLI itself):
+
+```bash
+node cli/bin/openleaf.js          # status and next actions
+node cli/bin/openleaf.js setup    # identity, projects dir, access, sample compile
+node cli/bin/openleaf.js start    # production server + built editor
+```
+
+Contributors:
 
 ```bash
 npm install
@@ -56,6 +79,8 @@ npm run typecheck
 npm test
 ```
 
+`npm run dev` is the contributor loop. `openleaf start` serves `client/dist` and does not launch Vite.
+
 ## Prerequisites
 
-Node 20+, TeX Live (`pdflatex`, `bibtex`; `latexmk` optional but preferred), `latexdiff` (optional; **Download track-changes PDF**), Git (if `git.enabled`).
+Node 20+. TeX with `pdflatex` and `bibtex` (`latexmk` optional but preferred): MacTeX on macOS, MiKTeX or TeX Live on Windows, TeX Live on Linux. `latexdiff` is optional (**Download track-changes PDF**). Git is used when `git.enabled` is true. `openleaf doctor` prints the install step for the current system.

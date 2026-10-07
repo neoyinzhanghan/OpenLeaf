@@ -2,6 +2,7 @@
   "host": "0.0.0.0",
   "port": 8787,
   "projectsRoot": "projects",
+  "libraryRoot": "library",
   "latex": {
     "engine": "pdflatex",
     "autoCompile": true,
@@ -11,13 +12,7 @@
   "client": {
     "devPort": 5173
   },
-  "defaultIdentities": [
-    {
-      "id": "host",
-      "name": "Host",
-      "color": "#0F766E"
-    }
-  ],
+  "defaultIdentities": [],
   "collab": {
     "flushMs": 750,
     "persistYjs": true

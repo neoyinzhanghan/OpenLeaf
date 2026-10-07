@@ -4,6 +4,7 @@ export type AppConfig = {
   host: string;
   port: number;
   projectsRoot: string;
+  libraryRoot: string;
   latex: {
     engine: LatexEngine;
     autoCompile: boolean;
@@ -27,6 +28,70 @@ export type AppConfig = {
   };
 };
 
+export type PaperAuthor = {
+  given: string;
+  family: string;
+};
+
+export type PaperIntegrity = {
+  existence: "verified" | "unresolved" | "mismatch";
+  retraction: "clean" | "retracted" | "corrected";
+  lastChecked: string | null;
+  /** Present when existence !== verified — why it is not a checked journal article. */
+  reason?: string | null;
+};
+
+export type PaperSource = "doi" | "arxiv" | "pdf-upload" | "bibtex-import" | "manual";
+
+export type ReadingStatus = "unread" | "to-read" | "reading" | "read" | "archived";
+
+export type LibrarySort = "added" | "title" | "year" | "rating" | "starred" | "status";
+
+export type PaperAnnotation = {
+  id: string;
+  kind: "note" | "highlight" | "underline" | "area" | "pin";
+  body: string;
+  quote?: string;
+  color?: string;
+  page?: number;
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  rects?: Array<{ x: number; y: number; w: number; h: number }>;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/** Canonical library paper — mirrors server/services/library record.json. */
+export type PaperRecord = {
+  citekey: string;
+  doi: string | null;
+  arxivId: string | null;
+  url: string | null;
+  title: string;
+  authors: PaperAuthor[];
+  venue: string;
+  year: number | null;
+  abstract: string;
+  tags: string[];
+  collections: string[];
+  notes: string;
+  attachment: string | null;
+  source: PaperSource;
+  starred: boolean;
+  status: ReadingStatus;
+  rating: number;
+  integrity: PaperIntegrity;
+  addedAt: string;
+  updatedAt?: string;
+};
+
+export type LibraryCollections = {
+  version: 1;
+  collections: Record<string, { name: string; createdAt?: string; color?: string }>;
+};
+
 export type ProjectMeta = {
   id: string;
   name: string;
@@ -35,11 +100,35 @@ export type ProjectMeta = {
   path: string;
 };
 
+export type FileAccessReason = "protected" | "locked-host" | "locked-local" | null;
+export type FileAccessLevel = "everyone" | "host" | "local";
+
 export type TreeNode = {
   name: string;
   path: string;
   type: "file" | "directory";
   children?: TreeNode[];
+  /** Who the requesting actor may edit. The server decides; the client only displays it. */
+  access?: {
+    canWrite: boolean;
+    reason: FileAccessReason;
+    level?: FileAccessLevel;
+    protected?: boolean;
+  };
+};
+
+export type FileAccessRule = {
+  path: string;
+  level: "host" | "local";
+  setBy: string;
+  setAt: string;
+  /** The path is not in the project right now. The lock still applies if it comes back. */
+  missing?: boolean;
+};
+
+export type FileAccessView = {
+  protected: { pattern: string; reason: string }[];
+  rules: FileAccessRule[];
 };
 
 export type FilePayload = {
@@ -53,8 +142,18 @@ export type FilePayload = {
   contentOmitted?: boolean;
 };
 
+export type TexIssue = {
+  severity: "error" | "warning" | "info";
+  file: string | null;
+  line: number | null;
+  message: string;
+};
+
 export type CompileResult = {
   ok: boolean;
+  pdfUpdated?: boolean;
+  upToDate?: boolean;
+  issues?: TexIssue[];
   engine: LatexEngine;
   usedLatexmk: boolean;
   log: string;

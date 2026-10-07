@@ -18,6 +18,17 @@ const { ensureProjectGit } = await import("./projectGit.js");
 const { compileProject } = await import("./compiler.js");
 const { ensureSnapshotRoot, snapshotRootIfPresent } = await import("./timeline.js");
 
+async function commandOnPath(bin: string, args: string[]): Promise<boolean> {
+  try {
+    await execFileAsync(bin, args, { timeout: 8000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const pdflatexInstalled = await commandOnPath("pdflatex", ["-version"]);
+
 async function git(cwd: string, args: string[]): Promise<string> {
   const { stdout } = await execFileAsync("git", args, {
     cwd,
@@ -71,7 +82,10 @@ describe("historical checkpoint compile", () => {
     fs.rmSync(projectsRoot, { recursive: true, force: true });
   });
 
-  it("compiles a prior commit without changing the tip worktree", async () => {
+  it(
+    "compiles a prior commit without changing the tip worktree",
+    { skip: pdflatexInstalled ? false : "pdflatex is not installed" },
+    async () => {
     const tipBefore = fs.readFileSync(path.join(dir, "main.tex"), "utf8");
     assert.match(tipBefore, /NEW/);
 
@@ -94,11 +108,14 @@ describe("historical checkpoint compile", () => {
     assert.notEqual(newHash, oldHash);
   });
 
-  it("live tip compile picks up uncommitted working-tree edits", async () => {
+  it(
+    "live tip compile picks up uncommitted working-tree edits",
+    { skip: pdflatexInstalled ? false : "pdflatex is not installed" },
+    async () => {
     const committedPdf = fs.readFileSync(path.join(dir, ".openleaf", "out", "main.pdf"));
     fs.writeFileSync(
       path.join(dir, "main.tex"),
-      "\\documentclass{article}\\begin{document}UNCOMMITTED_MARKER_QZ\\end{document}\n",
+      "\\documentclass{article}\\begin{document}UNCOMMITTEDMARKERQZ\\end{document}\n",
       "utf8",
     );
     const result = await compileProject(id, undefined, { branchId: "main" });
@@ -107,6 +124,6 @@ describe("historical checkpoint compile", () => {
     assert.notDeepEqual(livePdf, committedPdf);
     const headTex = await git(dir, ["show", "HEAD:main.tex"]);
     assert.match(headTex, /NEW/);
-    assert.match(fs.readFileSync(path.join(dir, "main.tex"), "utf8"), /UNCOMMITTED_MARKER_QZ/);
+    assert.match(fs.readFileSync(path.join(dir, "main.tex"), "utf8"), /UNCOMMITTEDMARKERQZ/);
   });
 });

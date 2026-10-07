@@ -2,17 +2,19 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import type { IncomingMessage } from "node:http";
 import path from "node:path";
-import { CONFIG_DIR } from "../config.js";
+import { getConfigDir, loadConfig } from "../config.js";
+import { createPasswordDevice, revokeAllDevices, verifyDeviceToken } from "./hostDevices.js";
 
 /**
- * Password gate for the public host Cloudflare URL.
- * LAN / localhost stays unauthenticated; only the host-gateway hostname
- * requires this cookie. Credentials are generated once and stored locally
- * (never in git, never in the public config PATCH surface).
+ * Password gate for devices that are not the loopback owner.
+ * Loopback is the owner. A paired device cookie or this password is required
+ * everywhere else, unless lanAuth is "open". Credentials are generated once
+ * and stored locally (never in git, never in the public config PATCH surface).
  */
 
 export const HOST_COOKIE = "openleaf_host";
-export const HOST_USERNAME_DEFAULT = "admin";
+/** Used only when setup has not chosen an operator username. Not a collab identity. */
+export const HOST_USERNAME_DEFAULT = "host";
 
 const COOKIE_TTL_MS = 14 * 24 * 3600_000;
 const SCRYPT_KEYLEN = 64;
@@ -31,7 +33,7 @@ type HostAuthFile = {
 const loginFailures = new Map<string, { count: number; first: number }>();
 
 function authDir(): string {
-  return process.env.OPENLEAF_HOST_AUTH_DIR || CONFIG_DIR;
+  return process.env.OPENLEAF_HOST_AUTH_DIR || getConfigDir();
 }
 
 function authPath(): string {
@@ -111,15 +113,64 @@ export function updateHostCredentialsUrl(publicUrl: string): void {
 
 function persistAuth(file: HostAuthFile): void {
   writeFilePrivate(authPath(), `${JSON.stringify(file, null, 2)}\n`);
+  try {
+    cachedMtime = fs.statSync(authPath()).mtimeMs;
+  } catch {
+    cachedMtime = 0;
+  }
+}
+
+/**
+ * Replace the host password and rotate the cookie secret so existing
+ * host sessions stop verifying. Does not print the password.
+ */
+export function resetHostPassword(password: string): { username: string } {
+  const trimmed = password.trim();
+  if (trimmed.length < 8) {
+    throw Object.assign(new Error("Password must be at least 8 characters"), { status: 400 });
+  }
+  const existing = loadHostAuth();
+  if (!existing) {
+    throw Object.assign(new Error("Host login is not configured yet"), { status: 404 });
+  }
+  const salt = crypto.randomBytes(16);
+  const file: HostAuthFile = {
+    ...existing,
+    salt: salt.toString("base64"),
+    passwordHash: hashPassword(trimmed, salt),
+    cookieSecret: crypto.randomBytes(32).toString("base64"),
+  };
+  const previous = fs.existsSync(credentialsPath()) ? fs.readFileSync(credentialsPath(), "utf8") : "";
+  const urlMatch = previous.match(/^Public URL:\s*(.+)$/m);
+  persistAuth(file);
+  writeCredentialsFile(existing.username, trimmed, urlMatch?.[1]?.trim());
+  cached = file;
+  revokeAllDevices();
+  return { username: existing.username };
 }
 
 let cached: HostAuthFile | null = null;
+let cachedMtime = 0;
 
 export function loadHostAuth(): HostAuthFile | null {
-  if (cached) return cached;
-  const file = readJsonIfExists(authPath());
-  if (!file?.username || !file.salt || !file.passwordHash || !file.cookieSecret) return null;
+  const filePath = authPath();
+  let mtime = 0;
+  try {
+    mtime = fs.statSync(filePath).mtimeMs;
+  } catch {
+    cached = null;
+    cachedMtime = 0;
+    return null;
+  }
+  if (cached && mtime === cachedMtime) return cached;
+  const file = readJsonIfExists(filePath);
+  if (!file?.username || !file.salt || !file.passwordHash || !file.cookieSecret) {
+    cached = null;
+    cachedMtime = 0;
+    return null;
+  }
   cached = file;
+  cachedMtime = mtime;
   return cached;
 }
 
@@ -131,7 +182,8 @@ export function ensureHostAuth(): { created: boolean; username: string; password
   const existing = loadHostAuth();
   if (existing) return { created: false, username: existing.username };
 
-  const username = (process.env.OPENLEAF_HOST_USER || HOST_USERNAME_DEFAULT).trim() || HOST_USERNAME_DEFAULT;
+  const configured = loadConfig().user?.hostUsername?.trim();
+  const username = (process.env.OPENLEAF_HOST_USER || configured || HOST_USERNAME_DEFAULT).trim() || HOST_USERNAME_DEFAULT;
   const password = (process.env.OPENLEAF_HOST_PASSWORD || "").trim() || generateHostPassword();
   const salt = crypto.randomBytes(16);
   const file: HostAuthFile = {
@@ -147,13 +199,21 @@ export function ensureHostAuth(): { created: boolean; username: string; password
   return { created: true, username, password };
 }
 
-export function hostCookieHeader(token: string): string {
-  const exp = new Date(Date.now() + COOKIE_TTL_MS).toUTCString();
-  return `${HOST_COOKIE}=${encodeURIComponent(token)}; Path=/; Expires=${exp}; HttpOnly; Secure; SameSite=Lax`;
+export function requestIsHttps(req: IncomingMessage): boolean {
+  if (req.headers["x-forwarded-proto"] === "https") return true;
+  const socket = req.socket as { encrypted?: boolean };
+  return socket.encrypted === true;
 }
 
-export function clearHostCookieHeader(): string {
-  return `${HOST_COOKIE}=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; Secure; SameSite=Lax`;
+export function hostCookieHeader(token: string, secure = false): string {
+  const maxAge = 30 * 24 * 3600;
+  const secureFlag = secure ? "; Secure" : "";
+  return `${HOST_COOKIE}=${encodeURIComponent(token)}; Path=/; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${secureFlag}`;
+}
+
+export function clearHostCookieHeader(secure = false): string {
+  const secureFlag = secure ? "; Secure" : "";
+  return `${HOST_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${secureFlag}`;
 }
 
 function readCookie(header: string | undefined, name: string): string | undefined {
@@ -180,40 +240,37 @@ function signPayload(secretB64: string, payload: string): string {
 export function mintHostToken(username = loadHostAuth()?.username ?? HOST_USERNAME_DEFAULT): string {
   const auth = loadHostAuth();
   if (!auth) throw Object.assign(new Error("Host login is not configured"), { status: 500 });
-  const body = Buffer.from(JSON.stringify({ u: username, exp: Date.now() + COOKIE_TTL_MS }), "utf8").toString(
-    "base64url",
-  );
-  const payload = `v1.${body}`;
-  return `${payload}.${signPayload(auth.cookieSecret, payload)}`;
-}
-
-export function verifyHostToken(token: string | undefined): { username: string } | null {
-  if (!token) return null;
-  const auth = loadHostAuth();
-  if (!auth) return null;
-  const parts = token.split(".");
-  if (parts.length !== 3 || parts[0] !== "v1") return null;
-  const payload = `${parts[0]}.${parts[1]}`;
-  const sig = parts[2] ?? "";
-  if (!safeEqual(sig, signPayload(auth.cookieSecret, payload))) return null;
-  try {
-    const body = JSON.parse(Buffer.from(parts[1] ?? "", "base64url").toString("utf8")) as { u?: string; exp?: number };
-    if (typeof body.u !== "string" || typeof body.exp !== "number") return null;
-    if (Date.now() > body.exp) return null;
-    if (!safeEqual(body.u.toLowerCase(), auth.username.toLowerCase())) return null;
-    return { username: auth.username };
-  } catch {
-    return null;
+  const { sessionToken } = createPasswordDevice({
+    userAgent: "openleaf-mint",
+    ip: "127.0.0.1",
+  });
+  if (!sessionToken.startsWith("v2.")) {
+    throw Object.assign(new Error("Could not mint a device session"), { status: 500 });
   }
+  void username;
+  return sessionToken;
 }
 
-export function verifyHostCookie(req: IncomingMessage): { username: string } | null {
-  return verifyHostToken(readCookie(req.headers.cookie, HOST_COOKIE));
+export function verifyHostToken(token: string | undefined, ip?: string): { username: string; deviceId?: string } | null {
+  const session = verifyDeviceToken(token, ip);
+  if (!session) return null;
+  return { username: session.username, deviceId: session.deviceId };
+}
+
+export function verifyHostCookie(req: IncomingMessage): { username: string; deviceId?: string; refreshedToken?: string } | null {
+  const session = verifyDeviceToken(readCookie(req.headers.cookie, HOST_COOKIE), clientIpFromSocket(req));
+  if (!session) return null;
+  return { username: session.username, deviceId: session.deviceId, refreshedToken: session.refreshedToken };
+}
+
+function clientIpFromSocket(req: IncomingMessage): string {
+  return (req.socket?.remoteAddress ?? "").replace(/^::ffff:/, "");
 }
 
 export function hostLogin(
   creds: { username: string; password: string },
   ip: string,
+  userAgent = "",
 ): { username: string; token: string } {
   const auth = loadHostAuth();
   if (!auth) throw Object.assign(new Error("Host login is not configured"), { status: 500 });
@@ -244,11 +301,13 @@ export function hostLogin(
   }
 
   loginFailures.delete(ip);
-  return { username: auth.username, token: mintHostToken(auth.username) };
+  const { sessionToken } = createPasswordDevice({ userAgent, ip });
+  return { username: auth.username, token: sessionToken };
 }
 
 /** Test helper: drop cached auth so a new temp dir can be used. */
 export function resetHostAuthCache(): void {
   cached = null;
+  cachedMtime = 0;
   loginFailures.clear();
 }

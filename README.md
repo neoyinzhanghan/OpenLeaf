@@ -6,11 +6,27 @@
 
 # OpenLeaf
 
+```bash
+git clone https://github.com/neoyinzhanghan/OpenLeaf.git
+cd OpenLeaf
+npm ci
+node cli/bin/openleaf.js setup --non-interactive --display-name "Your Name"
+node cli/bin/openleaf.js open
+```
+
+`npm ci` installs the `openleaf` command on your PATH, next to Node. The same terminal may not see that directory yet, so the first setup uses `node cli/bin/openleaf.js`. A new terminal can run `openleaf help`. `openleaf install-cli --add-to-path` writes a PATH line into the shell startup file. `openleaf uninstall-cli` removes the command when it points at this checkout.
+
+On the project list, **Open on your phone** makes a one-time link. Same Wi-Fi is the default when a LAN address exists; each phone is paired. From anywhere starts a tunnel only when you ask. Update with `git pull && npm ci && openleaf restart`, and run `npm run build` when `openleaf doctor` says the editor build is stale.
+
+Loopback on this computer is the owner. Other devices need a paired session (`lanAuth` defaults to `device`). A public tunnel uses the host password or a pairing link.
+
 ## Overview
 
 OpenLeaf is a **local-first LaTeX editor built for hackers and AI**.
 
 It gives you the Overleaf-style experience—split source and PDF, compile in the browser, realtime collab on your LAN—without locking your paper inside someone else’s cloud. Every project is a normal folder on disk. The UI is just a thin window onto files you already own.
+
+This computer is the owner. A phone or another machine needs a paired device or the host password. Your collaboration display name is not that login.
 
 That is the point. You are not a tenant in a black-box editor. You control **everything**:
 
@@ -28,24 +44,68 @@ Want a custom macro workflow, a metrics file your agent updates, a one-off scrip
 4. Review the PDF, SyncTeX-jump from preview to source, download PDF or ZIP.
 5. Co-edit on the LAN with preset identities; use **History** for per-project git backups.
 
-OpenLeaf is for trusted local or LAN use. There is no authentication—by design, because the filesystem *is* the product.
+This computer does not ask you to sign in. A phone on the same Wi-Fi, and a public tunnel, both do.
 
 ## Prerequisites
 
-- **Node.js 20+** ([nodejs.org](https://nodejs.org/) or your package manager)
-- **TeX Live** with at least `pdflatex` and `bibtex` (`latexmk` recommended)
-  - Ubuntu/Debian: `sudo apt install texlive-latex-recommended texlive-bibtex-extra latexmk`
-  - macOS: [MacTeX](https://www.tug.org/mactex/) or `brew install --cask mactex-no-gui`
-- **latexdiff** (optional; required for **Download track-changes PDF** and the experimental **Markup PDF** preview)
-  - Ubuntu/Debian: `sudo apt install latexdiff` (this is a separate package from `texlive-extra-utils`)
-  - macOS: included with MacTeX; otherwise `brew install latexdiff`
-- **Git** (used for per-project version history; optional if you set `"git": { "enabled": false }`)
+Node.js 20 or newer, from [nodejs.org](https://nodejs.org/). Node 22 is what this release is tested with (see `.nvmrc`). Prefer `npm ci` over `npm install` so the lockfile is the install. Git is needed for per-project history. A TeX install must provide `pdflatex` and `bibtex`. `latexmk` is recommended. `latexdiff` is optional and is only used for track-changes PDFs.
+
+OpenLeaf looks for TeX in the usual install locations even when a GUI shell does not put them on `PATH` (MacTeX, Homebrew, MiKTeX, TeX Live, TinyTeX). Setup and `openleaf doctor` print the install step for the computer you are on. They do not run the installer for you.
+
+| System | TeX | Git |
+|--------|-----|-----|
+| Windows PowerShell | [TeX Live](https://tug.org/texlive/) or [MiKTeX](https://miktex.org/) | [git-scm.com](https://git-scm.com/download/win) |
+| macOS Terminal | [MacTeX](https://www.tug.org/mactex/) or `brew install --cask mactex-no-gui` | `brew install git`, or the Xcode command-line tools |
+| Linux | `sudo apt install texlive-latex-recommended texlive-bibtex-extra latexmk` | `sudo apt install git` |
+
+`latexdiff` on Windows and macOS ships with TeX Live / MacTeX. On Debian or Ubuntu it is a separate package: `sudo apt install latexdiff`.
 
 ## Install and run
+
+Ordinary use is the CLI. From a fresh checkout:
 
 ```bash
 git clone <your-repo-url> OpenLeaf
 cd OpenLeaf
+npm install
+openleaf setup
+```
+
+`npm install` (or `npm ci`) is the bootstrap. It installs the `openleaf` command on your PATH, so `openleaf setup`, `openleaf status`, and `openleaf help` work from any directory. On Linux and macOS the command is placed next to Node (nvm, Homebrew, or the official installer). If that folder is not writable, it goes in `~/.local/bin` and your shell startup file is updated. On Windows it goes in `%AppData%\npm`, as both `openleaf.cmd` (Command Prompt and PowerShell) and a Git Bash script. The package is not published to the npm registry. If the command could not be installed, run `node cli/bin/openleaf.js` from this checkout instead. Open a new terminal if the current one cannot find `openleaf`.
+
+The same commands work in **Windows PowerShell** and **macOS Terminal**. Quote the path if it contains spaces.
+
+```powershell
+cd C:\path\OpenLeaf
+npm install
+openleaf setup
+openleaf start
+```
+
+```bash
+cd ~/OpenLeaf
+npm install
+openleaf setup
+openleaf start
+```
+
+On Windows, `stop` uses `taskkill` only after PowerShell confirms the process command line belongs to this install. On macOS, that check uses `ps -ww`. Neither platform stops a program merely because it is listening on the port. `open` uses `Start-Process` in Windows PowerShell and `open` on macOS.
+
+Setup asks for a display name, a projects directory outside this checkout, and who can reach the editor. New installs bind to localhost only. It then builds the app, starts it, compiles a sample PDF, and prints the editor URL.
+
+Check status any time with:
+
+```bash
+openleaf help
+openleaf status
+openleaf doctor
+```
+
+Running `openleaf` with no arguments prints the current state and the next commands. In a non-interactive shell it does not wait for input.
+
+### Contributors
+
+```bash
 npm install
 npm run dev
 ```
@@ -60,23 +120,62 @@ npm run dev
 **During development, open the Vite URL**, not the API port:
 
 - Local: [http://127.0.0.1:5173](http://127.0.0.1:5173)
-- On your LAN: `http://<your-lan-ip>:5173` (both servers bind to `0.0.0.0`)
+- On your LAN: `http://<your-lan-ip>:5173` when the server binds to `0.0.0.0`
 
 Vite proxies `/api` and `/collab` to the backend. Visiting `:8787` in dev redirects to Vite so you do not accidentally use a stale build.
 
-### Production-style run
+`openleaf start` is the production-style entry for regular use. It serves the built editor from `client/dist` and does not launch Vite.
 
-```bash
-npm run build
-npm start
+### Everyday commands
+
+| Command | What it does |
+|---------|----------------|
+| `openleaf start` | Start this install and wait until `/api/health` succeeds |
+| `openleaf stop` | Stop the process recorded for this install |
+| `openleaf restart` | Stop, then start |
+| `openleaf status` | URL, process, and health |
+| `openleaf open` | Open the editor URL in a browser |
+| `openleaf logs --follow` | Server log |
+| `openleaf doctor` | Read-only checks. `--fix` only creates a missing projects directory or clears dead process metadata. `--smoke` compiles a throwaway file. `--json` prints the same checks. |
+| `openleaf support-report` | Sanitized report you can paste into an assistant. It is not uploaded. |
+| `openleaf account reset-password` | Set a new host password locally and sign out existing host sessions |
+
+`openleaf stop` will not kill a process just because it holds the port. Passwords are prompted or generated; do not put them in the command line.
+
+## Troubleshooting
+
+### OpenLeaf won’t start
+
+Run `openleaf doctor`. If it says the server or editor build is missing, run `npm run build`, then `openleaf start`. If it says the port is in use, pick another port in `config/local.json` or `OPENLEAF_PORT`. OpenLeaf does not stop the other program. If startup fails after the process spawns, run `openleaf logs`.
+
+### The page won’t open
+
+`openleaf status` prints the editor URL. For `openleaf start` that is the API port (default `http://127.0.0.1:8787`). During `npm run dev`, open the Vite port instead (default `http://127.0.0.1:5173`). A localhost install does not listen on your LAN address.
+
+### My public link stopped working
+
+A failed tunnel does not mean the local editor is down. Open the localhost URL from `openleaf status`. Then run `openleaf doctor` and read the `tunnel` check. Public links need `cloudflared` and `openleaf setup --access remote`. Quick Tunnel hostnames change when the process restarts. `openleaf restart` brings the tunnel back; guests need the new URL.
+
+### LaTeX won’t compile
+
+`openleaf doctor --smoke` compiles a temporary file and leaves your papers alone. Install the engine it names (`pdflatex` or `xelatex`) and `bibtex`. If the command exists but reports a missing format file, an earlier TeX install on `PATH` is broken; put the working TeX `bin` directory first. `latexmk` and `latexdiff` are optional: without `latexmk`, OpenLeaf still compiles; without `latexdiff`, track-changes PDFs are unavailable.
+
+### I forgot my password
+
+The host password is only for the public link. Localhost does not use it. From the machine that runs OpenLeaf:
+
+```text
+openleaf account reset-password
 ```
 
-Then open [http://127.0.0.1:8787](http://127.0.0.1:8787) (API serves the built UI).
+That is the same command in Windows PowerShell and macOS Terminal. `openleaf help` explains the other commands.
+
+Use `--generate` to write a new password into `config/host-credentials.txt`, or `--password-stdin` to provide one without putting it in the process arguments. Existing host sessions stop working. This does not change collaboration names inside papers.
 
 ## First-time usage
 
-1. Open the UI and you will see **Projects**.
-2. Click **example-article** (ships with the repo) or create a new project (**New from example** copies that template).
+1. After `openleaf setup`, open the editor URL it prints. You will see **Projects**.
+2. Open **openleaf-welcome** (the sample setup compiles) or create a new project. **example-article** remains in the repository as a template; **New from example** copies it.
 3. Edit LaTeX in the Monaco editor. **Ctrl/Cmd+S** saves to disk and (by default) auto-compiles.
 4. Use **Recompile** for a manual build; watch the log and PDF panes.
 5. Download **PDF** or **ZIP** from the toolbar when needed.
@@ -98,13 +197,13 @@ Then open [http://127.0.0.1:8787](http://127.0.0.1:8787) (API serves the built U
 ### Collaboration
 
 - Identities are **per project**, listed in `projects/<id>/openleaf.json` under `identities`.
-- New projects are seeded from `defaultIdentities` in [`config/default.json`](config/default.json).
+- New projects are seeded from your display name in `config/local.json` (`user.displayName` and `defaultIdentities`). That name is not the host login. Papers already on disk keep the identities in their own `openleaf.json`.
 - Open the same project in two browsers, pick different identities, and edit — changes sync over WebSocket (`/collab/<project>`).
 - Presence chips in the toolbar show who is connected.
 
 ### Version history
 
-Each project gets its own git repo under `projects/<id>/` (ignored by the OpenLeaf repo’s `.gitignore`). Explicit saves and file-tree mutations auto-commit; background collab flushes do not. Use **History** in the UI to browse and restore. Local git branches besides `main` show up as extra threads so you can explore their checkpoints (and PDFs) without merging them first. Disable with `"git": { "enabled": false }` in config.
+Each project gets its own git repo under `projects/<id>/` (ignored by the OpenLeaf repo’s `.gitignore`). Explicit saves and file-tree mutations auto-commit; background collab flushes do not. Use **History** in the UI to browse and restore. Local git branches besides `main` (not OpenLeaf `ol/…` forks) show up as extra threads so you can explore their checkpoints (and PDFs) without merging them first. Disable with `"git": { "enabled": false }` in config.
 
 **Highlight additions** (PDF toolbar) diffs manuscript `.tex` files against a chosen snapshot and paints those added lines on the preview via SyncTeX — the same yellow you’d get from `\hl{...}`, without wrapping source. Toggle off for a clean view; the downloaded PDF is unchanged. Pick a baseline from the dropdown or **Highlight since** in History. `misc/` notes are ignored. Recompile after edits so SyncTeX boxes match the current PDF.
 
@@ -137,11 +236,20 @@ Priority: `config/default.json` → `config/local.json` (gitignored) → env var
 
 | Variable | Meaning |
 |----------|---------|
-| `OPENLEAF_HOST` | Bind address (default `0.0.0.0`) |
+| `OPENLEAF_HOST` | Bind address. `openleaf setup` writes `127.0.0.1` for a new install. The shipped file default, used only when nothing else is set, is `0.0.0.0`. |
 | `OPENLEAF_PORT` | API port (default `8787`); Vite proxies `/api` and `/collab` here in dev |
 | `OPENLEAF_CLIENT_PORT` | Vite UI port in `npm run dev` (default `5173`) |
 | `OPENLEAF_PROJECTS_ROOT` | Projects directory (relative to repo root, or absolute) |
+| `OPENLEAF_LIBRARY_ROOT` | Citation library directory (default `./library`; sibling of projects) |
 | `OPENLEAF_ENGINE` | `pdflatex` or `xelatex` |
+| `OPENLEAF_DISPLAY_NAME` | Collaboration display name for this process. Not the host login. |
+| `OPENLEAF_HOST_GATEWAY` | Set to `0` to keep the public tunnel off. Setup writes `access` so `openleaf start` does this for localhost and LAN. |
+| `OPENLEAF_CONFIG_DIR` | Alternate config directory |
+| `OPENLEAF_REPO_ROOT` | Alternate install root |
+
+New installs from `openleaf setup` bind to `127.0.0.1`. An existing `config/local.json` keeps its host unless you pass `--access`.
+
+Collaboration identities for **new** projects come from your display name (`user.displayName` / `defaultIdentities` in `config/local.json`). They are not the host login (`user.hostUsername`, default `host` when nothing else was chosen). Papers already on disk keep the identities stored in their `openleaf.json`.
 
 You can also `GET` / `PATCH /api/config` (PATCH writes `config/local.json`).
 
@@ -194,7 +302,7 @@ New `trycloudflare.com` hostnames often take 30–90 s (sometimes a couple of mi
 
 ## Security note
 
-OpenLeaf is meant for trusted local or LAN use. On the local port there is **no authentication**: anyone who can reach the host directly can read and write project files and trigger compiles. Do not port-forward it; use the Share feature above (which adds sign-in, project scoping and limits) when someone remote needs access, and only give the credentials to people you trust — a guest with write access can still put arbitrary files into the shared project and run `latexmk` on your machine.
+Loopback on this computer is the owner. Any other device needs a paired session, or the host password. `lanAuth` defaults to `device`. A public tunnel uses pairing or that password. A share guest is confined to one project. Do not port-forward the editor. A guest with write access can still put files into that one project and run `latexmk` there. Machine settings (`projectsRoot`, `lanAuth`, project `latexmkrc`, and the rest of the security switches) can be changed only from this computer.
 
 **OpenLeaf contributors are not responsible for the security, privacy, or integrity of your data.** Public Share links, AI collaborator tokens, host-gateway tunnels, and anything a guest or external model does with access you grant are your responsibility. Before creating a public Share or AI link, the UI requires you to check an acknowledgment of these risks. See [SECURITY.md](SECURITY.md) for the full disclaimer and secret-handling guidance.
 

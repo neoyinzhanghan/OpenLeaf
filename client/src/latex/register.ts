@@ -87,6 +87,42 @@ export function registerLatexLanguage(monaco: Monaco): void {
     createCompletionProvider(monaco, () => contextProvider()),
   );
 
+  monaco.languages.registerHoverProvider(LANGUAGE_ID, {
+    provideHover(model, position) {
+      const line = model.getLineContent(position.lineNumber);
+      const citeRe =
+        /\\(?:cite|citep|nocite|citet|citepauthor|citeyear|citeyearpar|parencite|autocite|textcite|footcite|fullcite|citeauthor)\*?\{([^}]+)\}/g;
+      let m: RegExpExecArray | null;
+      while ((m = citeRe.exec(line))) {
+        const keys = m[1]!.split(",").map((k) => k.trim()).filter(Boolean);
+        const argStart = m.index + m[0].indexOf("{") + 1;
+        for (const key of keys) {
+          const keyOffset = m[1]!.indexOf(key);
+          const startCol = argStart + keyOffset + 1;
+          const endCol = startCol + key.length;
+          if (position.column >= startCol && position.column <= endCol) {
+            const hint = contextProvider().citationHints?.find((h) => h.citekey === key);
+            const title = hint?.title ?? key;
+            const detail = hint?.detail ?? "citation";
+            return {
+              range: {
+                startLineNumber: position.lineNumber,
+                endLineNumber: position.lineNumber,
+                startColumn: startCol,
+                endColumn: endCol,
+              },
+              contents: [
+                { value: `**${title}**` },
+                { value: `\`${key}\` · ${detail}` },
+              ],
+            };
+          }
+        }
+      }
+      return null;
+    },
+  });
+
   // Overleaf-adjacent palette: teal commands, amber math, muted comments
   monaco.editor.defineTheme(THEME_ID, {
     base: "vs",

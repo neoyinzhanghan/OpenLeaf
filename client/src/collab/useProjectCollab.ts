@@ -188,6 +188,29 @@ export function useProjectCollab(
     };
     const onFiles = () => setFilesTick((n) => n + 1);
 
+    const wantDebug =
+      import.meta.env.DEV ||
+      (window as Window & { __openleafWantCollabDebug?: boolean }).__openleafWantCollabDebug === true;
+    if (wantDebug) {
+      const debugWindow = window as Window & {
+        __openleafCollabDebug?: {
+          text: (filePath: string) => string | null;
+          room: string;
+          clientId: number;
+          synced: () => boolean;
+        };
+      };
+      debugWindow.__openleafCollabDebug = {
+        text: (filePath: string) => {
+          const value = doc.getMap("files").get(filePath);
+          return value instanceof Y.Text ? value.toString() : null;
+        },
+        room: `${projectId}::${branchId || "main"}`,
+        clientId: doc.clientID,
+        synced: () => provider.synced,
+      };
+    }
+
     provider.on("status", onStatus);
     provider.on("sync", onSync);
     provider.awareness.on("change", onAwareness);
@@ -202,6 +225,10 @@ export function useProjectCollab(
       provider.awareness.off("change", onAwareness);
       provider.off("status", onStatus);
       provider.off("sync", onSync);
+      if (wantDebug) {
+        const debugWindow = window as Window & { __openleafCollabDebug?: unknown };
+        delete debugWindow.__openleafCollabDebug;
+      }
       provider.destroy();
       doc.destroy();
       setSession(null);

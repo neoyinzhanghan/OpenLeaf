@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { onHostAuthRequired } from "../api/hostAuthBus";
 import { guestMe, type GuestIdentity, type GuestMe, type GuestShareInfo } from "../api/share";
 import { sessionAfterMeFailure } from "./sessionState";
 
@@ -43,6 +44,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => onHostAuthRequired(() => void refresh()), [refresh]);
 
   // Guests: poll often so ending the session (or expiry) kicks them to a clear
   // screen without needing a manual refresh. Remote host: slower check so an

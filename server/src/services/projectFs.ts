@@ -1,7 +1,15 @@
 import fs from "node:fs/promises";
 import fsSync from "node:fs";
 import path from "node:path";
-import { getProjectsRootAbs, loadConfig, type Identity, type LatexEngine } from "../config.js";
+import {
+  getDefaultIdentities,
+  getProjectsRootAbs,
+  getRepoRoot,
+  loadConfig,
+  type Identity,
+  type LatexEngine,
+} from "../config.js";
+import { normalizeDisplayName, projectFolderName } from "./projectFolder.js";
 
 /** Never list or zip these system dirs. Build artifacts (`.openleaf`) stay visible. */
 export const SKIP_DIRS = new Set([".git", "node_modules"]);
@@ -23,27 +31,60 @@ export type ProjectMeta = {
   path: string;
 };
 
+export type StoredFileAccessRule = {
+  path: string;
+  level: "host" | "local";
+  setBy: string;
+  setAt: string;
+};
+
 export type PaperflowProjectConfig = {
   mainFile: string;
   engine?: LatexEngine;
+  /** Title shown in the app. The folder name may be a path-safe form of this. */
+  name?: string;
   /** Project-specific collab identities (authoritative for this project). */
   identities?: Identity[];
+  /** Host file-access rules. Preserved across config patches so they stay in git. */
+  fileAccess?: { rules: StoredFileAccessRule[] };
 };
 
-const DEFAULT_PROJECT_IDENTITIES: Identity[] = [
-  { id: "admin-neo", name: "Admin Neo", color: "#0F766E" },
+/**
+ * Built-in paths that are never configurable. Only the computer running OpenLeaf
+ * may write them. `fileAccess.ts` is the policy; this list is the constant.
+ */
+export const PROTECTED_FILE_REASON =
+  "Protected: runs code or holds settings on the host computer. Edit it on that computer.";
+
+export const PROTECTED_FILE_PATTERNS: { pattern: string; reason: string }[] = [
+  { pattern: "latexmkrc", reason: PROTECTED_FILE_REASON },
+  { pattern: ".latexmkrc", reason: PROTECTED_FILE_REASON },
+  { pattern: "*.latexmkrc", reason: PROTECTED_FILE_REASON },
+  { pattern: ".git", reason: PROTECTED_FILE_REASON },
+  { pattern: ".git/**", reason: PROTECTED_FILE_REASON },
+  { pattern: ".openleaf/**", reason: PROTECTED_FILE_REASON },
+  { pattern: "openleaf.json", reason: PROTECTED_FILE_REASON },
+  { pattern: "comments.json", reason: PROTECTED_FILE_REASON },
 ];
 
+/** Last resort when setup has not recorded a display name. Not a personal account. */
+const UNCONFIGURED_IDENTITY: Identity = { id: "author", name: "Author", color: "#0F766E" };
+
 export function defaultProjectIdentities(): Identity[] {
-  const fromConfig = loadConfig().defaultIdentities;
-  return fromConfig.length > 0 ? fromConfig.map((i) => ({ ...i })) : DEFAULT_PROJECT_IDENTITIES.map((i) => ({ ...i }));
+  const fromConfig = getDefaultIdentities();
+  return fromConfig.length > 0 ? fromConfig.map((i) => ({ ...i })) : [{ ...UNCONFIGURED_IDENTITY }];
 }
 
 function assertSafeProjectId(id: string): string {
-  if (!id || id.includes("/") || id.includes("\\") || id === "." || id === "..") {
-    throw Object.assign(new Error("Invalid project id"), { status: 400 });
-  }
-  if (!/^[a-zA-Z0-9._-]+$/.test(id)) {
+  if (
+    !id ||
+    id.length > 255 ||
+    id === "." ||
+    id === ".." ||
+    id.startsWith(".") ||
+    /[\\/\u0000-\u001F\u007F]/.test(id) ||
+    /[. ]$/.test(id)
+  ) {
     throw Object.assign(new Error("Invalid project id"), { status: 400 });
   }
   return id;
@@ -81,6 +122,49 @@ function normalizeRelativePath(relativePath: string): string {
   return relativePath.replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "");
 }
 
+/**
+ * One normal form for access checks: NFC, backslashes, a leading `./`,
+ * trailing slashes, and `.` / `..`. Throws 400 on a path that escapes the root.
+ */
+export function normalizeAccessPath(input: string): string {
+  let s = input.normalize("NFC").replace(/\\/g, "/");
+  while (s.startsWith("./")) s = s.slice(2);
+  s = s.replace(/^\/+/, "");
+  const parts: string[] = [];
+  for (const raw of s.split("/")) {
+    if (raw === "" || raw === ".") continue;
+    if (raw === "..") {
+      if (parts.length === 0) {
+        throw Object.assign(new Error("Path escape"), { status: 400 });
+      }
+      parts.pop();
+      continue;
+    }
+    parts.push(raw);
+  }
+  return parts.join("/");
+}
+
+/** True when a normalized relative path is on the built-in protected list. */
+export function isProtectedNormalizedPath(normalized: string): boolean {
+  const lower = normalized.toLowerCase();
+  if (!lower) return false;
+  const base = lower.split("/").pop() ?? "";
+  if (base === "latexmkrc" || base === ".latexmkrc" || base.endsWith(".latexmkrc")) return true;
+  if (lower === ".git" || lower.startsWith(".git/")) return true;
+  if (lower === ".openleaf" || lower.startsWith(".openleaf/")) return true;
+  if (base === "openleaf.json" || base === "comments.json" || base === "citations.json") return true;
+  return false;
+}
+
+export function isProtectedAccessPath(relativePath: string): boolean {
+  try {
+    return isProtectedNormalizedPath(normalizeAccessPath(relativePath));
+  } catch {
+    return true;
+  }
+}
+
 /** Host settings / runtime that guests must not rewrite through the file API. */
 export function isHostMetadataPath(relativePath: string): boolean {
   const n = normalizeRelativePath(relativePath);
@@ -89,13 +173,29 @@ export function isHostMetadataPath(relativePath: string): boolean {
   return lower === "openleaf.json" || lower === ".openleaf" || lower.startsWith(".openleaf/");
 }
 
+/** latexmk reads these as Perl. A project copy must not run unless the host opts in. */
+export function isLatexmkrcPath(relativePath: string): boolean {
+  const base = (normalizeRelativePath(relativePath).split("/").pop() ?? "").toLowerCase();
+  return base === "latexmkrc" || base === ".latexmkrc" || base.endsWith(".latexmkrc");
+}
+
+/** Git metadata and hooks run on the next git command. */
+export function isGitMetadataPath(relativePath: string): boolean {
+  const n = normalizeRelativePath(relativePath).toLowerCase();
+  return n === ".git" || n.startsWith(".git/");
+}
+
 /**
- * Paths guests must not create, overwrite, rename, or delete via /files or /fs.
+ * Paths guests and AI links must not create, overwrite, rename, or delete.
  * comments.json is mutated through the comments API (with author checks) instead.
+ * citations.json mirrors comments.json (source-anchored, host-managed claim
+ * verdicts) and must be mutated only through the /citations routes, which run
+ * verifyClaimInstance/scanProjectCitations rather than accepting raw writes —
+ * otherwise a write-capable guest could forge "verified" integrity/claim-check
+ * verdicts directly through the generic file API.
  */
 export function isGuestForbiddenWritePath(relativePath: string): boolean {
-  if (isHostMetadataPath(relativePath)) return true;
-  return normalizeRelativePath(relativePath).toLowerCase() === "comments.json";
+  return isProtectedAccessPath(relativePath);
 }
 
 export async function ensureProjectsRoot(): Promise<void> {
@@ -107,10 +207,14 @@ export async function readProjectConfig(id: string): Promise<PaperflowProjectCon
   const globalEngine = loadConfig().latex.engine;
   try {
     const raw = JSON.parse(await fs.readFile(cfgPath, "utf8")) as Partial<PaperflowProjectConfig>;
+    const rules = raw.fileAccess?.rules;
+    const storedName = typeof raw.name === "string" ? raw.name.trim() : "";
     return {
       mainFile: raw.mainFile ?? "main.tex",
       engine: raw.engine ?? globalEngine,
+      name: storedName || undefined,
       identities: Array.isArray(raw.identities) ? raw.identities : undefined,
+      fileAccess: Array.isArray(rules) ? { rules } : undefined,
     };
   } catch {
     return { mainFile: "main.tex", engine: globalEngine };
@@ -148,9 +252,13 @@ export async function writeProjectConfig(
   const next: PaperflowProjectConfig = {
     mainFile: patch.mainFile ?? current.mainFile,
     engine: patch.engine ?? current.engine,
+    name: patch.name === undefined ? current.name : patch.name,
     identities: patch.identities ?? current.identities,
+    fileAccess: patch.fileAccess !== undefined ? patch.fileAccess : current.fileAccess,
   };
   if (!next.identities) delete next.identities;
+  if (!next.name) delete next.name;
+  if (!next.fileAccess) delete next.fileAccess;
   const cfgPath = resolveProjectPath(id, "openleaf.json");
   await fs.writeFile(cfgPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
   return next;
@@ -171,7 +279,7 @@ export async function listProjects(): Promise<ProjectMeta[]> {
     const cfg = await readProjectConfig(entry.name);
     projects.push({
       id: entry.name,
-      name: entry.name,
+      name: cfg.name || entry.name,
       mainFile: cfg.mainFile,
       engine: cfg.engine ?? loadConfig().latex.engine,
       path: path.join(root, entry.name),
@@ -189,11 +297,68 @@ export async function getProject(id: string): Promise<ProjectMeta> {
   const cfg = await readProjectConfig(id);
   return {
     id,
-    name: id,
+    name: cfg.name || id,
     mainFile: cfg.mainFile,
     engine: cfg.engine ?? loadConfig().latex.engine,
     path: dir,
   };
+}
+
+/** Guests edit one project. They do not receive this computer's folder path. */
+export function projectMetaForCaller(meta: ProjectMeta, accessMode: "host" | "guest" | undefined): ProjectMeta {
+  if (accessMode === "guest") return { ...meta, path: "" };
+  return meta;
+}
+
+function retargetAbs(value: string, fromRoot: string, toRoot: string): string {
+  const trim = (p: string) => p.replace(/[\\/]+$/, "");
+  const from = trim(fromRoot);
+  const to = trim(toRoot);
+  if (value === from) return to;
+  if (value.startsWith(from + path.sep)) return to + value.slice(from.length);
+  if (value.startsWith(from + "/")) return to + value.slice(from.length);
+  return value;
+}
+
+/** Git worktrees store absolute paths. A folder rename has to rewrite them. */
+function retargetGitWorktrees(fromRoot: string, toRoot: string): void {
+  const gitDir = path.join(toRoot, ".git");
+  if (!fsSync.existsSync(gitDir) || !fsSync.statSync(gitDir).isDirectory()) return;
+  const wtRoot = path.join(gitDir, "worktrees");
+  if (!fsSync.existsSync(wtRoot)) return;
+  for (const name of fsSync.readdirSync(wtRoot)) {
+    const gitdirFile = path.join(wtRoot, name, "gitdir");
+    if (!fsSync.existsSync(gitdirFile)) continue;
+    const oldPointer = fsSync.readFileSync(gitdirFile, "utf8").trim();
+    const nextPointer = retargetAbs(oldPointer, fromRoot, toRoot);
+    if (nextPointer !== oldPointer) fsSync.writeFileSync(gitdirFile, `${nextPointer}\n`);
+    if (!fsSync.existsSync(nextPointer) || !fsSync.statSync(nextPointer).isFile()) continue;
+    const link = fsSync.readFileSync(nextPointer, "utf8");
+    const updated = link.replace(/^gitdir:\s*(.*)$/m, (_line, target: string) => {
+      return `gitdir: ${retargetAbs(target.trim(), fromRoot, toRoot)}`;
+    });
+    if (updated !== link) fsSync.writeFileSync(nextPointer, updated);
+  }
+}
+
+/** Save a display name. The folder moves only when its path-safe form changes. */
+export async function renameProject(fromId: string, displayName: string): Promise<ProjectMeta> {
+  const from = assertSafeProjectId(fromId);
+  const name = normalizeDisplayName(displayName);
+  const current = await getProject(from);
+  if (name === current.name) return current;
+  const to = projectFolderName(name);
+  if (to !== from) {
+    const src = projectDir(from);
+    const dest = projectDir(to);
+    if (fsSync.existsSync(dest)) {
+      throw Object.assign(new Error("A project with that folder name already exists"), { status: 409 });
+    }
+    await fs.rename(src, dest);
+    retargetGitWorktrees(src, dest);
+  }
+  await writeProjectConfig(to, { name });
+  return getProject(to);
 }
 
 async function buildTree(absDir: string, relBase: string): Promise<TreeNode[]> {
@@ -470,9 +635,6 @@ function assertWritableRel(relativePath: string): string {
 
 export async function deletePath(id: string, relativePath: string, rootDir?: string): Promise<void> {
   const rel = assertWritableRel(relativePath);
-  if (rel === "openleaf.json") {
-    throw Object.assign(new Error("Refusing to delete openleaf.json"), { status: 400 });
-  }
   const full = rootDir ? resolveRootPath(rootDir, rel) : resolveProjectPath(id, rel);
   if (!fsSync.existsSync(full)) {
     throw Object.assign(new Error("Path not found"), { status: 404 });
@@ -504,6 +666,8 @@ export async function renamePath(
   }
   await fs.mkdir(path.dirname(toFull), { recursive: true });
   await fs.rename(fromFull, toFull);
+  const { moveFileAccessRules } = await import("./fileAccess.js");
+  await moveFileAccessRules(id, fromRel, toRel);
 }
 
 export async function createEmptyFile(
@@ -521,14 +685,26 @@ export async function createEmptyFile(
   await fs.writeFile(full, content, "utf8");
 }
 
+function resolveTemplateDir(fromTemplate: string): string | null {
+  const candidates = [
+    path.join(getProjectsRootAbs(), fromTemplate),
+    path.join(getRepoRoot(), "projects", fromTemplate),
+    path.join(getRepoRoot(), "templates", fromTemplate),
+  ];
+  for (const dir of candidates) {
+    if (fsSync.existsSync(dir) && fsSync.statSync(dir).isDirectory()) return dir;
+  }
+  return null;
+}
+
 export async function createProject(id: string, fromTemplate = "example-article"): Promise<ProjectMeta> {
   assertSafeProjectId(id);
   const dest = projectDir(id);
   if (fsSync.existsSync(dest)) {
     throw Object.assign(new Error("Project already exists"), { status: 409 });
   }
-  const templateDir = path.join(getProjectsRootAbs(), fromTemplate);
-  if (!fsSync.existsSync(templateDir)) {
+  const templateDir = resolveTemplateDir(fromTemplate);
+  if (!templateDir) {
     await fs.mkdir(dest, { recursive: true });
     await fs.mkdir(path.join(dest, "figures"), { recursive: true });
     await fs.writeFile(
@@ -552,15 +728,7 @@ export async function createProject(id: string, fromTemplate = "example-article"
     );
   } else {
     await copyDir(templateDir, dest);
-    // Ensure identities exist on copied projects
-    try {
-      const cfg = await readProjectConfig(id);
-      if (!cfg.identities || cfg.identities.length === 0) {
-        await writeProjectConfig(id, { identities: defaultProjectIdentities() });
-      }
-    } catch {
-      /* ignore */
-    }
+    await writeProjectConfig(id, { identities: defaultProjectIdentities() });
   }
   // Initialize per-project git backup repo with an initial snapshot
   try {

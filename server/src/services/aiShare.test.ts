@@ -49,6 +49,9 @@ describe("aiShare path guards", () => {
     assert.throws(() => assertAiWritablePath("../x"), /Invalid path/i);
     assert.throws(() => assertAiWritablePath(".openleaf/x"), /runtime/i);
     assert.throws(() => assertAiWritablePath(".git/config"), /runtime/i);
+    assert.throws(() => assertAiWritablePath("latexmkrc"), /cannot write this path/i);
+    assert.throws(() => assertAiWritablePath(".latexmkrc"), /cannot write this path/i);
+    assert.throws(() => assertAiWritablePath("chapters/local.latexmkrc"), /cannot write this path/i);
     assert.throws(() => assertAiWritablePath("openleaf.json"), /openleaf\.json/i);
     assert.equal(assertAiWritablePath("src/main.tex"), "src/main.tex");
   });

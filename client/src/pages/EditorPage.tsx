@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import type * as Y from "yjs";
 import {
   checkoutProjectTimeline,
@@ -15,6 +15,7 @@ import {
   getProjectMerge,
   getProjectTimeline,
   getTree,
+  putFileAccessRules,
   generateTrackChanges,
   listProjectComments,
   mkdirProjectPath,
@@ -27,33 +28,54 @@ import {
   trackChangesDownloadUrl,
   writeProjectFile,
   type MergeSession,
+  listLibraryPapers,
+  citeLibraryIntoProject,
+  listProjectCitations,
+  type CitationInstance,
 } from "../api/client";
-import type { AppConfig, FileChangeDiff, GitCommitInfo, ProjectMeta, TimelineView, TreeNode } from "../api/types";
+import type { AppConfig, FileAccessLevel, FileChangeDiff, GitCommitInfo, PaperRecord, ProjectMeta, TimelineView, TreeNode } from "../api/types";
 import { guestLogout, hostLogout, listProjectAiReview, acceptAiReview, rejectAiReview, type AiReviewCollaborator, type AiReviewHunk } from "../api/share";
 import { flushCollab, useProjectCollab } from "../collab/useProjectCollab";
+import { rememberProject } from "../lib/lastProject";
 import { BinaryPane } from "../components/BinaryPane";
+import { CopyPathMenuItem, ProjectNameField } from "../components/ProjectHostActions";
 import { BranchTreePanel } from "../components/BranchTreePanel";
-import { CodeEditor, type EditorChangeMarks, type EditorSuggestionMark } from "../components/CodeEditor";
+import { CodeEditor, type EditorChangeMarks, type EditorSuggestionMark, type CitationGutterMark } from "../components/CodeEditor";
 import { CompareBaselinePicker } from "../components/CompareBaselinePicker";
 import { CompileLog } from "../components/CompileLog";
 import { FileTree } from "../components/FileTree";
 import { CommentsPanel, type CommentDraft } from "../components/CommentsPanel";
+import { LibraryPanel } from "../components/LibraryPanel";
 import { AiReviewPanel } from "../components/AiReviewPanel";
 import { AiLinkPanel } from "../components/AiLinkPanel";
 import { AiSuggestionCard } from "../components/AiSuggestionCard";
 import { isAiBranch } from "../components/timelineLayout";
 import { MergePanel } from "../components/MergePanel";
-import { PdfViewer, type PdfDiffOverlay, type PdfHighlight } from "../components/PdfViewer";
+import type { PdfDiffOverlay, PdfHighlight } from "../components/PdfViewer";
+const PdfViewer = lazy(() => import("../components/PdfViewer").then((mod) => ({ default: mod.PdfViewer })));
+import { HostAccessPanel } from "../components/HostAccessPanel";
 import { SharePanel } from "../components/SharePanel";
+import { FileAccessDrawer } from "../components/FileAccessDrawer";
 import { SplitPane } from "../components/SplitPane";
 import { ThemePicker } from "../components/ThemeToggle";
-import { extractCitations, extractLabels } from "../latex/completions";
+import { extractCitations, extractLabels, type LatexCitationHint } from "../latex/completions";
 import type { CommentAnchor, CommentThread, TimelineBranch, TimelineNode } from "../api/types";
 import { useGuest, useSession } from "../session/SessionContext";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 
 type Status = "idle" | "dirty" | "saving" | "compiling" | "ok" | "err";
 type EditMode = "text" | "binary" | "base64";
+
+function findTreeNode(nodes: TreeNode[], filePath: string): TreeNode | undefined {
+  for (const node of nodes) {
+    if (node.path === filePath) return node;
+    if (node.children) {
+      const hit = findTreeNode(node.children, filePath);
+      if (hit) return hit;
+    }
+  }
+  return undefined;
+}
 
 function flattenFiles(nodes: TreeNode[]): string[] {
   const out: string[] = [];
@@ -210,6 +232,7 @@ function normDiffPath(p: string): string {
 
 export function EditorPage() {
   const { id = "" } = useParams();
+  const navigate = useNavigate();
   const guest = useGuest();
   const { session, refresh: refreshSession } = useSession();
   const isRemoteHost = session.kind === "host" && session.remote;
@@ -234,8 +257,15 @@ export function EditorPage() {
   viewingGitHashRef.current = viewingGitHash;
   const [branchLabel, setBranchLabel] = useState(guest?.share.branchName || "main");
   const [project, setProject] = useState<ProjectMeta | null>(null);
+  useEffect(() => {
+    if (!id) return;
+    rememberProject({ id, name: project?.name || id });
+  }, [id, project?.name]);
   const collab = useProjectCollab(project?.id === id ? id || undefined : undefined, guestIdentity, branchId);
   const [shareOpen, setShareOpen] = useState(false);
+  const [fileAccessOpen, setFileAccessOpen] = useState(false);
+  const fileActor = isGuest ? "guest" : isRemoteHost ? "device" : "local";
+  const [phoneOpen, setPhoneOpen] = useState(false);
   const [aiLinksOpen, setAiLinksOpen] = useState(false);
   const [shareActive, setShareActive] = useState(false);
   const [shareCount, setShareCount] = useState(0);
@@ -295,9 +325,9 @@ export function EditorPage() {
     base64: string;
   } | null>(null);
   const [log, setLog] = useState("");
-  const [logOpen, setLogOpen] = useState(() =>
-    typeof window === "undefined" ? true : !window.matchMedia("(max-width: 720px)").matches,
-  );
+  const [compileIssues, setCompileIssues] = useState<import("./../api/types").TexIssue[]>([]);
+  const [stalePdf, setStalePdf] = useState(false);
+  const [logOpen, setLogOpen] = useState(false);
   const [status, setStatus] = useState<Status>("idle");
   const [pdfBust, setPdfBust] = useState<number | null>(null);
   const [pdfSwitching, setPdfSwitching] = useState(false);
@@ -335,6 +365,9 @@ export function EditorPage() {
   const [mergeOpen, setMergeOpen] = useState(false);
   const [mergeSession, setMergeSession] = useState<MergeSession | null>(null);
   const [commentsOpen, setCommentsOpen] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [libraryPapers, setLibraryPapers] = useState<PaperRecord[]>([]);
+  const [citationInstances, setCitationInstances] = useState<CitationInstance[]>([]);
   const [aiReviewOpen, setAiReviewOpen] = useState(false);
   const [aiReviewCount, setAiReviewCount] = useState(0);
   const [aiCollabs, setAiCollabs] = useState<AiReviewCollaborator[]>([]);
@@ -343,6 +376,7 @@ export function EditorPage() {
   const [aiFocusNonce, setAiFocusNonce] = useState(0);
   const [aiPopupBusy, setAiPopupBusy] = useState(false);
   const [toolbarMoreOpen, setToolbarMoreOpen] = useState(false);
+  const [menuSettings, setMenuSettings] = useState(false);
   const toolbarMoreRef = useRef<HTMLDivElement>(null);
   const toolbarMoreBtnRef = useRef<HTMLButtonElement>(null);
   const toolbarMenuRef = useRef<HTMLDivElement>(null);
@@ -352,13 +386,15 @@ export function EditorPage() {
     maxHeight: number;
   } | null>(null);
 
-  const closeOverlappingChrome = useCallback((keep?: "history" | "comments" | "ai" | "share" | "aiLinks") => {
+  const closeOverlappingChrome = useCallback((keep?: "history" | "comments" | "ai" | "share" | "aiLinks" | "library" | "phone") => {
     setToolbarMoreOpen(false);
     if (keep !== "history") setHistoryOpen(false);
     if (keep !== "comments") setCommentsOpen(false);
     if (keep !== "ai") setAiReviewOpen(false);
     if (keep !== "share") setShareOpen(false);
     if (keep !== "aiLinks") setAiLinksOpen(false);
+    if (keep !== "library") setLibraryOpen(false);
+    if (keep !== "phone") setPhoneOpen(false);
   }, []);
   const [commitBusy, setCommitBusy] = useState(false);
   const [commentDraft, setCommentDraft] = useState<CommentDraft | null>(null);
@@ -461,6 +497,18 @@ export function EditorPage() {
     setTree(await getTree(id, viewingGitHash, viewingGitHash ? null : branchId));
   }, [id, viewingGitHash, branchId]);
 
+  const setFileAccess = useCallback(
+    async (filePath: string, level: FileAccessLevel) => {
+      if (!id) return;
+      await putFileAccessRules(
+        id,
+        level === "everyone" ? { delete: [filePath] } : { upsert: [{ path: filePath, level }] },
+      );
+      await refreshTree();
+    },
+    [id, refreshTree],
+  );
+
   const loadIndexHints = useCallback(async (projectId: string, nodes: TreeNode[]) => {
     const files = flattenFiles(nodes).filter(isHintIndexPath);
     const bibPaths = files.filter((f) => f.endsWith(".bib"));
@@ -493,6 +541,78 @@ export function EditorPage() {
     }
     setExtraLabels([...labelKeys].sort());
   }, []);
+
+  useEffect(() => {
+    if (isGuest || !id) return;
+    let cancelled = false;
+    void listProjectCitations(id)
+      .then((r) => {
+        if (!cancelled) setCitationInstances(r.instances);
+      })
+      .catch(() => {
+        if (!cancelled) setCitationInstances([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isGuest, id, libraryOpen]);
+
+  const citationMarks: CitationGutterMark[] = useMemo(() => {
+    if (!activePath) return [];
+    const libByKey = new Map(libraryPapers.map((p) => [p.citekey, p]));
+    return citationInstances
+      .filter((i) => i.file === activePath)
+      .map((i) => {
+        const paper = libByKey.get(i.citekey);
+        let kind: string = i.verdict;
+        if (paper?.integrity.retraction === "retracted") kind = "retracted";
+        else if (paper?.integrity.existence === "mismatch") kind = "mismatch";
+        return { line: i.line, citekey: i.citekey, kind };
+      });
+  }, [citationInstances, activePath, libraryPapers]);
+
+  useEffect(() => {
+    if (isGuest) return;
+    let cancelled = false;
+    void listLibraryPapers({ limit: 500 })
+      .then((r) => {
+        if (!cancelled) setLibraryPapers(r.papers);
+      })
+      .catch(() => {
+        if (!cancelled) setLibraryPapers([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isGuest, libraryOpen]);
+
+  const citationHints: LatexCitationHint[] = useMemo(() => {
+    const bibSet = new Set(citations);
+    const hints: LatexCitationHint[] = [];
+    for (const p of libraryPapers) {
+      const authors = p.authors
+        .slice(0, 2)
+        .map((a) => a.family)
+        .join(", ");
+      const badge =
+        p.integrity.retraction === "retracted"
+          ? "retracted"
+          : p.integrity.existence === "verified"
+            ? "verified"
+            : "library";
+      hints.push({
+        citekey: p.citekey,
+        title: p.title,
+        detail: `${badge}${authors ? ` · ${authors}` : ""}${p.year != null ? ` · ${p.year}` : ""}`,
+        fromLibrary: !bibSet.has(p.citekey),
+      });
+    }
+    for (const key of citations) {
+      if (hints.some((h) => h.citekey === key)) continue;
+      hints.push({ citekey: key, detail: "project .bib" });
+    }
+    return hints;
+  }, [libraryPapers, citations]);
 
   useEffect(() => {
     if (!id) return;
@@ -933,7 +1053,8 @@ export function EditorPage() {
         setStatus("idle");
       } catch (err) {
         if (!cancelled && activePathRef.current === pathBeingLoaded) {
-          setError(err instanceof Error ? err.message : "Failed to read file");
+          const msg = err instanceof Error ? err.message : "Failed to read file";
+          setError(msg === "File not found" ? `File not found: ${pathBeingLoaded}` : msg);
           setFileReady(false);
         }
       }
@@ -1034,16 +1155,21 @@ export function EditorPage() {
       );
       if (!stillHere()) return false;
       setLog((prev) => prev || result.log);
+      const issues = result.issues ?? [];
+      setCompileIssues(issues);
+      const errorCount = issues.filter((issue) => issue.severity === "error").length;
       if (result.ok) {
+        setStalePdf(false);
         setStatus("ok");
         setPdfBust(Date.now());
         setPdfSwitching(false);
         await refreshTree();
         return true;
       }
+      setStalePdf(Boolean(result.pdfRelative));
       setStatus("err");
       setPdfSwitching(false);
-      if (opts?.auto) setLogOpen(true);
+      if (errorCount > 0 || !opts?.auto) setLogOpen(true);
       return false;
     } catch (err) {
       if (!stillHere()) return false;
@@ -1363,6 +1489,24 @@ export function EditorPage() {
     setSyncToast(msg);
     window.setTimeout(() => setSyncToast((cur) => (cur === msg ? null : cur)), 2800);
   }, []);
+
+  const syncLibraryCite = useCallback(
+    async (citekey: string) => {
+      if (!id || isGuest) return;
+      try {
+        await citeLibraryIntoProject(id, { citekey });
+        showSyncToast(`Added ${citekey} to project bibliography`);
+        const t = await getTree(id, viewingGitHash, viewingGitHash ? null : branchId);
+        setTree(t);
+        await loadIndexHints(id, t);
+        const lib = await listLibraryPapers({ limit: 500 });
+        setLibraryPapers(lib.papers);
+      } catch (err) {
+        showSyncToast(err instanceof Error ? err.message : "Could not sync citation");
+      }
+    },
+    [id, isGuest, viewingGitHash, branchId, loadIndexHints, showSyncToast],
+  );
 
   const onPickCompareBaseline = useCallback(
     (node: TimelineNode, _branch: TimelineBranch) => {
@@ -2114,13 +2258,24 @@ export function EditorPage() {
               Shared with you
             </span>
           ) : (
-            <Link className="btn btn-ghost btn-quiet" to="/" title="Back to projects">
+            <Link className="btn btn-ghost btn-quiet toolbar-home-link" to="/" title="Back to projects">
               Projects
             </Link>
           )}
-          <span className="toolbar-project-name" title={project?.id ?? id}>
-            {project?.id ?? id}
-          </span>
+          {!isGuest && project ? (
+            <ProjectNameField
+              project={project}
+              variant="toolbar"
+              onRenamed={(next) => {
+                setProject(next);
+                if (next.id !== id) navigate(`/p/${encodeURIComponent(next.id)}`);
+              }}
+            />
+          ) : (
+            <span className="toolbar-project-name" title={project?.name ?? project?.id ?? id}>
+              {project?.name ?? project?.id ?? id}
+            </span>
+          )}
           <div className="toolbar-meta toolbar-wide-only">
             <span
               className={`status-pill ${
@@ -2140,6 +2295,18 @@ export function EditorPage() {
             >
               {statusLabel}
             </span>
+            {compileIssues.some((issue) => issue.severity === "error") && (
+              <button
+                type="button"
+                className="status-pill err"
+                onClick={() => setLogOpen(true)}
+              >
+                {(() => {
+                  const count = compileIssues.filter((issue) => issue.severity === "error").length;
+                  return `${count} error${count === 1 ? "" : "s"}`;
+                })()}
+              </button>
+            )}
             {editMode === "base64" && <span className="status-pill warn">base64</span>}
             {readOnly && <span className="status-pill warn">read-only</span>}
           </div>
@@ -2214,7 +2381,7 @@ export function EditorPage() {
           {!isGuest && shareActive && (
             <button
               type="button"
-              className={`btn share-timer-chip${shareUrgent ? " is-urgent" : ""}`}
+              className={`btn share-timer-chip toolbar-wide-only${shareUrgent ? " is-urgent" : ""}`}
               onClick={() => {
                 closeOverlappingChrome("share");
                 setShareOpen(true);
@@ -2238,7 +2405,7 @@ export function EditorPage() {
           {canHistory && (
             <button
               type="button"
-              className={`btn btn-quiet${historyOpen ? " is-active" : ""}`}
+              className={`btn btn-quiet toolbar-wide-only${historyOpen ? " is-active" : ""}`}
               onClick={() => {
                 closeOverlappingChrome("history");
                 setHistoryOpen(true);
@@ -2247,6 +2414,28 @@ export function EditorPage() {
             >
               Timeline
             </button>
+          )}
+          {!isGuest && (
+            <>
+              <Link
+                to="/library"
+                className="btn btn-quiet"
+                title="Open the personal citation library (independent of this project)"
+              >
+                Library
+              </Link>
+              <button
+                type="button"
+                className={`btn btn-quiet toolbar-wide-only${libraryOpen ? " is-active" : ""}`}
+                onClick={() => {
+                  closeOverlappingChrome("library");
+                  setLibraryOpen(true);
+                }}
+                title="Cite from library into this project"
+              >
+                Cite
+              </button>
+            </>
           )}
           {!isGuest && mergeSession && (
             <button
@@ -2266,7 +2455,7 @@ export function EditorPage() {
           {!readOnly && timelineCanEdit && !mergeSession && (
             <button
               type="button"
-              className={dirty ? "btn btn-primary" : "btn btn-quiet"}
+              className={`${dirty ? "btn btn-primary" : "btn btn-quiet"} toolbar-wide-only`}
               disabled={commitBusy || status === "saving"}
               onClick={() => void onIntentionalCommit()}
               title={
@@ -2279,23 +2468,23 @@ export function EditorPage() {
             </button>
           )}
           {!timelineCanEdit && !isGuest && (
-            <span className="share-muted" title="Historical checkpoint">
+            <span className="share-muted toolbar-wide-only" title="Historical checkpoint">
               Read-only checkpoint
             </span>
           )}
           {!timelineCanEdit && isGuest && (
-            <span className="share-muted" title="You are watching another branch’s live working copy">
+            <span className="share-muted toolbar-wide-only" title="You are watching another branch’s live working copy">
               Observing {branchLabel}
             </span>
           )}
           {!readOnly && timelineCanEdit && (
             <button
               type="button"
-              className={
+              className={`${
                 dirty || status === "saving" || status === "compiling"
                   ? "btn btn-primary"
                   : "btn btn-quiet"
-              }
+              } toolbar-wide-only`}
               onClick={() => void save({ compile: true })}
               disabled={
                 !activePath ||
@@ -2325,7 +2514,7 @@ export function EditorPage() {
           {(readOnly || Boolean(viewingGitHash)) && canCompile && (
             <button
               type="button"
-              className="btn btn-primary"
+              className="btn btn-primary toolbar-wide-only"
               onClick={() => void runCompile()}
               disabled={status === "compiling"}
               title={
@@ -2341,7 +2530,7 @@ export function EditorPage() {
           {openCommentCount > 0 && (
             <button
               type="button"
-              className={`btn btn-quiet toolbar-comments has-open${commentsOpen ? " is-active" : ""}`}
+              className={`btn btn-quiet toolbar-comments toolbar-wide-only has-open${commentsOpen ? " is-active" : ""}`}
               onClick={() => {
                 closeOverlappingChrome("comments");
                 setCommentsOpen(true);
@@ -2356,7 +2545,7 @@ export function EditorPage() {
           {!isGuest && aiReviewCount > 0 && (
             <button
               type="button"
-              className={`btn btn-quiet toolbar-comments toolbar-ai-review has-open${aiReviewOpen || (narrow && aiActiveId) ? " is-active" : ""}`}
+              className={`btn btn-quiet toolbar-comments toolbar-ai-review toolbar-wide-only has-open${aiReviewOpen || (narrow && aiActiveId) ? " is-active" : ""}`}
               onClick={() => {
                 void beginAiReview();
               }}
@@ -2410,21 +2599,56 @@ export function EditorPage() {
                     <span className="toolbar-menu-hint">{guest.guest.name}</span>
                   </button>
                 )}
-                {narrow && !isGuest && collab.identities.length > 0 && (
-                  <label className="identity-picker toolbar-menu-identity">
-                    <span className="identity-picker-label">You</span>
-                    <select
-                      value={collab.identity?.id ?? ""}
-                      onChange={(e) => collab.setIdentityId(e.target.value)}
-                      aria-label="Select identity"
-                    >
-                      {collab.identities.map((ident) => (
-                        <option key={ident.id} value={ident.id}>
-                          {ident.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                {narrow && !readOnly && timelineCanEdit && !mergeSession && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={commitBusy || status === "saving"}
+                    onClick={() => {
+                      setToolbarMoreOpen(false);
+                      void onIntentionalCommit();
+                    }}
+                  >
+                    {commitBusy ? "Committing…" : "Commit"}
+                  </button>
+                )}
+                {narrow && !readOnly && timelineCanEdit && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={
+                      !activePath ||
+                      !fileReady ||
+                      editMode === "binary" ||
+                      tooLargeBytes != null ||
+                      status === "saving" ||
+                      status === "compiling"
+                    }
+                    onClick={() => {
+                      setToolbarMoreOpen(false);
+                      void save({ compile: true });
+                    }}
+                  >
+                    {status === "compiling" ? "Compiling…" : canCompile ? "Recompile" : "Save"}
+                  </button>
+                )}
+                {narrow && (readOnly || Boolean(viewingGitHash)) && canCompile && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={status === "compiling"}
+                    onClick={() => {
+                      setToolbarMoreOpen(false);
+                      void runCompile();
+                    }}
+                  >
+                    {status === "compiling" ? "Compiling…" : "Recompile"}
+                  </button>
+                )}
+                {narrow && (
+                  <div className="toolbar-menu-label" role="presentation">
+                    Paper
+                  </div>
                 )}
                 {narrow && (!isGuest || !readOnly) && timelineCanEdit && (
                   <button
@@ -2439,6 +2663,68 @@ export function EditorPage() {
                   </button>
                 )}
                 {narrow && (isGuest || collab.identities.length > 0) && <div className="toolbar-menu-sep" />}
+                {narrow && canHistory && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setToolbarMoreOpen(false);
+                      closeOverlappingChrome("history");
+                      setHistoryOpen(true);
+                    }}
+                  >
+                    Timeline
+                    {lastCommit ? (
+                      <span className="toolbar-menu-hint">{lastCommit.slice(0, 7)}</span>
+                    ) : null}
+                  </button>
+                )}
+                {narrow && !isGuest && (
+                  <>
+                    <div className="toolbar-menu-label" role="presentation">
+                      Library
+                    </div>
+                    <Link
+                      role="menuitem"
+                      to="/library"
+                      onClick={() => setToolbarMoreOpen(false)}
+                    >
+                      Library
+                    </Link>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setToolbarMoreOpen(false);
+                        closeOverlappingChrome("library");
+                        setLibraryOpen(true);
+                      }}
+                    >
+                      Cite from library
+                    </button>
+                  </>
+                )}
+                {narrow && (canHistory || !isGuest) && <div className="toolbar-menu-sep" />}
+                {!isGuest && project?.path ? (
+                  <>
+                    <CopyPathMenuItem path={project.path} />
+                    <div className="toolbar-menu-sep" />
+                  </>
+                ) : null}
+                {narrow && <div className="toolbar-menu-label" role="presentation">Sharing</div>}
+                {!isGuest && !(session.kind === "host" && session.remote) && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setToolbarMoreOpen(false);
+                      closeOverlappingChrome("phone");
+                      setPhoneOpen(true);
+                    }}
+                  >
+                    Open on your phone
+                  </button>
+                )}
                 {!isGuest && (
                   <button
                     type="button"
@@ -2451,6 +2737,19 @@ export function EditorPage() {
                   >
                     Share
                     {shareActive ? <span className="toolbar-menu-hint">Live</span> : null}
+                  </button>
+                )}
+                {!isGuest && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setToolbarMoreOpen(false);
+                      setShareOpen(false);
+                      setFileAccessOpen(true);
+                    }}
+                  >
+                    File access
                   </button>
                 )}
                 {(!isGuest || !readOnly) && (
@@ -2505,9 +2804,32 @@ export function EditorPage() {
                   </button>
                 )}
                 <div className="toolbar-menu-sep" />
-                <div className="toolbar-menu-theme" onMouseDown={(e) => e.stopPropagation()}>
-                  <ThemePicker compact />
-                </div>
+                {narrow ? (
+                  <button type="button" role="menuitem" onClick={() => setMenuSettings((v) => !v)}>
+                    Settings
+                  </button>
+                ) : null}
+                {(!narrow || menuSettings) && (
+                  <div className="toolbar-menu-theme" onMouseDown={(e) => e.stopPropagation()}>
+                    {narrow && !isGuest && collab.identities.length > 0 && (
+                      <label className="identity-picker toolbar-menu-identity">
+                        <span className="identity-picker-label">You</span>
+                        <select
+                          value={collab.identity?.id ?? ""}
+                          onChange={(e) => collab.setIdentityId(e.target.value)}
+                          aria-label="Select identity"
+                        >
+                          {collab.identities.map((ident) => (
+                            <option key={ident.id} value={ident.id}>
+                              {ident.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
+                    <ThemePicker compact />
+                  </div>
+                )}
                 {isRemoteHost && (
                   <button
                     type="button"
@@ -2523,6 +2845,11 @@ export function EditorPage() {
                 {canDownload && (
                   <>
                     <div className="toolbar-menu-sep" />
+                    {narrow && (
+                      <div className="toolbar-menu-label" role="presentation">
+                        Download
+                      </div>
+                    )}
                     <a
                       role="menuitem"
                       href={downloadUrl(id, "pdf", branchId, viewingGitHash)}
@@ -2575,11 +2902,26 @@ export function EditorPage() {
           projectId={id}
           open={shareOpen}
           onClose={() => setShareOpen(false)}
+          onManageFileAccess={() => {
+            setShareOpen(false);
+            setFileAccessOpen(true);
+          }}
           onActiveChange={onShareStatus}
           onTimelineChange={onTimelineChange}
         />
       )}
+      {!isGuest && id && (
+        <HostAccessPanel open={phoneOpen} onClose={() => setPhoneOpen(false)} nextPath={`/p/${encodeURIComponent(id)}`} />
+      )}
 
+      <FileAccessDrawer
+        projectId={id}
+        open={fileAccessOpen}
+        onClose={() => setFileAccessOpen(false)}
+        actor={fileActor}
+        nodes={tree}
+        onChanged={() => void refreshTree()}
+      />
       {(!isGuest || !readOnly) && (
         <AiLinkPanel
           projectId={id}
@@ -2632,6 +2974,16 @@ export function EditorPage() {
           onTimelineChange(view);
         }}
       />
+
+      {!isGuest && (
+        <LibraryPanel
+          open={libraryOpen}
+          onClose={() => setLibraryOpen(false)}
+          projectId={id}
+          onCiteIntoProject={(citekey) => void syncLibraryCite(citekey)}
+          onCitationsChanged={(instances) => setCitationInstances(instances)}
+        />
+      )}
 
       {!isGuest && (
         <MergePanel
@@ -2728,6 +3080,8 @@ export function EditorPage() {
                 }}
                 canMutateActive={Boolean(activePath)}
                 readOnly={readOnly || !timelineCanEdit}
+                actor={fileActor}
+                onSetAccess={(filePath, level) => void setFileAccess(filePath, level)}
                 fileChanges={fileChangeMap}
               />
             )}
@@ -2803,6 +3157,15 @@ export function EditorPage() {
                           </button>
                         )}
                       </div>
+                      {activePath && findTreeNode(tree, activePath)?.access?.canWrite === false && (
+                        <div className="file-access-banner" role="status">
+                          {findTreeNode(tree, activePath)?.access?.reason === "protected"
+                            ? "Protected: edit on the computer running OpenLeaf."
+                            : findTreeNode(tree, activePath)?.access?.reason === "locked-local"
+                              ? "Only editable on the computer running OpenLeaf."
+                              : "Read-only: the host locked this file. You can still comment."}
+                        </div>
+                      )}
                       <CodeEditor
                         path={activePath}
                         value={content}
@@ -2810,12 +3173,20 @@ export function EditorPage() {
                         onSave={() => void save({ compile: true })}
                         jumpTo={jumpTo}
                         citations={citations}
+                        citationHints={citationHints}
                         labels={labels}
+                        onLibraryCite={(citekey) => void syncLibraryCite(citekey)}
                         onForwardSearch={(line, col) => void onForwardSearch(line, col)}
                         yText={collabText ? yText : null}
                         awareness={collabText ? collab.awareness : null}
-                        readOnly={readOnly || !timelineCanEdit || viewingDeletedFile}
+                        readOnly={
+                          readOnly ||
+                          !timelineCanEdit ||
+                          viewingDeletedFile ||
+                          (activePath ? findTreeNode(tree, activePath)?.access?.canWrite === false : false)
+                        }
                         commentMarks={commentMarks}
+                        citationMarks={citationMarks}
                         onRequestComment={onRequestComment}
                         onOpenCommentThread={(threadId) => {
                           setFocusCommentId(threadId);
@@ -2862,6 +3233,7 @@ export function EditorPage() {
                 </div>
               }
               right={
+                <Suspense fallback={<div className="pdf-empty">Loading PDF viewer…</div>}>
                 <PdfViewer
                   key={`${id}:${branchId}:${viewingGitHash ?? "tip"}`}
                   url={pdfViewerUrl}
@@ -2870,6 +3242,8 @@ export function EditorPage() {
                   onCommentAt={(page, x, y) => void onPdfComment(page, x, y)}
                   highlight={pdfHighlight}
                   overlays={diffOn && !trackChangesPreviewOn ? diffBoxes : undefined}
+                  projectId={id}
+                  staleBanner={stalePdf ? "Showing the last successful PDF" : null}
                   diffHighlight={
                     config?.git?.enabled === false
                       ? null
@@ -2894,6 +3268,7 @@ export function EditorPage() {
                         }
                   }
                 />
+                </Suspense>
               }
             />
           </div>
@@ -2904,7 +3279,12 @@ export function EditorPage() {
             log={log}
             open={logOpen}
             onToggle={() => setLogOpen((v) => !v)}
-            height={narrow ? 140 : 180}
+            height={narrow ? 220 : 220}
+            issues={compileIssues}
+            onJump={(issue) => {
+              if (!issue.file || !issue.line) return;
+              jumpToAnchor({ file: issue.file, line: issue.line, column: 1 });
+            }}
           />
         )}
         {narrow && (

@@ -14,10 +14,19 @@ import {
 } from "../projectFs.js";
 import { ensureBranchRoot } from "../timeline.js";
 import { ProjectDiskWatch } from "./diskWatch.js";
+import { readRulesSync, type FileAccessRule } from "../fileAccess.js";
 import { patchYText, threeWayMerge } from "./textMerge.js";
 
 const FILES_MAP = "files";
 const META_MAP = "meta";
+
+function collabDebug(message: string): void {
+  const flag = process.env.OPENLEAF_DEBUG ?? "";
+  const nodeDebug = process.env.DEBUG ?? "";
+  if (flag === "1" || flag.includes("collab") || nodeDebug.includes("openleaf:collab")) {
+    console.error(`[collab] ${message}`);
+  }
+}
 
 /** Keep collab sync responsive — large CSVs/JSON under data/ must not enter the Y.Doc. */
 const MAX_COLLAB_FILE_BYTES = 256 * 1024;
@@ -124,7 +133,17 @@ function resolveInRoot(rootDir: string, relativePath: string): string {
 async function writeInRoot(rootDir: string, relativePath: string, content: string): Promise<void> {
   const full = resolveInRoot(rootDir, relativePath);
   await fs.mkdir(path.dirname(full), { recursive: true });
-  await fs.writeFile(full, content, "utf8");
+  // Rename into place so a concurrent reader never sees a torn file. A torn
+  // main.tex (start present, end missing) was ingested back into the CRDT and
+  // dropped the other client's edit under load.
+  const tmp = `${full}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    await fs.writeFile(tmp, content, "utf8");
+    await fs.rename(tmp, full);
+  } catch (err) {
+    await fs.rm(tmp, { force: true }).catch(() => undefined);
+    throw err;
+  }
 }
 
 async function getTreeFromRoot(rootDir: string): Promise<TreeNode[]> {
@@ -186,6 +205,9 @@ export class ProjectRoom {
   private dirtyPaths = new Set<string>();
   /** Last content written to disk or ingested from disk — the 3-way merge base. */
   private diskBaseline = new Map<string, string>();
+  /** Exact bytes last written by this room, so a watch echo is not merged back. */
+  private lastWritten = new Map<string, string>();
+  private ruleCache: { mtimeMs: number; rules: FileAccessRule[] } | null = null;
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
   private seeding = new Map<string, Promise<Y.Text>>();
@@ -206,7 +228,7 @@ export class ProjectRoom {
     this.files = this.doc.getMap(FILES_MAP);
     this.meta = this.doc.getMap(META_MAP);
     this.updateHandler = (_update, origin) => {
-      if (origin === "disk-seed" || origin === "disk-flush" || origin === "tree-sync") return;
+      if (origin === "disk-seed" || origin === "disk-flush" || origin === "tree-sync" || origin === "access-revert") return;
       // comments.json lives on disk; only bump meta for live clients
       if (origin === "comments") {
         this.schedulePersist();
@@ -223,7 +245,8 @@ export class ProjectRoom {
       if (
         transaction.origin === "disk-seed" ||
         transaction.origin === "disk-flush" ||
-        transaction.origin === "tree-sync"
+        transaction.origin === "tree-sync" ||
+        transaction.origin === "access-revert"
       ) {
         return;
       }
@@ -271,7 +294,23 @@ export class ProjectRoom {
     return this.clients.size;
   }
 
+  /** Rules for this project, recomputed when openleaf.json changes. */
+  accessRules(): FileAccessRule[] {
+    const file = path.join(projectDir(this.projectId), "openleaf.json");
+    let mtimeMs = -1;
+    try {
+      mtimeMs = fsSync.statSync(file).mtimeMs;
+    } catch {
+      mtimeMs = -1;
+    }
+    if (this.ruleCache && this.ruleCache.mtimeMs === mtimeMs) return this.ruleCache.rules;
+    const rules = readRulesSync(projectDir(this.projectId));
+    this.ruleCache = { mtimeMs, rules };
+    return rules;
+  }
+
   private scheduleFlush(): void {
+    if (this.closing || this.destroyed) return;
     const ms = loadConfig().collab.flushMs;
     if (this.flushTimer) clearTimeout(this.flushTimer);
     // Background disk flush only — commits happen on explicit save / FS mutations
@@ -331,16 +370,20 @@ export class ProjectRoom {
         const disk = diskNow.has(filePath) ? diskNow.get(filePath)! : this.readDiskText(filePath);
         if (disk === content) {
           this.diskBaseline.set(filePath, content);
+          this.lastWritten.set(filePath, content);
           continue;
         }
         try {
           await writeInRoot(this.rootDir, filePath, content);
           this.diskBaseline.set(filePath, content);
+          this.lastWritten.set(filePath, content);
+          if (ytext.toString() !== content) this.dirtyPaths.add(filePath);
         } catch (err) {
           this.dirtyPaths.add(filePath);
           throw err;
         }
       }
+      if (this.dirtyPaths.size > 0 && !this.closing) this.scheduleFlush();
       this.doc.transact(() => {
         this.meta.set("flushAt", Date.now());
       }, "disk-flush");
@@ -411,6 +454,7 @@ export class ProjectRoom {
       const treeChanged: string[] = [];
       let commentsChanged = false;
       let mergedDirty = false;
+      let echoDirty = false;
 
       this.doc.transact(() => {
         for (const filePath of unique) {
@@ -468,6 +512,14 @@ export class ProjectRoom {
           const diskText = this.readDiskText(filePath);
           if (diskText === null) continue;
           const content = diskText;
+          if (existing && this.lastWritten.get(filePath) === content) {
+            if (existing.toString() === content) this.diskBaseline.set(filePath, content);
+            else {
+              this.dirtyPaths.add(filePath);
+              echoDirty = true;
+            }
+            continue;
+          }
           if (existing && existing.toString() === content) {
             this.diskBaseline.set(filePath, content);
             continue;
@@ -502,7 +554,7 @@ export class ProjectRoom {
         }
       }, "disk-seed");
 
-      if (mergedDirty) this.scheduleFlush();
+      if (mergedDirty || echoDirty) this.scheduleFlush();
     });
   }
 
@@ -782,6 +834,7 @@ export class ProjectRoom {
       }
     }
     this.destroyed = true;
+    collabDebug(`room destroy ${this.key}`);
     this.doc.off("update", this.updateHandler);
     this.doc.destroy();
   }
@@ -789,6 +842,14 @@ export class ProjectRoom {
 
 const rooms = new Map<string, ProjectRoom>();
 const roomCreating = new Map<string, Promise<ProjectRoom>>();
+const renamingIds = new Set<string>();
+
+/** Block new rooms while the project folder is moving to a new id. */
+export function setProjectRenaming(projectId: string, on: boolean): void {
+  if (on) renamingIds.add(projectId);
+  else renamingIds.delete(projectId);
+}
+
 let generationCounter = 0;
 
 /** Tips sealed during prune/delete — blocks new collab rooms and disk flushes. */
@@ -831,10 +892,28 @@ export function getProjectRooms(projectId: string): ProjectRoom[] {
   return [...rooms.values()].filter((r) => r.key.startsWith(prefix));
 }
 
+/** Flush every open editor for this project and drop the rooms before the folder moves. */
+export async function closeProjectRooms(projectId: string): Promise<void> {
+  const prefix = `${projectId}::`;
+  const pending = [...roomCreating.entries()].filter(([key]) => key.startsWith(prefix));
+  await Promise.all(pending.map(([, creating]) => creating.catch(() => undefined)));
+  for (const room of getProjectRooms(projectId)) {
+    roomCreating.delete(room.key);
+    try {
+      await room.destroy();
+    } finally {
+      if (rooms.get(room.key) === room) rooms.delete(room.key);
+    }
+  }
+}
+
 export async function getOrCreateRoom(
   projectId: string,
   branchId = "main",
 ): Promise<ProjectRoom> {
+  if (renamingIds.has(projectId)) {
+    throw Object.assign(new Error("This project is being renamed"), { status: 409 });
+  }
   const key = roomKey(projectId, branchId);
   if (isBranchRoomSealed(projectId, branchId)) {
     throw Object.assign(new Error("This tip was pruned and cannot be opened"), { status: 410 });
@@ -897,13 +976,23 @@ export async function getOrCreateRoom(
         await room.destroy({ skipFlush: true });
         return raced;
       }
+      if (renamingIds.has(projectId)) {
+        await room.destroy();
+        roomCreating.delete(key);
+        throw Object.assign(new Error("This project is being renamed"), { status: 409 });
+      }
       rooms.set(key, room);
       roomCreating.delete(key);
+      collabDebug(`room create ${key}`);
       return room;
     })();
     roomCreating.set(key, creating);
   }
   return creating;
+}
+
+export async function flushAllOpenRooms(): Promise<void> {
+  await Promise.all([...rooms.values()].map((room) => room.flushNow({ commit: false })));
 }
 
 export async function flushProjectRoom(
