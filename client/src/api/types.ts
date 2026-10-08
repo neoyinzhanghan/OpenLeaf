@@ -167,6 +167,7 @@ export type TrackChangesResult = CompileResult & {
   cached: boolean;
   expandedMacros: string[];
   scratchRelative: string;
+  tableMarkup?: "cells" | "atomic";
 };
 
 export type SynctexHit = {

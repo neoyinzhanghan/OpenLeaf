@@ -6,12 +6,15 @@ import { compileProjectAtRoot, texEnv, type CompileResult } from "./compiler.js"
 import { getProject, pdfPathAbs, projectDir, readProjectConfig } from "./projectFs.js";
 import { getProjectCommit, isGitEnabled, type GitCommitInfo } from "./projectGit.js";
 import { ensureSnapshotRoot } from "./timeline.js";
+import { detectMovedParagraphs, renderMovedParagraphs, TEXT_MOVED_PREAMBLE } from "./trackChangesParagraphs.js";
+import { alignMovedSections, SECTION_MOVED_PREAMBLE } from "./trackChangesSections.js";
+import { prepareTableBlocks, renderTableBlocks, unwrapHeadingTargets } from "./trackChangesTables.js";
 
 const HASH_RE = /^[0-9a-f]{7,40}$/i;
 const LATEXDIFF_TIMEOUT_MS = 120_000;
 const MARKER = ".openleaf-track-changes-ok";
 /** Bump when marked-tex post-processing changes so old scratch PDFs are rebuilt. */
-const MARKER_VERSION = "2";
+const MARKER_VERSION = "5";
 
 /** Treat these as atomic replacements so cell-level latexdiff does not break compile. */
 export const LATEXDIFF_PICTURE_ENV =
@@ -28,8 +31,9 @@ const DEL_BLOCK_RE = /\\DIFdelbegin[\s\S]*?\\DIFdelend/g;
 
 export type TableAnnotations = { changed: number; removed: number };
 
-function injectTableNotePreamble(tex: string, snippet: string): string {
-  if (tex.includes("%DIF OPENLEAF TABLE NOTES")) return tex;
+/** `snippet`'s first line is its marker; it is injected once before \begin{document}. */
+function injectPreamble(tex: string, snippet: string): string {
+  if (tex.includes(snippet.split("\n")[0])) return tex;
   const begin = tex.indexOf("\\begin{document}");
   if (begin < 0) return snippet + tex;
   return `${tex.slice(0, begin)}${snippet}${tex.slice(begin)}`;
@@ -69,7 +73,7 @@ export function annotateReplacedTables(tex: string): { tex: string; tables: Tabl
         "\\providecommand{\\OpenLeafTableRemoved}{\\par\\noindent{\\protect\\color{red}\\small\\itshape Table removed.}\\par}",
       );
     }
-    marked = injectTableNotePreamble(marked, `${macros.join("\n")}\n`);
+    marked = injectPreamble(marked, `${macros.join("\n")}\n`);
   }
   return { tex: marked, tables: { changed, removed } };
 }
@@ -80,6 +84,8 @@ export type TrackChangesResult = CompileResult & {
   cached: boolean;
   expandedMacros: string[];
   scratchRelative: string;
+  /** `cells`: move-aware cell-level table markup; `atomic`: whole-table notes only (fallback). */
+  tableMarkup?: "cells" | "atomic";
 };
 
 function err(status: number, message: string): Error {
@@ -471,53 +477,110 @@ async function generateTrackChangesUnlocked(
     onChunk?.(`[openleaf] expanded metrics macros in body: ${expanded.expanded.join(", ")}\n`);
   }
 
-  await fsPromises.rm(scratch, { recursive: true, force: true });
-  await copySnapshotTree(newSnap, scratch);
-
-  const workDir = path.join(scratch, ".openleaf", "latexdiff");
-  await fsPromises.mkdir(workDir, { recursive: true });
-  const oldFlatPath = path.join(workDir, "old-flat.tex");
-  const newFlatPath = path.join(workDir, "new-flat.tex");
-  await fsPromises.writeFile(oldFlatPath, expanded.old, "utf8");
-  await fsPromises.writeFile(newFlatPath, expanded.new, "utf8");
-
-  onChunk?.("[openleaf] latexdiff (tables as atomic replacements)\n");
-  const diffOut = path.join(scratch, mainFile);
-  await fsPromises.mkdir(path.dirname(diffOut), { recursive: true });
+  const oldSrc = unwrapHeadingTargets(expanded.old);
+  const newSrc = unwrapHeadingTargets(expanded.new);
   const markupArgs = await latexdiffMarkupArgs();
   if (markupArgs.includes("--subtype=COLOR")) {
     onChunk?.("[openleaf] ulem.sty not found; using color markup instead of underline/strikethrough\n");
   }
+  const ldArgs = [
+    "--encoding=utf8",
+    "--graphics-markup=none",
+    `--config=PICTUREENV=${LATEXDIFF_PICTURE_ENV}`,
+    "--append-textcmd=captionof",
+    ...markupArgs,
+  ];
 
-  const ld = await runTool(
-    "latexdiff",
-    [
-      "--encoding=utf8",
-      "--graphics-markup=none",
-      `--config=PICTUREENV=${LATEXDIFF_PICTURE_ENV}`,
-      ...markupArgs,
-      oldFlatPath,
-      newFlatPath,
-    ],
-    scratch,
-    LATEXDIFF_TIMEOUT_MS,
-    onChunk,
-  );
-  if (ld.code !== 0) {
-    throw err(500, `latexdiff failed${ld.stderr.trim() ? `: ${ld.stderr.slice(-400)}` : ""}`);
-  }
+  /** Table cells and moved paragraphs get their own markup; `false` is the plain fallback. */
+  const build = async (enhanced: boolean): Promise<CompileResult> => {
+    await fsPromises.rm(scratch, { recursive: true, force: true });
+    await copySnapshotTree(newSnap, scratch);
 
-  const marked = ld.stdout;
-  if (!marked.trim()) throw err(500, "latexdiff produced an empty file");
-  const annotated = annotateReplacedTables(marked);
-  if (annotated.tables.changed + annotated.tables.removed > 0) {
+    const workDir = path.join(scratch, ".openleaf", "latexdiff");
+    await fsPromises.mkdir(workDir, { recursive: true });
+    const prepared = enhanced ? prepareTableBlocks(oldSrc, newSrc) : null;
+    const aligned = alignMovedSections(prepared?.old ?? oldSrc, prepared?.new ?? newSrc);
+    if (aligned.moved.length) {
+      onChunk?.(`[openleaf] sections moved: ${aligned.moved.join("; ")}\n`);
+    }
+    const moves = enhanced ? detectMovedParagraphs(aligned.old, aligned.new) : null;
+    if (moves?.blocks.size) {
+      onChunk?.(`[openleaf] paragraphs moved between sections: ${moves.blocks.size}\n`);
+    }
+    const oldFlatPath = path.join(workDir, "old-flat.tex");
+    const newFlatPath = path.join(workDir, "new-flat.tex");
+    await fsPromises.writeFile(oldFlatPath, moves?.old ?? aligned.old, "utf8");
+    await fsPromises.writeFile(newFlatPath, moves?.new ?? aligned.new, "utf8");
+
+    let mini = 0;
+    const miniDiff = async (oldBody: string, newBody: string): Promise<string> => {
+      mini += 1;
+      const doc = (body: string) => `\\documentclass{article}\n\\begin{document}\n${body}\n\\end{document}\n`;
+      const a = path.join(workDir, `block-${mini}-old.tex`);
+      const b = path.join(workDir, `block-${mini}-new.tex`);
+      await fsPromises.writeFile(a, doc(oldBody), "utf8");
+      await fsPromises.writeFile(b, doc(newBody), "utf8");
+      const r = await runTool("latexdiff", [...ldArgs, a, b], workDir, LATEXDIFF_TIMEOUT_MS);
+      const m = /\\begin\{document\}\n?([\s\S]*?)\n?\\end\{document\}/.exec(r.stdout);
+      if (r.code !== 0 || !m) throw new Error("latexdiff failed on a table or moved-text block");
+      return m[1];
+    };
+
     onChunk?.(
-      `[openleaf] table notes: ${annotated.tables.changed} changed, ${annotated.tables.removed} removed\n`,
+      enhanced
+        ? `[openleaf] latexdiff (${prepared!.blocks.size} table(s) diffed cell-by-cell)\n`
+        : "[openleaf] latexdiff (tables as atomic replacements)\n",
     );
-  }
-  await fsPromises.writeFile(diffOut, annotated.tex, "utf8");
+    const diffOut = path.join(scratch, mainFile);
+    await fsPromises.mkdir(path.dirname(diffOut), { recursive: true });
 
-  const compiled = await compileProjectAtRoot(id, onChunk, scratch);
+    const ld = await runTool("latexdiff", [...ldArgs, oldFlatPath, newFlatPath], scratch, LATEXDIFF_TIMEOUT_MS, onChunk);
+    if (ld.code !== 0) {
+      throw err(500, `latexdiff failed${ld.stderr.trim() ? `: ${ld.stderr.slice(-400)}` : ""}`);
+    }
+
+    const marked = ld.stdout;
+    if (!marked.trim()) throw err(500, "latexdiff produced an empty file");
+    const annotated = annotateReplacedTables(marked);
+    if (annotated.tables.changed + annotated.tables.removed > 0) {
+      onChunk?.(
+        `[openleaf] table notes: ${annotated.tables.changed} changed, ${annotated.tables.removed} removed\n`,
+      );
+    }
+    let tex = annotated.tex;
+    if (prepared) {
+      const rendered = await renderTableBlocks(tex, prepared.blocks, miniDiff);
+      tex = rendered.tex;
+      const s = rendered.stats;
+      onChunk?.(
+        `[openleaf] tables: ${s.cellLevel} changed (cell-level), ${s.added} new, ${s.moved} moved, ${s.atomic} atomic\n`,
+      );
+    }
+    if (moves?.blocks.size) {
+      tex = injectPreamble(await renderMovedParagraphs(tex, moves.blocks, miniDiff), TEXT_MOVED_PREAMBLE);
+    }
+    if (aligned.moved.length) tex = injectPreamble(tex, SECTION_MOVED_PREAMBLE);
+    await fsPromises.writeFile(diffOut, tex, "utf8");
+    return compileProjectAtRoot(id, onChunk, scratch);
+  };
+
+  let tableMarkup: "cells" | "atomic" = "cells";
+  let compiled: CompileResult | null = null;
+  try {
+    compiled = await build(true);
+    if (!compiled.ok) {
+      onChunk?.(
+        "[openleaf] markup PDF did not compile with cell-level tables and moved-text markup; retrying with plain latexdiff\n",
+      );
+    }
+  } catch (e) {
+    if ((e as { status?: number }).status) throw e;
+    onChunk?.(`[openleaf] table / moved-text markup failed (${(e as Error).message}); retrying with plain latexdiff\n`);
+  }
+  if (!compiled?.ok) {
+    tableMarkup = "atomic";
+    compiled = await build(false);
+  }
   if (compiled.ok) {
     await fsPromises.writeFile(
       markerPath(scratch),
@@ -533,5 +596,6 @@ async function generateTrackChangesUnlocked(
     cached: false,
     expandedMacros: expanded.expanded,
     scratchRelative,
+    tableMarkup,
   };
 }
