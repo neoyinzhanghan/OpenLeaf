@@ -292,11 +292,13 @@ export function getDiffHighlights(
   since?: string,
   branchId?: string,
   at?: string | null,
+  root?: string | null,
 ): Promise<DiffHighlightsResult> {
   const params = new URLSearchParams();
   if (since) params.set("since", since);
   if (branchId) params.set("branchId", branchId);
   if (at) params.set("at", at);
+  if (root) params.set("root", root);
   const q = params.toString() ? `?${params}` : "";
   return request(`/api/projects/${encodeURIComponent(id)}/diff-highlights${q}`);
 }
@@ -446,31 +448,58 @@ export function renameProjectPath(
   });
 }
 
-export function pdfUrl(id: string, bust?: number, branchId?: string, at?: string | null): string {
+export function pdfUrl(
+  id: string,
+  bust?: number,
+  branchId?: string,
+  at?: string | null,
+  root?: string | null,
+): string {
   const params = new URLSearchParams();
   if (bust != null) params.set("t", String(bust));
   if (at) params.set("at", at);
   else if (branchId) params.set("branchId", branchId);
+  if (root) params.set("root", root);
   const q = params.toString() ? `?${params}` : "";
   return `/api/projects/${encodeURIComponent(id)}/pdf${q}`;
 }
 
 /** Inline (non-attachment) latexdiff PDF for the preview pane. Generate first. */
-export function trackChangesPdfUrl(id: string, from: string, to: string, bust?: number): string {
+export function trackChangesPdfUrl(
+  id: string,
+  from: string,
+  to: string,
+  bust?: number,
+  root?: string | null,
+): string {
   const params = new URLSearchParams({ mode: "track-changes", from, to });
   if (bust != null) params.set("t", String(bust));
+  if (root) params.set("root", root);
   return `/api/projects/${encodeURIComponent(id)}/pdf?${params}`;
 }
 
-export function downloadUrl(id: string, format: "pdf" | "zip", branchId?: string, at?: string | null): string {
+export function downloadUrl(
+  id: string,
+  format: "pdf" | "zip",
+  branchId?: string,
+  at?: string | null,
+  root?: string | null,
+): string {
   const params = new URLSearchParams({ format });
   if (at) params.set("at", at);
   else if (branchId) params.set("branchId", branchId);
+  if (format === "pdf" && root) params.set("root", root);
   return `/api/projects/${encodeURIComponent(id)}/download?${params}`;
 }
 
-export function trackChangesDownloadUrl(id: string, from: string, to: string): string {
+export function trackChangesDownloadUrl(
+  id: string,
+  from: string,
+  to: string,
+  root?: string | null,
+): string {
   const params = new URLSearchParams({ format: "track-changes", from, to });
+  if (root) params.set("root", root);
   return `/api/projects/${encodeURIComponent(id)}/download?${params}`;
 }
 
@@ -481,6 +510,7 @@ export function synctexLookup(
   y: number,
   branchId?: string,
   at?: string | null,
+  root?: string | null,
 ): Promise<SynctexHit> {
   const params = new URLSearchParams({
     direction: "reverse",
@@ -490,6 +520,7 @@ export function synctexLookup(
   });
   if (at) params.set("at", at);
   else if (branchId) params.set("branchId", branchId);
+  if (root) params.set("root", root);
   return request(`/api/projects/${encodeURIComponent(id)}/synctex?${params}`);
 }
 
@@ -500,6 +531,7 @@ export function synctexForward(
   column = 1,
   branchId?: string,
   at?: string | null,
+  root?: string | null,
 ): Promise<SynctexForwardHit> {
   const params = new URLSearchParams({
     direction: "forward",
@@ -509,6 +541,7 @@ export function synctexForward(
   });
   if (at) params.set("at", at);
   else if (branchId) params.set("branchId", branchId);
+  if (root) params.set("root", root);
   return request(`/api/projects/${encodeURIComponent(id)}/synctex?${params}`);
 }
 
@@ -579,12 +612,13 @@ export type CompileHandlers = {
 export function compileProject(
   id: string,
   handlers: CompileHandlers = {},
-  opts?: { branchId?: string; at?: string | null },
+  opts?: { branchId?: string; at?: string | null; root?: string | null },
 ): Promise<CompileResult> {
   return new Promise((resolve, reject) => {
     const params = new URLSearchParams({ stream: "1" });
     if (opts?.at) params.set("at", opts.at);
     else if (opts?.branchId) params.set("branchId", opts.branchId);
+    if (opts?.root) params.set("root", opts.root);
     fetch(`/api/projects/${encodeURIComponent(id)}/compile?${params}`, {
       method: "POST",
       credentials: "include",
@@ -638,13 +672,14 @@ export function generateTrackChanges(
   from: string,
   to: string,
   handlers: CompileHandlers = {},
+  root?: string | null,
 ): Promise<TrackChangesResult> {
   return new Promise((resolve, reject) => {
     fetch(`/api/projects/${encodeURIComponent(id)}/track-changes?stream=1`, {
       method: "POST",
       credentials: "include",
       headers: { Accept: "text/event-stream", "Content-Type": "application/json" },
-      body: JSON.stringify({ from, to }),
+      body: JSON.stringify({ from, to, ...(root ? { root } : {}) }),
     })
       .then(async (res) => {
         if (!res.ok || !res.body) {

@@ -18,6 +18,7 @@ const { ensureProjectGit } = await import("./projectGit.js");
 const {
   annotateReplacedTables,
   expandChangedMetricsMacros,
+  emptyDocumentMatching,
   flattenTexFile,
   generateTrackChanges,
   hasLatexdiff,
@@ -166,6 +167,15 @@ a & 2 \\\\
     assert.match(r.tex, /\\OpenLeafTableChanged/);
     assert.match(r.tex, /Table changed/);
     assert.doesNotMatch(r.tex, /\\OpenLeafTableRemoved/);
+  });
+
+  it("builds an empty baseline from the new document preamble", () => {
+    const flat = "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\nHello.\n\\end{document}\n";
+    assert.equal(
+      emptyDocumentMatching(flat),
+      "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\\end{document}\n",
+    );
+    assert.equal(emptyDocumentMatching("no document here"), null);
   });
 
   it("adds a Table removed note when a tabular is deleted with no replacement", () => {
@@ -454,6 +464,25 @@ describe("generateTrackChanges", () => {
     const again = await generateTrackChanges("tc-prose", oldHash, newHash);
     assert.equal(again.ok, true);
     assert.equal(again.cached, true);
+  });
+
+  it("marks a document that did not exist in the baseline as entirely added", { skip: !latexdiffInstalled }, async () => {
+    const supp = `\\documentclass{article}
+\\begin{document}
+Supplementary paragraph.
+\\end{document}
+`;
+    const { dir, oldHash, newHash } = await twoCommitProject(
+      "tc-new-root",
+      { "main.tex": ARTICLE_OLD },
+      { "main.tex": ARTICLE_OLD, "supplementary.tex": supp },
+    );
+    const result = await generateTrackChanges("tc-new-root", oldHash, newHash, undefined, "supplementary.tex");
+    assert.equal(result.ok, true, result.log.slice(-800));
+    assert.equal(result.mainFile, "supplementary.tex");
+    const marked = fs.readFileSync(path.join(dir, result.scratchRelative, "supplementary.tex"), "utf8");
+    assert.match(marked, /Supplementary paragraph/);
+    assert.match(marked, /\\DIF(add|addbegin)/i);
   });
 
   it("flattens multi-file \\input so section edits are marked", { skip: !latexdiffInstalled }, async () => {

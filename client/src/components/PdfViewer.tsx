@@ -146,6 +146,8 @@ type Props = {
   projectId?: string;
   /** Shown when this build failed but an older PDF is still on screen. */
   staleBanner?: string | null;
+  /** Root-level document being previewed when it is not the saved main file. */
+  sourceLabel?: string | null;
 };
 
 type ScrollAnchor = {
@@ -303,6 +305,7 @@ export function PdfViewer({
   diffHighlight,
   projectId,
   staleBanner,
+  sourceLabel,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -1074,6 +1077,11 @@ export function PdfViewer({
         <span className="pane-title" style={{ padding: 0 }}>
           PDF
         </span>
+        {sourceLabel ? (
+          <span className="status-pill" title="This preview is a separate document, not the saved main file">
+            {sourceLabel}
+          </span>
+        ) : null}
         {shiftClickHint !== null ? (
           <span
             className="status-pill pdf-comment-hint"

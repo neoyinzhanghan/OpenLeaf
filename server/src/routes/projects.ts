@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { z, ZodError } from "zod";
 import { compileProject } from "../services/compiler.js";
+import { compileRootForTree } from "../services/compileRoot.js";
 import {
   clearCollabSnapshot,
   closeProjectRooms,
@@ -72,6 +73,10 @@ import {
   scanProjectCitations,
   verifyClaimInstance,
 } from "../services/library/citations.js";
+
+function requestedCompileRoot(query: { root?: unknown }): string | undefined {
+  return typeof query.root === "string" && query.root.trim() ? query.root.trim() : undefined;
+}
 
 export const projectsRouter = Router();
 const filesRouter = Router({ mergeParams: true });
@@ -676,7 +681,13 @@ projectsRouter.get("/:id/diff-highlights", async (req, res) => {
     const since = typeof req.query.since === "string" ? req.query.since : undefined;
     const at = typeof req.query.at === "string" ? req.query.at : undefined;
     const branchId = await resolveBranchIdWithActive(req, req.params.id);
-    const result = await computeDiffHighlights(req.params.id, since, branchId, at);
+    const result = await computeDiffHighlights(
+      req.params.id,
+      since,
+      branchId,
+      at,
+      requestedCompileRoot(req.query),
+    );
     res.json(result);
   } catch (err) {
     res.status(statusOf(err)).json({ error: publicErrorMessage(err) });
@@ -1174,7 +1185,7 @@ data: ${JSON.stringify(data)}
         (chunk) => {
           send("log", { chunk });
         },
-        { branchId, at },
+        { branchId, at, root: requestedCompileRoot(req.query) },
       );
       send("done", result);
     } catch (err) {
@@ -1185,7 +1196,11 @@ data: ${JSON.stringify(data)}
   }
 
   try {
-    const result = await compileProject(id, undefined, { branchId, at });
+    const result = await compileProject(id, undefined, {
+      branchId,
+      at,
+      root: requestedCompileRoot(req.query),
+    });
     res.status(result.ok ? 200 : 422).json(result);
   } catch (err) {
     res.status(statusOf(err)).json({ error: publicErrorMessage(err) });
@@ -1198,12 +1213,13 @@ projectsRouter.post("/:id/track-changes", async (req, res) => {
   const schema = z.object({
     from: z.string().min(7).max(40).regex(/^[0-9a-f]+$/i),
     to: z.string().min(7).max(40).regex(/^[0-9a-f]+$/i),
+    root: z.string().min(1).max(240).optional(),
   });
 
   const run = async (onChunk?: (chunk: string) => void) => {
     const body = schema.parse(req.body ?? {});
     const { generateTrackChanges } = await import("../services/trackChanges.js");
-    return generateTrackChanges(id, body.from, body.to, onChunk);
+    return generateTrackChanges(id, body.from, body.to, onChunk, body.root);
   };
 
   if (stream) {
@@ -1251,7 +1267,12 @@ projectsRouter.get("/:id/pdf", async (req, res) => {
         return;
       }
       const { findCachedTrackChangesPdf } = await import("../services/trackChanges.js");
-      const cached = await findCachedTrackChangesPdf(req.params.id, from, to);
+      const cached = await findCachedTrackChangesPdf(
+        req.params.id,
+        from,
+        to,
+        requestedCompileRoot(req.query),
+      );
       if (!cached) {
         res.status(404).json({ error: "Track-changes PDF not generated yet" });
         return;
@@ -1285,7 +1306,11 @@ projectsRouter.get("/:id/pdf", async (req, res) => {
       const branchId = await resolveBranchIdWithActive(req, req.params.id);
       root = await branchRoot(req.params.id, branchId);
     }
-    const pdf = pdfPathAbs(req.params.id, cfg.mainFile, root);
+    const pdf = pdfPathAbs(
+      req.params.id,
+      compileRootForTree(root, requestedCompileRoot(req.query), cfg.mainFile),
+      root,
+    );
     if (!fs.existsSync(pdf)) {
       res.status(404).json({ error: "PDF not found. Compile the project first." });
       return;
@@ -1314,6 +1339,19 @@ projectsRouter.get("/:id/synctex", async (req, res) => {
       const branchId = await resolveBranchIdWithActive(req, req.params.id);
       root = await branchRoot(req.params.id, branchId);
     }
+    const savedCfg = await readProjectConfig(req.params.id);
+    let savedMain = savedCfg.mainFile;
+    if (at) {
+      try {
+        const raw = JSON.parse(fs.readFileSync(path.join(root, "openleaf.json"), "utf8")) as {
+          mainFile?: string;
+        };
+        if (raw.mainFile) savedMain = raw.mainFile;
+      } catch {
+        /* keep tip config */
+      }
+    }
+    const docFile = compileRootForTree(root, requestedCompileRoot(req.query), savedMain);
     const direction = String(req.query.direction ?? "reverse");
     if (direction === "forward") {
       const schema = z.object({
@@ -1322,7 +1360,7 @@ projectsRouter.get("/:id/synctex", async (req, res) => {
         column: z.coerce.number().int().positive().optional(),
       });
       const q = schema.parse(req.query);
-      const hit = await forwardSynctex(req.params.id, q.file, q.line, q.column ?? 1, root);
+      const hit = await forwardSynctex(req.params.id, q.file, q.line, q.column ?? 1, root, docFile);
       if (!hit) {
         res.status(404).json({ error: "No SyncTeX hit" });
         return;
@@ -1337,7 +1375,7 @@ projectsRouter.get("/:id/synctex", async (req, res) => {
       y: z.coerce.number(),
     });
     const q = schema.parse(req.query);
-    const hit = await reverseSynctex(req.params.id, q.page, q.x, q.y, root);
+    const hit = await reverseSynctex(req.params.id, q.page, q.x, q.y, root, docFile);
     if (!hit) {
       res.status(404).json({ error: "No SyncTeX hit" });
       return;
@@ -1375,7 +1413,11 @@ projectsRouter.get("/:id/download", async (req, res) => {
         const branchId = await resolveBranchIdWithActive(req, req.params.id);
         root = await branchRoot(req.params.id, branchId);
       }
-      const pdf = pdfPathAbs(req.params.id, cfg.mainFile, root);
+      const pdf = pdfPathAbs(
+      req.params.id,
+      compileRootForTree(root, requestedCompileRoot(req.query), cfg.mainFile),
+      root,
+    );
       if (!fs.existsSync(pdf)) {
         res.status(404).json({ error: "PDF not found" });
         return;
@@ -1396,7 +1438,12 @@ projectsRouter.get("/:id/download", async (req, res) => {
         return;
       }
       const { findCachedTrackChangesPdf } = await import("../services/trackChanges.js");
-      const cached = await findCachedTrackChangesPdf(req.params.id, from, to);
+      const cached = await findCachedTrackChangesPdf(
+        req.params.id,
+        from,
+        to,
+        requestedCompileRoot(req.query),
+      );
       if (!cached) {
         res.status(404).json({ error: "Track-changes PDF not generated yet" });
         return;
