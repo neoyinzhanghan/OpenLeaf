@@ -2,16 +2,20 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import fsPromises from "node:fs/promises";
 import path from "node:path";
+import { compileRootForTree } from "./compileRoot.js";
 import { compileProjectAtRoot, texEnv, type CompileResult } from "./compiler.js";
 import { getProject, pdfPathAbs, projectDir, readProjectConfig } from "./projectFs.js";
 import { getProjectCommit, isGitEnabled, type GitCommitInfo } from "./projectGit.js";
 import { ensureSnapshotRoot } from "./timeline.js";
+import { detectMovedParagraphs, renderMovedParagraphs, TEXT_MOVED_PREAMBLE } from "./trackChangesParagraphs.js";
+import { alignMovedSections, SECTION_MOVED_PREAMBLE } from "./trackChangesSections.js";
+import { prepareTableBlocks, renderTableBlocks, unwrapHeadingTargets } from "./trackChangesTables.js";
 
 const HASH_RE = /^[0-9a-f]{7,40}$/i;
 const LATEXDIFF_TIMEOUT_MS = 120_000;
 const MARKER = ".openleaf-track-changes-ok";
 /** Bump when marked-tex post-processing changes so old scratch PDFs are rebuilt. */
-const MARKER_VERSION = "2";
+const MARKER_VERSION = "5";
 
 /** Treat these as atomic replacements so cell-level latexdiff does not break compile. */
 export const LATEXDIFF_PICTURE_ENV =
@@ -28,8 +32,9 @@ const DEL_BLOCK_RE = /\\DIFdelbegin[\s\S]*?\\DIFdelend/g;
 
 export type TableAnnotations = { changed: number; removed: number };
 
-function injectTableNotePreamble(tex: string, snippet: string): string {
-  if (tex.includes("%DIF OPENLEAF TABLE NOTES")) return tex;
+/** `snippet`'s first line is its marker; it is injected once before \begin{document}. */
+function injectPreamble(tex: string, snippet: string): string {
+  if (tex.includes(snippet.split("\n")[0])) return tex;
   const begin = tex.indexOf("\\begin{document}");
   if (begin < 0) return snippet + tex;
   return `${tex.slice(0, begin)}${snippet}${tex.slice(begin)}`;
@@ -69,7 +74,7 @@ export function annotateReplacedTables(tex: string): { tex: string; tables: Tabl
         "\\providecommand{\\OpenLeafTableRemoved}{\\par\\noindent{\\protect\\color{red}\\small\\itshape Table removed.}\\par}",
       );
     }
-    marked = injectTableNotePreamble(marked, `${macros.join("\n")}\n`);
+    marked = injectPreamble(marked, `${macros.join("\n")}\n`);
   }
   return { tex: marked, tables: { changed, removed } };
 }
@@ -80,6 +85,8 @@ export type TrackChangesResult = CompileResult & {
   cached: boolean;
   expandedMacros: string[];
   scratchRelative: string;
+  /** `cells`: move-aware cell-level table markup; `atomic`: whole-table notes only (fallback). */
+  tableMarkup?: "cells" | "atomic";
 };
 
 function err(status: number, message: string): Error {
@@ -170,8 +177,14 @@ export async function resolveTrackChangesCommit(id: string, raw: string): Promis
   return info;
 }
 
-export function trackChangesScratchDir(id: string, fromHash: string, toHash: string): string {
-  return path.join(projectDir(id), ".openleaf", "track-changes", `${fromHash}_${toHash}`);
+export function trackChangesScratchDir(
+  id: string,
+  fromHash: string,
+  toHash: string,
+  mainFile: string,
+): string {
+  const slug = mainFile.replace(/[^A-Za-z0-9._-]+/g, "_");
+  return path.join(projectDir(id), ".openleaf", "track-changes", `${fromHash}_${toHash}__${slug}`);
 }
 
 function markerPath(scratch: string): string {
@@ -290,6 +303,16 @@ export function parseNoArgNewcommands(tex: string): Map<string, string> {
   return out;
 }
 
+/**
+ * Same preamble as a flattened document, with an empty body.
+ * Used when the file did not exist at the baseline commit so latexdiff can mark it as added.
+ */
+export function emptyDocumentMatching(flatTex: string): string | null {
+  const m = flatTex.match(/\\begin\{document\}/);
+  if (!m || m.index === undefined) return null;
+  return `${flatTex.slice(0, m.index)}\\begin{document}\n\\end{document}\n`;
+}
+
 function splitPreamble(tex: string): { preamble: string; sep: string; body: string } {
   const m = tex.match(/\\begin\{document\}/);
   if (!m || m.index === undefined) return { preamble: "", sep: "", body: tex };
@@ -359,7 +382,7 @@ export function trackChangesPdfIfCached(
   toHash: string,
   mainFile: string,
 ): string | null {
-  const scratch = trackChangesScratchDir(id, fromHash, toHash);
+  const scratch = trackChangesScratchDir(id, fromHash, toHash, mainFile);
   if (!fs.existsSync(markerPath(scratch))) return null;
   try {
     const raw = fs.readFileSync(markerPath(scratch), "utf8");
@@ -375,13 +398,17 @@ export async function findCachedTrackChangesPdf(
   id: string,
   fromRaw: string,
   toRaw: string,
+  requestedRoot?: string,
 ): Promise<{ pdf: string; from: GitCommitInfo; to: GitCommitInfo; mainFile: string } | null> {
   await getProject(id);
   const from = await resolveTrackChangesCommit(id, fromRaw);
   const to = await resolveTrackChangesCommit(id, toRaw);
-  const scratch = trackChangesScratchDir(id, from.hash, to.hash);
-  const fallback = (await readProjectConfig(id)).mainFile;
-  const mainFile = readMainFile(scratch, fallback);
+  const projectCfg = await readProjectConfig(id);
+  let saved = projectCfg.mainFile;
+  const { snapshotRootIfPresent } = await import("./timeline.js");
+  const snap = snapshotRootIfPresent(id, to.hash);
+  if (snap) saved = readMainFile(snap, saved);
+  const mainFile = compileRootForTree(snap ?? projectDir(id), requestedRoot, saved);
   const pdf = trackChangesPdfIfCached(id, from.hash, to.hash, mainFile);
   if (!pdf) return null;
   return { pdf, from, to, mainFile };
@@ -392,10 +419,13 @@ export async function generateTrackChanges(
   fromRaw: string,
   toRaw: string,
   onChunk?: (chunk: string) => void,
+  requestedRoot?: string,
 ): Promise<TrackChangesResult> {
   await getProject(id);
   if (!isGitEnabled()) throw err(400, "Git backups are disabled");
-  return withTrackChangesLock(id, () => generateTrackChangesUnlocked(id, fromRaw, toRaw, onChunk));
+  return withTrackChangesLock(id, () =>
+    generateTrackChangesUnlocked(id, fromRaw, toRaw, onChunk, requestedRoot),
+  );
 }
 
 async function latexdiffMarkupArgs(): Promise<string[]> {
@@ -413,6 +443,7 @@ async function generateTrackChangesUnlocked(
   fromRaw: string,
   toRaw: string,
   onChunk?: (chunk: string) => void,
+  requestedRoot?: string,
 ): Promise<TrackChangesResult> {
   // Resolve commit hashes before checking latexdiff, so a bad hash is 404/400
   // rather than 501 "latexdiff is not installed".
@@ -428,12 +459,18 @@ async function generateTrackChangesUnlocked(
   }
 
   const projectCfg = await readProjectConfig(id);
-  const scratch = trackChangesScratchDir(id, from.hash, to.hash);
+  onChunk?.(`[openleaf] track-changes ${from.shortHash} → ${to.shortHash}\n`);
+  onChunk?.("[openleaf] materializing snapshots\n");
+  const oldSnap = await ensureSnapshotRoot(id, from.hash);
+  const newSnap = await ensureSnapshotRoot(id, to.hash);
+  const savedMain = readMainFile(newSnap, projectCfg.mainFile);
+  const mainFile = compileRootForTree(newSnap, requestedRoot, savedMain);
+  const scratch = trackChangesScratchDir(id, from.hash, to.hash, mainFile);
   const scratchRelative = path.relative(projectDir(id), scratch).replace(/\\/g, "/");
 
-  const cachedPdf = trackChangesPdfIfCached(id, from.hash, to.hash, readMainFile(scratch, projectCfg.mainFile));
+  const cachedPdf = trackChangesPdfIfCached(id, from.hash, to.hash, mainFile);
   if (cachedPdf) {
-    onChunk?.(`[openleaf] using cached track-changes PDF ${from.shortHash} → ${to.shortHash}\n`);
+    onChunk?.(`[openleaf] using cached track-changes PDF ${from.shortHash} → ${to.shortHash} (${mainFile})\n`);
     return {
       ok: true,
       pdfUpdated: true,
@@ -443,6 +480,7 @@ async function generateTrackChangesUnlocked(
       usedLatexmk: false,
       log: "",
       pdfRelative: path.relative(scratch, cachedPdf).replace(/\\/g, "/"),
+      mainFile,
       durationMs: 0,
       from,
       to,
@@ -452,72 +490,132 @@ async function generateTrackChangesUnlocked(
     };
   }
 
-  onChunk?.(`[openleaf] track-changes ${from.shortHash} → ${to.shortHash}\n`);
-  onChunk?.("[openleaf] materializing snapshots\n");
-  const oldSnap = await ensureSnapshotRoot(id, from.hash);
-  const newSnap = await ensureSnapshotRoot(id, to.hash);
-
-  const mainFile = readMainFile(newSnap, projectCfg.mainFile);
   const oldMain = path.join(oldSnap, mainFile);
   const newMain = path.join(newSnap, mainFile);
-  if (!fs.existsSync(oldMain)) throw err(400, `Main file missing in baseline (${mainFile})`);
-  if (!fs.existsSync(newMain)) throw err(400, `Main file missing in target (${mainFile})`);
+  if (!fs.existsSync(newMain)) throw err(400, `${mainFile} is missing in the target checkpoint`);
 
   onChunk?.("[openleaf] flattening \\input/\\include (skipping misc/)\n");
-  const oldFlat = flattenTexFile(oldSnap, oldMain);
   const newFlat = flattenTexFile(newSnap, newMain);
+  let oldFlat: string;
+  if (!fs.existsSync(oldMain)) {
+    const empty = emptyDocumentMatching(newFlat);
+    if (!empty) {
+      throw err(400, `${mainFile} has no \\begin{document}, so it cannot be marked as added`);
+    }
+    onChunk?.(`[openleaf] ${mainFile} is not in the baseline; marking the whole document as added\n`);
+    oldFlat = empty;
+  } else {
+    oldFlat = flattenTexFile(oldSnap, oldMain);
+  }
   const expanded = expandChangedMetricsMacros(oldFlat, newFlat);
   if (expanded.expanded.length) {
     onChunk?.(`[openleaf] expanded metrics macros in body: ${expanded.expanded.join(", ")}\n`);
   }
 
-  await fsPromises.rm(scratch, { recursive: true, force: true });
-  await copySnapshotTree(newSnap, scratch);
-
-  const workDir = path.join(scratch, ".openleaf", "latexdiff");
-  await fsPromises.mkdir(workDir, { recursive: true });
-  const oldFlatPath = path.join(workDir, "old-flat.tex");
-  const newFlatPath = path.join(workDir, "new-flat.tex");
-  await fsPromises.writeFile(oldFlatPath, expanded.old, "utf8");
-  await fsPromises.writeFile(newFlatPath, expanded.new, "utf8");
-
-  onChunk?.("[openleaf] latexdiff (tables as atomic replacements)\n");
-  const diffOut = path.join(scratch, mainFile);
-  await fsPromises.mkdir(path.dirname(diffOut), { recursive: true });
+  const oldSrc = unwrapHeadingTargets(expanded.old);
+  const newSrc = unwrapHeadingTargets(expanded.new);
   const markupArgs = await latexdiffMarkupArgs();
   if (markupArgs.includes("--subtype=COLOR")) {
     onChunk?.("[openleaf] ulem.sty not found; using color markup instead of underline/strikethrough\n");
   }
+  const ldArgs = [
+    "--encoding=utf8",
+    "--graphics-markup=none",
+    `--config=PICTUREENV=${LATEXDIFF_PICTURE_ENV}`,
+    "--append-textcmd=captionof",
+    ...markupArgs,
+  ];
 
-  const ld = await runTool(
-    "latexdiff",
-    [
-      "--encoding=utf8",
-      "--graphics-markup=none",
-      `--config=PICTUREENV=${LATEXDIFF_PICTURE_ENV}`,
-      ...markupArgs,
-      oldFlatPath,
-      newFlatPath,
-    ],
-    scratch,
-    LATEXDIFF_TIMEOUT_MS,
-    onChunk,
-  );
-  if (ld.code !== 0) {
-    throw err(500, `latexdiff failed${ld.stderr.trim() ? `: ${ld.stderr.slice(-400)}` : ""}`);
-  }
+  /** Table cells and moved paragraphs get their own markup; `false` is the plain fallback. */
+  const build = async (enhanced: boolean): Promise<CompileResult> => {
+    await fsPromises.rm(scratch, { recursive: true, force: true });
+    await copySnapshotTree(newSnap, scratch);
 
-  const marked = ld.stdout;
-  if (!marked.trim()) throw err(500, "latexdiff produced an empty file");
-  const annotated = annotateReplacedTables(marked);
-  if (annotated.tables.changed + annotated.tables.removed > 0) {
+    const workDir = path.join(scratch, ".openleaf", "latexdiff");
+    await fsPromises.mkdir(workDir, { recursive: true });
+    const prepared = enhanced ? prepareTableBlocks(oldSrc, newSrc) : null;
+    const aligned = alignMovedSections(prepared?.old ?? oldSrc, prepared?.new ?? newSrc);
+    if (aligned.moved.length) {
+      onChunk?.(`[openleaf] sections moved: ${aligned.moved.join("; ")}\n`);
+    }
+    const moves = enhanced ? detectMovedParagraphs(aligned.old, aligned.new) : null;
+    if (moves?.blocks.size) {
+      onChunk?.(`[openleaf] paragraphs moved between sections: ${moves.blocks.size}\n`);
+    }
+    const oldFlatPath = path.join(workDir, "old-flat.tex");
+    const newFlatPath = path.join(workDir, "new-flat.tex");
+    await fsPromises.writeFile(oldFlatPath, moves?.old ?? aligned.old, "utf8");
+    await fsPromises.writeFile(newFlatPath, moves?.new ?? aligned.new, "utf8");
+
+    let mini = 0;
+    const miniDiff = async (oldBody: string, newBody: string): Promise<string> => {
+      mini += 1;
+      const doc = (body: string) => `\\documentclass{article}\n\\begin{document}\n${body}\n\\end{document}\n`;
+      const a = path.join(workDir, `block-${mini}-old.tex`);
+      const b = path.join(workDir, `block-${mini}-new.tex`);
+      await fsPromises.writeFile(a, doc(oldBody), "utf8");
+      await fsPromises.writeFile(b, doc(newBody), "utf8");
+      const r = await runTool("latexdiff", [...ldArgs, a, b], workDir, LATEXDIFF_TIMEOUT_MS);
+      const m = /\\begin\{document\}\n?([\s\S]*?)\n?\\end\{document\}/.exec(r.stdout);
+      if (r.code !== 0 || !m) throw new Error("latexdiff failed on a table or moved-text block");
+      return m[1];
+    };
+
     onChunk?.(
-      `[openleaf] table notes: ${annotated.tables.changed} changed, ${annotated.tables.removed} removed\n`,
+      enhanced
+        ? `[openleaf] latexdiff (${prepared!.blocks.size} table(s) diffed cell-by-cell)\n`
+        : "[openleaf] latexdiff (tables as atomic replacements)\n",
     );
-  }
-  await fsPromises.writeFile(diffOut, annotated.tex, "utf8");
+    const diffOut = path.join(scratch, mainFile);
+    await fsPromises.mkdir(path.dirname(diffOut), { recursive: true });
 
-  const compiled = await compileProjectAtRoot(id, onChunk, scratch);
+    const ld = await runTool("latexdiff", [...ldArgs, oldFlatPath, newFlatPath], scratch, LATEXDIFF_TIMEOUT_MS, onChunk);
+    if (ld.code !== 0) {
+      throw err(500, `latexdiff failed${ld.stderr.trim() ? `: ${ld.stderr.slice(-400)}` : ""}`);
+    }
+
+    const marked = ld.stdout;
+    if (!marked.trim()) throw err(500, "latexdiff produced an empty file");
+    const annotated = annotateReplacedTables(marked);
+    if (annotated.tables.changed + annotated.tables.removed > 0) {
+      onChunk?.(
+        `[openleaf] table notes: ${annotated.tables.changed} changed, ${annotated.tables.removed} removed\n`,
+      );
+    }
+    let tex = annotated.tex;
+    if (prepared) {
+      const rendered = await renderTableBlocks(tex, prepared.blocks, miniDiff);
+      tex = rendered.tex;
+      const s = rendered.stats;
+      onChunk?.(
+        `[openleaf] tables: ${s.cellLevel} changed (cell-level), ${s.added} new, ${s.moved} moved, ${s.atomic} atomic\n`,
+      );
+    }
+    if (moves?.blocks.size) {
+      tex = injectPreamble(await renderMovedParagraphs(tex, moves.blocks, miniDiff), TEXT_MOVED_PREAMBLE);
+    }
+    if (aligned.moved.length) tex = injectPreamble(tex, SECTION_MOVED_PREAMBLE);
+    await fsPromises.writeFile(diffOut, tex, "utf8");
+    return compileProjectAtRoot(id, onChunk, scratch, mainFile);
+  };
+
+  let tableMarkup: "cells" | "atomic" = "cells";
+  let compiled: CompileResult | null = null;
+  try {
+    compiled = await build(true);
+    if (!compiled.ok) {
+      onChunk?.(
+        "[openleaf] markup PDF did not compile with cell-level tables and moved-text markup; retrying with plain latexdiff\n",
+      );
+    }
+  } catch (e) {
+    if ((e as { status?: number }).status) throw e;
+    onChunk?.(`[openleaf] table / moved-text markup failed (${(e as Error).message}); retrying with plain latexdiff\n`);
+  }
+  if (!compiled?.ok) {
+    tableMarkup = "atomic";
+    compiled = await build(false);
+  }
   if (compiled.ok) {
     await fsPromises.writeFile(
       markerPath(scratch),
@@ -533,5 +631,6 @@ async function generateTrackChangesUnlocked(
     cached: false,
     expandedMacros: expanded.expanded,
     scratchRelative,
+    tableMarkup,
   };
 }

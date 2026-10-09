@@ -191,11 +191,13 @@ export async function reverseSynctex(
   x: number,
   y: number,
   rootDir?: string,
+  mainFile?: string,
 ): Promise<SynctexReverseHit | null> {
   const cfg = await readProjectConfig(id);
   const cwd = rootDir ?? projectDir(id);
-  const synctex = synctexPathAbs(id, cfg.mainFile, cwd);
-  const pdf = pdfPathAbs(id, cfg.mainFile, cwd);
+  const docFile = mainFile ?? cfg.mainFile;
+  const synctex = synctexPathAbs(id, docFile, cwd);
+  const pdf = pdfPathAbs(id, docFile, cwd);
   if (!fs.existsSync(synctex) || !fs.existsSync(pdf)) return null;
 
   // Prefer the official synctex binary — far more accurate than our parser
@@ -253,11 +255,13 @@ export async function forwardSynctex(
   line: number,
   column = 1,
   rootDir?: string,
+  mainFile?: string,
 ): Promise<SynctexForwardHit | null> {
   const cfg = await readProjectConfig(id);
   const cwd = rootDir ?? projectDir(id);
-  const synctex = synctexPathAbs(id, cfg.mainFile, cwd);
-  const pdf = pdfPathAbs(id, cfg.mainFile, cwd);
+  const docFile = mainFile ?? cfg.mainFile;
+  const synctex = synctexPathAbs(id, docFile, cwd);
+  const pdf = pdfPathAbs(id, docFile, cwd);
   if (!fs.existsSync(synctex) || !fs.existsSync(pdf)) return null;
 
   const cli = await trySynctexViewCli(cwd, pdf, file, line, column);
@@ -333,12 +337,14 @@ export async function boxesForFileLines(
   id: string,
   fileLines: Map<string, Set<number> | "all">,
   rootDir?: string,
+  mainFile?: string,
 ): Promise<SynctexBox[]> {
   if (fileLines.size === 0) return [];
   const cfg = await readProjectConfig(id);
   const cwd = rootDir ?? projectDir(id);
-  const synctex = synctexPathAbs(id, cfg.mainFile, cwd);
-  const pdf = pdfPathAbs(id, cfg.mainFile, cwd);
+  const docFile = mainFile ?? cfg.mainFile;
+  const synctex = synctexPathAbs(id, docFile, cwd);
+  const pdf = pdfPathAbs(id, docFile, cwd);
   if (!fs.existsSync(synctex) || !fs.existsSync(pdf)) return [];
 
   const parsed = parseSynctexFile(synctex, cwd);

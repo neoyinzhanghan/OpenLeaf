@@ -35,6 +35,7 @@ import {
 } from "../api/client";
 import type { AppConfig, FileAccessLevel, FileChangeDiff, GitCommitInfo, PaperRecord, ProjectMeta, TimelineView, TreeNode } from "../api/types";
 import { guestLogout, hostLogout, listProjectAiReview, acceptAiReview, rejectAiReview, type AiReviewCollaborator, type AiReviewHunk } from "../api/share";
+import { nextCompileRoot } from "../latex/standaloneRoot";
 import { flushCollab, useProjectCollab } from "../collab/useProjectCollab";
 import { rememberProject } from "../lib/lastProject";
 import { BinaryPane } from "../components/BinaryPane";
@@ -425,6 +426,7 @@ export function EditorPage() {
   const [trackChangesPreviewPair, setTrackChangesPreviewPair] = useState<{
     from: string;
     to: string;
+    root: string | null;
   } | null>(null);
   const [trackChangesPreviewBust, setTrackChangesPreviewBust] = useState<number | null>(null);
   const [trackChangesPreviewError, setTrackChangesPreviewError] = useState<string | null>(null);
@@ -432,6 +434,21 @@ export function EditorPage() {
   const workspaceRef = useRef<HTMLDivElement>(null);
   const activePathRef = useRef(activePath);
   activePathRef.current = activePath;
+  const [previewRoot, setPreviewRoot] = useState<string | null>(null);
+  const previewRootRef = useRef<string | null>(null);
+  previewRootRef.current = previewRoot;
+  const heldRootRef = useRef<string | null>(null);
+  const resolvedRoot = nextCompileRoot({
+    activePath,
+    savedMain: project?.mainFile,
+    heldRoot: heldRootRef.current,
+  });
+  heldRootRef.current = resolvedRoot.heldRoot;
+  const compileRoot = resolvedRoot.compileRoot;
+  const compileRootRef = useRef(compileRoot);
+  compileRootRef.current = compileRoot;
+  const savedMainRef = useRef(project?.mainFile ?? "main.tex");
+  savedMainRef.current = project?.mainFile ?? "main.tex";
   const aiCollabsRef = useRef(aiCollabs);
   aiCollabsRef.current = aiCollabs;
   const consumedAiFocusNonce = useRef(0);
@@ -785,7 +802,7 @@ export function EditorPage() {
     setDiffLoading(true);
     void (async () => {
       try {
-        const result = await getDiffHighlights(id, diffSince, branchId, viewingGitHash);
+        const result = await getDiffHighlights(id, diffSince, branchId, viewingGitHash, previewRoot);
         if (cancelled || gen !== diffFetchGen.current) return;
         setDiffBoxes(result.boxes);
         setDiffLines(result.lines);
@@ -811,7 +828,7 @@ export function EditorPage() {
     return () => {
       cancelled = true;
     };
-  }, [id, diffOn, diffSince, branchId, viewingGitHash, diffRefreshNonce]);
+  }, [id, diffOn, diffSince, branchId, viewingGitHash, diffRefreshNonce, previewRoot]);
 
   const fileChangeMap = useMemo(() => {
     if (!diffOn || !diffChanges.length) return null;
@@ -1117,10 +1134,12 @@ export function EditorPage() {
     const epoch = previewEpochRef.current;
     const startedOn = branchIdRef.current;
     const startedAt = viewingGitHashRef.current;
+    const startedRoot = compileRootRef.current;
     const stillHere = () =>
       previewEpochRef.current === epoch &&
       branchIdRef.current === startedOn &&
-      viewingGitHashRef.current === startedAt;
+      viewingGitHashRef.current === startedAt &&
+      compileRootRef.current === startedRoot;
 
     while (compileLock.current) {
       await new Promise((r) => window.setTimeout(r, 50));
@@ -1151,7 +1170,7 @@ export function EditorPage() {
             setLog((prev) => prev + chunk);
           },
         },
-        startedAt ? { at: startedAt } : { branchId: startedOn },
+        startedAt ? { at: startedAt, root: startedRoot } : { branchId: startedOn, root: startedRoot },
       );
       if (!stillHere()) return false;
       setLog((prev) => prev || result.log);
@@ -1159,6 +1178,9 @@ export function EditorPage() {
       setCompileIssues(issues);
       const errorCount = issues.filter((issue) => issue.severity === "error").length;
       if (result.ok) {
+        const used =
+          result.mainFile && result.mainFile !== savedMainRef.current ? result.mainFile : null;
+        setPreviewRoot(used);
         setStalePdf(false);
         setStatus("ok");
         setPdfBust(Date.now());
@@ -1211,7 +1233,7 @@ export function EditorPage() {
     (async () => {
       try {
         if (atAtStart) {
-          const probe = await fetch(pdfUrl(id, Date.now(), branchAtStart, atAtStart), {
+          const probe = await fetch(pdfUrl(id, Date.now(), branchAtStart, atAtStart, compileRoot), {
             method: "GET",
             signal: ac.signal,
             cache: "no-store",
@@ -1234,7 +1256,11 @@ export function EditorPage() {
       cancelled = true;
       ac.abort();
     };
-  }, [id, project?.id, branchId, viewingGitHash, canCompile, pdfNav]);
+  }, [id, project?.id, branchId, viewingGitHash, canCompile, pdfNav, compileRoot]);
+
+  useEffect(() => {
+    if (!compileRoot) setPreviewRoot(null);
+  }, [compileRoot]);
 
   const save = useCallback(
     async (opts?: { compile?: boolean; silent?: boolean }) => {
@@ -1547,8 +1573,9 @@ export function EditorPage() {
         return;
       }
 
+      const startedRoot = compileRootRef.current;
       if (trackChangesPreviewOn) {
-        trackChangesPreviewReqRef.current = `${id}:${fromHash}:${toHash}`;
+        trackChangesPreviewReqRef.current = `${id}:${fromHash}:${toHash}:${startedRoot ?? ""}`;
       }
 
       setError(null);
@@ -1571,7 +1598,7 @@ export function EditorPage() {
       try {
         const result = await generateTrackChanges(id, fromHash, toHash, {
           onLog: (chunk) => setLog((prev) => prev + chunk),
-        });
+        }, startedRoot);
         setLog((prev) => prev || result.log);
         if (!result.ok) {
           const msg = "Track-changes PDF did not compile. See the log.";
@@ -1584,7 +1611,11 @@ export function EditorPage() {
           return;
         }
         if (trackChangesPreviewOn || !opts?.download) {
-          setTrackChangesPreviewPair({ from: result.from.hash, to: result.to.hash });
+          setTrackChangesPreviewPair({
+            from: result.from.hash,
+            to: result.to.hash,
+            root: result.mainFile && result.mainFile !== savedMainRef.current ? result.mainFile : null,
+          });
           setTrackChangesPreviewBust(Date.now());
           setTrackChangesPreviewError(null);
         }
@@ -1595,7 +1626,7 @@ export function EditorPage() {
               : `Track-changes PDF ${result.from.shortHash} → ${result.to.shortHash}`,
           );
           const a = document.createElement("a");
-          a.href = trackChangesDownloadUrl(id, result.from.hash, result.to.hash);
+          a.href = trackChangesDownloadUrl(id, result.from.hash, result.to.hash, startedRoot);
           a.download = `${id}-changes-${result.from.shortHash}-${result.to.shortHash}.pdf`;
           document.body.appendChild(a);
           a.click();
@@ -1643,7 +1674,7 @@ export function EditorPage() {
       setTrackChangesPreviewError("Commit on the timeline first");
       return;
     }
-    const reqKey = `${id}:${diffSince}:${toHash}`;
+    const reqKey = `${id}:${diffSince}:${toHash}:${compileRoot ?? ""}`;
     if (trackChangesPreviewReqRef.current === reqKey) return;
     void runTrackChangesPdf(diffSince);
   }, [
@@ -1655,6 +1686,7 @@ export function EditorPage() {
     tipGitHash,
     canCompile,
     runTrackChangesPdf,
+    compileRoot,
   ]);
 
   const onHighlightSinceCommit = useCallback(
@@ -1813,7 +1845,15 @@ export function EditorPage() {
             return;
           }
           if (!anchor.file.endsWith(".tex") && !anchor.file.endsWith(".ltx")) return;
-          const hit = await synctexForward(id, anchor.file, anchor.line, col, branchId, viewingGitHash);
+          const hit = await synctexForward(
+            id,
+            anchor.file,
+            anchor.line,
+            col,
+            branchId,
+            viewingGitHash,
+            previewRootRef.current,
+          );
           setPdfHighlight({
             page: hit.page,
             x: hit.x,
@@ -1917,7 +1957,7 @@ export function EditorPage() {
     async (page: number, x: number, y: number) => {
       if (!id) return;
       try {
-        const hit = await synctexLookup(id, page, x, y, branchId, viewingGitHash);
+        const hit = await synctexLookup(id, page, x, y, branchId, viewingGitHash, previewRootRef.current);
         const target = normalizeSynctexPath(hit.input);
         if (!target) {
           showSyncToast("Stale SyncTeX paths — hit Recompile");
@@ -1949,7 +1989,7 @@ export function EditorPage() {
     async (page: number, x: number, y: number) => {
       if (!id) return;
       try {
-        const hit = await synctexLookup(id, page, x, y, branchId, viewingGitHash);
+        const hit = await synctexLookup(id, page, x, y, branchId, viewingGitHash, previewRootRef.current);
         const target = normalizeSynctexPath(hit.input);
         if (!target) {
           showSyncToast("Stale SyncTeX paths — hit Recompile");
@@ -2015,7 +2055,15 @@ export function EditorPage() {
       if (!id || !activePath) return;
       if (!activePath.endsWith(".tex") && !activePath.endsWith(".ltx")) return;
       try {
-        const hit = await synctexForward(id, activePath, line, column, branchId, viewingGitHash);
+        const hit = await synctexForward(
+          id,
+          activePath,
+          line,
+          column,
+          branchId,
+          viewingGitHash,
+          previewRootRef.current,
+        );
         setPdfHighlight({
           page: hit.page,
           x: hit.x,
@@ -2215,9 +2263,10 @@ export function EditorPage() {
           trackChangesPreviewPair.from,
           trackChangesPreviewPair.to,
           trackChangesPreviewBust ?? undefined,
+          trackChangesPreviewPair.root,
         )
       : !markupPreviewActive && pdfBust != null
-        ? pdfUrl(id, pdfBust, branchId, viewingGitHash)
+        ? pdfUrl(id, pdfBust, branchId, viewingGitHash, previewRoot)
         : null;
   const pdfEmptyHint =
     pdfSwitching && status !== "compiling" && status !== "err"
@@ -2852,7 +2901,7 @@ export function EditorPage() {
                     )}
                     <a
                       role="menuitem"
-                      href={downloadUrl(id, "pdf", branchId, viewingGitHash)}
+                      href={downloadUrl(id, "pdf", branchId, viewingGitHash, previewRoot)}
                       download={`${id}.pdf`}
                       onClick={() => setToolbarMoreOpen(false)}
                     >
@@ -3237,6 +3286,7 @@ export function EditorPage() {
                 <PdfViewer
                   key={`${id}:${branchId}:${viewingGitHash ?? "tip"}`}
                   url={pdfViewerUrl}
+                  sourceLabel={previewRoot}
                   emptyHint={pdfEmptyHint}
                   onReverseSearch={onReverseSearch}
                   onCommentAt={(page, x, y) => void onPdfComment(page, x, y)}

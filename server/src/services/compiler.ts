@@ -10,6 +10,7 @@ import {
   projectDir,
   readProjectConfig,
 } from "./projectFs.js";
+import { compileRootForTree } from "./compileRoot.js";
 import { parseTexLog, texErrorCount, type TexIssue } from "./texLog.js";
 
 const execFileAsync = promisify(execFile);
@@ -24,6 +25,8 @@ export type CompileResult = {
   usedLatexmk: boolean;
   log: string;
   pdfRelative: string | null;
+  /** File actually submitted to the engine. May differ from the saved main. */
+  mainFile: string;
   durationMs: number;
 };
 
@@ -222,14 +225,16 @@ export async function compileProjectAtRoot(
   id: string,
   onChunk?: (chunk: string) => void,
   rootDir?: string,
+  requestedRoot?: string,
 ): Promise<CompileResult> {
-  return compileProjectUnlocked(id, onChunk, rootDir);
+  return compileProjectUnlocked(id, onChunk, rootDir, requestedRoot);
 }
 
 async function compileProjectUnlocked(
   id: string,
   onChunk?: (chunk: string) => void,
   rootDir?: string,
+  requestedRoot?: string,
 ): Promise<CompileResult> {
   const started = Date.now();
   const cfg = loadConfig();
@@ -250,6 +255,7 @@ async function compileProjectUnlocked(
     /* tip/snapshot may lack openleaf.json */
   }
   const engine = projectCfg.engine ?? cfg.latex.engine;
+  const mainFile = compileRootForTree(cwd, requestedRoot, projectCfg.mainFile);
   const outRel = cfg.latex.outputDir;
   const outAbs = outputDirAbs(id, cwd);
   fs.mkdirSync(outAbs, { recursive: true });
@@ -257,16 +263,16 @@ async function compileProjectUnlocked(
   const useMk = await hasLatexmk();
   onChunk?.(
     useMk
-      ? `[openleaf] compiling with latexmk (${engine})\n`
-      : `[openleaf] latexmk not found; using ${engine} + bibtex fallback\n`,
+      ? `[openleaf] compiling ${mainFile} with latexmk (${engine})\n`
+      : `[openleaf] latexmk not found; using ${engine} + bibtex fallback for ${mainFile}\n`,
   );
 
   const allowRc = await projectLatexmkrcAllowed(id);
   const result = useMk
-    ? await compileWithLatexmk(cwd, projectCfg.mainFile, engine, outRel, cfg.latex.timeoutMs, allowRc, onChunk)
-    : await compileFallback(cwd, projectCfg.mainFile, engine, outRel, cfg.latex.timeoutMs, onChunk);
+    ? await compileWithLatexmk(cwd, mainFile, engine, outRel, cfg.latex.timeoutMs, allowRc, onChunk)
+    : await compileFallback(cwd, mainFile, engine, outRel, cfg.latex.timeoutMs, onChunk);
 
-  const pdfAbs = pdfPathAbs(id, projectCfg.mainFile, cwd);
+  const pdfAbs = pdfPathAbs(id, mainFile, cwd);
   let pdfMtime = 0;
   try {
     pdfMtime = fs.statSync(pdfAbs).mtimeMs;
@@ -275,7 +281,7 @@ async function compileProjectUnlocked(
   }
   // latexmk prints "Nothing to do" and does not repeat an earlier failed run.
   // The engine log on disk is the record of whether that PDF is actually clean.
-  const jobname = path.basename(projectCfg.mainFile, path.extname(projectCfg.mainFile));
+  const jobname = path.basename(mainFile, path.extname(mainFile));
   let diskLog = "";
   try {
     diskLog = fs.readFileSync(path.join(outAbs, `${jobname}.log`), "utf8");
@@ -285,7 +291,7 @@ async function compileProjectUnlocked(
   // Coarse filesystem timestamps can land in the second before Date.now().
   const pdfExists = pdfMtime > 0;
   const pdfUpdated = pdfExists && pdfMtime >= started - 2000;
-  const issues = parseTexLog(`${result.log}\n${diskLog}`, { defaultFile: projectCfg.mainFile });
+  const issues = parseTexLog(`${result.log}\n${diskLog}`, { defaultFile: mainFile });
   const ok = result.code === 0 && texErrorCount(issues) === 0 && pdfExists;
   const upToDate = ok && !pdfUpdated;
   const pdfRelative = pdfExists ? path.relative(cwd, pdfAbs).replace(/\\/g, "/") : null;
@@ -307,6 +313,7 @@ async function compileProjectUnlocked(
     usedLatexmk: useMk,
     log: result.log,
     pdfRelative,
+    mainFile,
     durationMs: Date.now() - started,
   };
 }
@@ -315,7 +322,7 @@ async function compileProjectUnlocked(
 export async function compileProject(
   id: string,
   onChunk?: (chunk: string) => void,
-  opts?: { branchId?: string; at?: string },
+  opts?: { branchId?: string; at?: string; root?: string },
 ): Promise<CompileResult> {
   return withProjectCompileLock(id, async () => {
     const { flushProjectRoom } = await import("./collab/room.js");
@@ -325,13 +332,13 @@ export async function compileProject(
     if (at) {
       onChunk?.(`[openleaf] compiling checkpoint ${at.slice(0, 7)} (read-only snapshot)\n`);
       const root = await ensureSnapshotRoot(id, at);
-      return compileProjectAtRoot(id, onChunk, root);
+      return compileProjectAtRoot(id, onChunk, root, opts?.root);
     }
 
     const branchId = opts?.branchId ?? "main";
     onChunk?.(`[openleaf] flushing collaborative edits to disk (${branchId})\n`);
     await flushProjectRoom(id, { commit: false, branchId });
     const root = await ensureBranchRoot(id, branchId);
-    return compileProjectAtRoot(id, onChunk, root);
+    return compileProjectAtRoot(id, onChunk, root, opts?.root);
   });
 }

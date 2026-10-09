@@ -158,6 +158,8 @@ export type CompileResult = {
   usedLatexmk: boolean;
   log: string;
   pdfRelative: string | null;
+  /** File the engine actually built. Omitted by older servers. */
+  mainFile?: string;
   durationMs: number;
 };
 
@@ -167,6 +169,7 @@ export type TrackChangesResult = CompileResult & {
   cached: boolean;
   expandedMacros: string[];
   scratchRelative: string;
+  tableMarkup?: "cells" | "atomic";
 };
 
 export type SynctexHit = {

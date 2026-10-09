@@ -1,3 +1,4 @@
+import { compileRootForTree } from "./compileRoot.js";
 import { flushProjectRoom } from "./collab/room.js";
 import {
   getProjectCommit,
@@ -9,6 +10,7 @@ import {
   type FileChangeDiff,
   type GitCommitInfo,
 } from "./projectGit.js";
+import { readProjectConfig } from "./projectFs.js";
 import { ensureBranchRoot } from "./timeline.js";
 import { boxesForFileLines, type SynctexBox } from "./synctex.js";
 
@@ -42,6 +44,7 @@ export async function computeDiffHighlights(
   sinceRaw?: string,
   branchId = "main",
   atRaw?: string,
+  requestedRoot?: string,
 ): Promise<DiffHighlightsResult> {
   if (!isGitEnabled()) {
     return {
@@ -101,7 +104,12 @@ export async function computeDiffHighlights(
         pdfLineCount += entry.addedLines.length;
       }
     }
-    boxes = await boxesForFileLines(id, fileLines, cwd);
+    boxes = await boxesForFileLines(
+      id,
+      fileLines,
+      cwd,
+      compileRootForTree(cwd, requestedRoot, (await readProjectConfig(id)).mainFile),
+    );
     warning =
       tree.additions + tree.deletions > 0 && boxes.length === 0 && pdfLineCount > 0
         ? "Compile the project so SyncTeX can place addition highlights on the PDF"
