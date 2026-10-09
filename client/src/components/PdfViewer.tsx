@@ -160,6 +160,73 @@ function clampScale(scale: number): number {
   return Math.min(MAX_SCALE, Math.max(MIN_SCALE, Number(stepped.toFixed(1))));
 }
 
+/** Stay under common GPU texture limits when zoom and pixel density both climb. */
+const MAX_CANVAS_DIM = 4096;
+const MAX_CANVAS_PIXELS = 4096 * 4096;
+
+type CanvasBacking = {
+  bitmapWidth: number;
+  bitmapHeight: number;
+  displayWidth: number;
+  displayHeight: number;
+  /** Extra transform so PDF.js fills the device-pixel bitmap. Omitted at 1×. */
+  transform: [number, number, number, number, number, number] | undefined;
+};
+
+/**
+ * PDF.js draws into a bitmap, and the browser then scales that bitmap to CSS
+ * pixels. On a 2× display a 1× bitmap is stretched and text looks soft. Match
+ * the backing store to device pixels (capped) and size the element so those
+ * pixels land 1:1 on screen.
+ */
+function canvasBackingStore(
+  cssWidth: number,
+  cssHeight: number,
+  devicePixelRatio: number,
+): CanvasBacking {
+  const cssW = Math.max(1, cssWidth);
+  const cssH = Math.max(1, cssHeight);
+  const requested =
+    Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1;
+  const ratio = Math.max(
+    1,
+    Math.min(
+      requested,
+      MAX_CANVAS_DIM / cssW,
+      MAX_CANVAS_DIM / cssH,
+      Math.sqrt(MAX_CANVAS_PIXELS / (cssW * cssH)),
+    ),
+  );
+  const bitmapWidth = Math.max(1, Math.floor(cssW * ratio));
+  const bitmapHeight = Math.max(1, Math.floor(cssH * ratio));
+  const scaleX = bitmapWidth / cssW;
+  const scaleY = bitmapHeight / cssH;
+  // When the bitmap matches the screen, size the element so device pixels land
+  // on bitmap pixels. A capped bitmap keeps the requested CSS size instead.
+  const sharp = Math.abs(ratio - requested) < 1e-4;
+  const identity = Math.abs(scaleX - 1) < 1e-4 && Math.abs(scaleY - 1) < 1e-4;
+  return {
+    bitmapWidth,
+    bitmapHeight,
+    displayWidth: sharp ? bitmapWidth / requested : cssW,
+    displayHeight: sharp ? bitmapHeight / requested : cssH,
+    transform: identity ? undefined : [scaleX, 0, 0, scaleY, 0, 0],
+  };
+}
+
+function useDevicePixelRatio(): number {
+  const [ratio, setRatio] = useState(() =>
+    typeof window === "undefined" ? 1 : window.devicePixelRatio || 1,
+  );
+  useEffect(() => {
+    const media = window.matchMedia(`(resolution: ${ratio}dppx)`);
+    const onChange = () => setRatio(window.devicePixelRatio || 1);
+    media.addEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
+  }, [ratio]);
+  return ratio;
+}
+
 function scaleStorageKey(projectId: string): string {
   return `openleaf.pdfScale.${projectId}`;
 }
@@ -270,6 +337,7 @@ export function PdfViewer({
   /** Bumps when the loaded document identity changes so pages re-render. */
   const [docVersion, setDocVersion] = useState(0);
   const [pagesReady, setPagesReady] = useState(false);
+  const pixelRatio = useDevicePixelRatio();
 
   scaleRef.current = scale;
 
@@ -439,6 +507,7 @@ export function PdfViewer({
     const token = ++paintTokenRef.current;
     const renderScale = scale;
     const sizes = pageSizesRef.current;
+    const outputRatio = pixelRatio;
     const hadPages = container.querySelector(".pdf-page-wrap") != null;
     const anchor =
       (hadPages ? captureScrollAnchor(scroller, container) : null) ?? pendingAnchorRef.current;
@@ -581,9 +650,12 @@ export function PdfViewer({
 
     for (let pageNum = 1; pageNum <= pageCount; pageNum += 1) {
       const size = sizes[pageNum - 1];
-      const width = (size?.width ?? 612) * renderScale;
-      const height = (size?.height ?? 792) * renderScale;
-      ensureWrap(pageNum, width, height);
+      const backing = canvasBackingStore(
+        (size?.width ?? 612) * renderScale,
+        (size?.height ?? 792) * renderScale,
+        outputRatio,
+      );
+      ensureWrap(pageNum, backing.displayWidth, backing.displayHeight);
     }
     for (const node of [...container.querySelectorAll(".pdf-page-wrap")]) {
       const pageNum = Number((node as HTMLElement).dataset.page);
@@ -669,14 +741,19 @@ export function PdfViewer({
           return;
         }
         const viewport = page.getViewport({ scale: renderScale });
-        wrap.style.width = `${viewport.width}px`;
-        wrap.style.height = `${viewport.height}px`;
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
+        const backing = canvasBackingStore(viewport.width, viewport.height, outputRatio);
+        wrap.style.width = `${backing.displayWidth}px`;
+        wrap.style.height = `${backing.displayHeight}px`;
+        canvas.width = backing.bitmapWidth;
+        canvas.height = backing.bitmapHeight;
         canvas.style.display = "block";
         const ctx = canvas.getContext("2d");
         if (!ctx) return;
-        const task = page.render({ canvasContext: ctx, viewport });
+        const task = page.render({
+          canvasContext: ctx,
+          viewport,
+          transform: backing.transform,
+        });
         inflight.set(pageNum, task);
         await task.promise;
         if (cancelled || token !== paintTokenRef.current) return;
@@ -801,7 +878,7 @@ export function PdfViewer({
         releaseCanvas(node as HTMLCanvasElement);
       });
     };
-  }, [docVersion, scale, pageCount]);
+  }, [docVersion, scale, pageCount, pixelRatio]);
 
   // Ctrl/Cmd + mouse wheel zoom (browser-style).
   useEffect(() => {
