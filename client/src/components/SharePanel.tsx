@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { forkProjectTimeline } from "../api/client";
+import { forkProjectTimeline, getFileAccess } from "../api/client";
 import type { TimelineView } from "../api/types";
 import {
   getProjectShare,
@@ -27,6 +27,7 @@ type Props = {
   onActiveChange?: (info: ShareLiveInfo) => void;
   /** Called when starting a share forks a new branch (host should switch to it). */
   onTimelineChange?: (view: TimelineView) => void;
+  onManageFileAccess?: () => void;
 };
 
 const TTL_PRESETS: Array<{ label: string; minutes: number }> = [
@@ -207,6 +208,7 @@ export function SharePanel({
   onClose,
   onActiveChange,
   onTimelineChange,
+  onManageFileAccess,
 }: Props) {
   const [session, setSession] = useState<ShareSessionView | null>(null);
   const [sessions, setSessions] = useState<ShareSessionView[]>([]);
@@ -224,6 +226,7 @@ export function SharePanel({
   const [maxIps, setMaxIps] = useState(2);
   const [maxGuests, setMaxGuests] = useState(3);
   const [readOnly, setReadOnly] = useState(false);
+  const [lockedForGuests, setLockedForGuests] = useState(0);
   const [allowCompile, setAllowCompile] = useState(true);
   const [allowDownload, setAllowDownload] = useState(true);
   const [allowHistory, setAllowHistory] = useState(true);
@@ -259,6 +262,21 @@ export function SharePanel({
       setError(err instanceof Error ? err.message : "Failed to load share status");
     }
   }, [projectId, branchChoice]);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void getFileAccess(projectId)
+      .then((view) => {
+        if (!cancelled) setLockedForGuests(view.rules.length);
+      })
+      .catch(() => {
+        if (!cancelled) setLockedForGuests(0);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, projectId]);
 
   useEffect(() => {
     if (!open) return;
@@ -547,6 +565,19 @@ export function SharePanel({
               <CopyButton value={session.password} label="password" />
             </div>
           </details>
+
+          <p className="share-muted share-pad">
+            {lockedForGuests} {lockedForGuests === 1 ? "file" : "files"} locked for guests
+            {onManageFileAccess && (
+              <>
+                {" "}
+                ·{" "}
+                <button type="button" className="btn btn-ghost share-chip" onClick={onManageFileAccess}>
+                  Manage
+                </button>
+              </>
+            )}
+          </p>
 
           <div className="share-section-title">
             {indefinite ? "Session time" : "Time left"}

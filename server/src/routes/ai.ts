@@ -38,6 +38,7 @@ import {
   rejectAiFile,
   rejectAiHunk,
 } from "../services/aiReview.js";
+import { resolveActor } from "../services/fileAccess.js";
 import { handleMcpHttp } from "../services/aiMcp.js";
 import { CommentAnchorSchema } from "../services/comments.js";
 import { hostOnly } from "../services/shareAuth.js";
@@ -689,7 +690,7 @@ projectAiRouter.post("/:aiId/review/accept", hostOnly, async (req, res) => {
   try {
     const body = ReviewActionSchema.parse(req.body ?? {});
     const auth = findProjectAi(pid(req), String(req.params.aiId));
-    const ctx = aiReviewCtx(auth);
+    const ctx = { ...aiReviewCtx(auth), actor: resolveActor(req) };
     let review;
     if (body.all) review = await acceptAiAll(ctx);
     else if (body.path) review = await acceptAiFile(ctx, body.path);
@@ -708,7 +709,7 @@ projectAiRouter.post("/:aiId/review/reject", hostOnly, async (req, res) => {
   try {
     const body = ReviewActionSchema.parse(req.body ?? {});
     const auth = findProjectAi(pid(req), String(req.params.aiId));
-    const ctx = aiReviewCtx(auth);
+    const ctx = { ...aiReviewCtx(auth), actor: resolveActor(req) };
     let review;
     if (body.all) review = await rejectAiAll(ctx);
     else if (body.path) review = await rejectAiFile(ctx, body.path);

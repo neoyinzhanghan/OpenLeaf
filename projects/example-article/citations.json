@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "instances": [
+    {
+      "citekey": "knuth84",
+      "file": "sections/03_discussion.tex",
+      "line": 5,
+      "claimText": "Cite prior art with BibTeX as usual~\\cite{knuth84,lamport94}.",
+      "claimHash": "766cd87f45138afaba78103290a729ae5dc66149bbaef0d3d8d4761cbd02c5c4",
+      "verdict": "not_checked",
+      "evidence": "",
+      "confidence": 0,
+      "flaggedForReview": true,
+      "checkedAt": null
+    },
+    {
+      "citekey": "lamport94",
+      "file": "sections/03_discussion.tex",
+      "line": 5,
+      "claimText": "Cite prior art with BibTeX as usual~\\cite{knuth84,lamport94}.",
+      "claimHash": "4093bdf16a80e064f4b82f60c0cf4294e110d32dc52b372027e77d3bb78cd914",
+      "verdict": "not_checked",
+      "evidence": "",
+      "confidence": 0,
+      "flaggedForReview": true,
+      "checkedAt": null
+    },
+    {
+      "citekey": "openleaf2026",
+      "file": "sections/04_methods.tex",
+      "line": 6,
+      "claimText": "SyncTeX reverse search works when the PDF preview is open~\\cite{openleaf2026}.",
+      "claimHash": "a1fc3bfebb1897908d883d6f208155f4ae40ef260e3114d0eaac2c4eb5a9f4bc",
+      "verdict": "not_checked",
+      "evidence": "",
+      "confidence": 0,
+      "flaggedForReview": true,
+      "checkedAt": null
+    }
+  ]
+}

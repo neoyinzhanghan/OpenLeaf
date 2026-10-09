@@ -2,7 +2,17 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import { compileProject } from "./compiler.js";
 import { listWorkingTreeChanges } from "./projectGit.js";
-import { deletePath, getTree, MAX_TEXT_FILE_BYTES, readFile, writeFile, resolveRootPath, type TreeNode } from "./projectFs.js";
+import {
+  deletePath,
+  getTree,
+  isProtectedAccessPath,
+  normalizeAccessPath,
+  MAX_TEXT_FILE_BYTES,
+  readFile,
+  writeFile,
+  resolveRootPath,
+  type TreeNode,
+} from "./projectFs.js";
 import { type ShareError } from "./share.js";
 import { buildMcpConfigJson, buildStarterPrompt, mcpUrlFromApiBase } from "./aiPrompt.js";
 import {
@@ -98,8 +108,6 @@ const WRITE_QUOTA = 200;
 const MAX_FILE_BYTES = MAX_TEXT_FILE_BYTES;
 const MAX_PATCHES = 40;
 const MAX_DIFF_BYTES = 2 * 1024 * 1024;
-const FORBIDDEN_WRITE = new Set(["openleaf.json"]);
-
 export { buildStarterPrompt } from "./aiPrompt.js";
 
 function asAiError(err: unknown): never {
@@ -467,19 +475,37 @@ function flattenFiles(nodes: TreeNode[], out: string[] = []): string[] {
   return out;
 }
 
-/** Normalize + reject escapes / forbidden project-settings paths. Exported for tests. */
+/** Normalize + reject escapes / protected paths. Policy for a project lives in assertCanWrite. */
 export function assertAiWritablePath(rel: string): string {
-  const normalized = rel.replace(/\\/g, "/").replace(/^\/+/, "");
-  if (!normalized || normalized.split("/").some((p) => p === ".." || p === "")) {
+  let normalized: string;
+  try {
+    normalized = normalizeAccessPath(rel);
+  } catch {
     throw aiError(400, "Invalid path");
   }
-  if (normalized.startsWith(".openleaf/") || normalized.startsWith(".git/") || normalized === ".git") {
-    throw aiError(403, "Cannot write runtime paths");
-  }
-  if (FORBIDDEN_WRITE.has(normalized) || normalized.endsWith("/openleaf.json")) {
+  if (!normalized) throw aiError(400, "Invalid path");
+  if (!isProtectedAccessPath(normalized)) return normalized;
+  const lower = normalized.toLowerCase();
+  if (lower === "openleaf.json" || lower.endsWith("/openleaf.json")) {
     throw aiError(403, "Cannot modify openleaf.json (host settings)");
   }
-  return normalized;
+  if (lower === ".openleaf" || lower.startsWith(".openleaf/") || lower === ".git" || lower.startsWith(".git/")) {
+    throw aiError(403, "Cannot write runtime paths");
+  }
+  throw aiError(403, "Cannot write this path");
+}
+
+async function assertAiCanWrite(projectId: string, rel: string): Promise<string> {
+  const pathRel = assertAiWritablePath(rel);
+  const { assertCanWrite } = await import("./fileAccess.js");
+  try {
+    await assertCanWrite(projectId, pathRel, "ai");
+  } catch (err) {
+    const status =
+      err && typeof err === "object" && "status" in err ? (err as { status: number }).status : 403;
+    throw aiError(status, err instanceof Error ? err.message : "Cannot write this path");
+  }
+  return pathRel;
 }
 
 /** Escape checks for reads (openleaf.json allowed). */
@@ -655,7 +681,7 @@ async function restoreSandboxPath(auth: AiAuth, pathRel: string, before: string 
 }
 
 export async function aiWriteFile(auth: AiAuth, rel: string, content: string) {
-  const pathRel = assertAiWritablePath(rel);
+  const pathRel = await assertAiCanWrite(auth.projectId, rel);
   const before = await readSandboxText(auth, pathRel);
   return commitSandboxWrite(auth, pathRel, content, before);
 }
@@ -664,7 +690,7 @@ export async function aiEdit(
   auth: AiAuth,
   input: { path: string; old: string; new: string; replace_all?: boolean },
 ) {
-  const pathRel = assertAiWritablePath(input.path);
+  const pathRel = await assertAiCanWrite(auth.projectId, input.path);
   if (typeof input.old !== "string" || typeof input.new !== "string") {
     throw aiError(400, "old and new must be strings");
   }
@@ -704,7 +730,7 @@ export async function aiEditRange(
   auth: AiAuth,
   input: { path: string; startLine: number; endLine: number; content: string },
 ) {
-  const pathRel = assertAiWritablePath(input.path);
+  const pathRel = await assertAiCanWrite(auth.projectId, input.path);
   if (typeof input.content !== "string") throw aiError(400, "content must be a string");
   const before = await readSandboxText(auth, pathRel);
   const beforeLf = before == null ? "" : normalizeLf(before);
@@ -735,7 +761,7 @@ export async function aiApplyUnifiedDiff(auth: AiAuth, diff: string) {
   if (files.length > MAX_PATCHES) throw aiError(400, `At most ${MAX_PATCHES} files per diff`);
   const grouped = new Map<string, typeof files>();
   for (const file of files) {
-    const pathRel = assertAiWritablePath(file.path);
+    const pathRel = await assertAiCanWrite(auth.projectId, file.path);
     const list = grouped.get(pathRel) ?? [];
     list.push(file);
     grouped.set(pathRel, list);
@@ -814,7 +840,7 @@ export async function aiApplyPatch(
   try {
     for (const p of patches) {
       if (!p?.path || typeof p.content !== "string") throw aiError(400, "Each patch needs path + full content");
-      const pathRel = assertAiWritablePath(p.path);
+      const pathRel = await assertAiCanWrite(auth.projectId, p.path);
       const before = await readSandboxText(auth, pathRel);
       results.push(await aiWriteFile(auth, p.path, p.content));
       committed.push({ path: pathRel, before });

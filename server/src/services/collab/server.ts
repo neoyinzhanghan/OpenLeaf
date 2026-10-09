@@ -5,11 +5,14 @@ import * as decoding from "lib0/decoding";
 import * as encoding from "lib0/encoding";
 import * as awarenessProtocol from "y-protocols/awareness";
 import * as syncProtocol from "y-protocols/sync";
+import * as Y from "yjs";
 import type { Identity } from "../../config.js";
 import { getProjectIdentity, projectDir } from "../projectFs.js";
 import { verifyHostCookie } from "../hostAuth.js";
+import { hostHeaderAllowed, isLoopbackOwner, lanAuthIsOpen, originAllowed } from "../requestGuard.js";
 import { requestLane, resolveGuest } from "../shareAuth.js";
 import { getOrCreateRoom, releaseRoomIfEmpty, type ProjectRoom } from "./room.js";
+import { yjsUpdateDeniedKeys, type FileAccessActor } from "../fileAccess.js";
 
 const messageSync = 0;
 const messageAwareness = 1;
@@ -54,6 +57,16 @@ function getHub(room: ProjectRoom): RoomHub {
   return hub;
 }
 
+/** `URL.pathname` keeps `%20`. Project folders may contain spaces. */
+function decodeCollabPart(value: string): string {
+  if (!value) return "";
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 function parseCollabUrl(
   req: IncomingMessage,
 ): { projectId: string; identityId: string; branchId: string } | null {
@@ -63,7 +76,7 @@ function parseCollabUrl(
     if (!url.pathname.startsWith("/collab")) return null;
 
     const parts = url.pathname.replace(/^\/collab\/?/, "").split("/").filter(Boolean);
-    const projectId = parts[0] || url.searchParams.get("project") || "";
+    const projectId = decodeCollabPart(parts[0] || "") || url.searchParams.get("project") || "";
     const identityId = url.searchParams.get("identity") || "";
     const branchId = (url.searchParams.get("branch") || "main").trim() || "main";
     if (!projectId || !identityId) return null;
@@ -92,6 +105,11 @@ export function attachCollabServer(httpServer: HttpServer): WebSocketServer {
 
   httpServer.on("upgrade", (req, socket, head) => {
     void (async () => {
+      if (!hostHeaderAllowed(req) || !originAllowed(req)) {
+        rejectUpgrade(socket, 403, "Forbidden");
+        return;
+      }
+
       const parsed = parseCollabUrl(req);
       if (!parsed) {
         if ((req.url ?? "").startsWith("/collab")) {
@@ -113,6 +131,7 @@ export function attachCollabServer(httpServer: HttpServer): WebSocketServer {
 
       let identity: Identity | undefined;
       let readOnly = false;
+      let actor: FileAccessActor = "local";
       let branchId = parsed.branchId;
       const lane = requestLane(req);
       if (lane.kind === "share") {
@@ -129,6 +148,7 @@ export function attachCollabServer(httpServer: HttpServer): WebSocketServer {
           return;
         }
         identity = { id: r.guest.id, name: r.guest.name, color: r.guest.color };
+        actor = "guest";
         const bound = r.session.branchId || "main";
         const requested = parsed.branchId || bound;
         branchId = requested;
@@ -138,8 +158,14 @@ export function attachCollabServer(httpServer: HttpServer): WebSocketServer {
           rejectUpgrade(socket, 401, "Unauthorized");
           return;
         }
+        actor = "device";
         identity = await getProjectIdentity(parsed.projectId, parsed.identityId);
       } else if (lane.kind === "local") {
+        if (!isLoopbackOwner(req) && !lanAuthIsOpen() && !verifyHostCookie(req)) {
+          rejectUpgrade(socket, 401, "Unauthorized");
+          return;
+        }
+        actor = isLoopbackOwner(req) || lanAuthIsOpen() ? "local" : "device";
         identity = await getProjectIdentity(parsed.projectId, parsed.identityId);
       } else {
         rejectUpgrade(socket, 401, "Unauthorized");
@@ -151,7 +177,7 @@ export function attachCollabServer(httpServer: HttpServer): WebSocketServer {
       }
 
       wss.handleUpgrade(req, socket, head, (ws) => {
-        wss.emit("connection", ws, req, { ...parsed, branchId, identity, readOnly });
+        wss.emit("connection", ws, req, { ...parsed, branchId, identity, readOnly, actor });
       });
     })();
   });
@@ -167,15 +193,34 @@ export function attachCollabServer(httpServer: HttpServer): WebSocketServer {
         branchId: string;
         identity: Identity;
         readOnly: boolean;
+        actor: FileAccessActor;
       },
     ) => {
+      // The client sends sync step 1 in the same turn as the upgrade. Messages
+      // that arrive while the room is opening must be kept — dropping them means
+      // this socket never receives the server document.
+      const pending: WebSocket.RawData[] = [];
+      const bufferMessage = (data: WebSocket.RawData) => {
+        pending.push(data);
+      };
+      conn.on("message", bufferMessage);
+
       let room: ProjectRoom;
       try {
         room = await getOrCreateRoom(parsed.projectId, parsed.branchId || "main");
       } catch (err) {
         console.error("[collab] room open failed", err);
+        conn.off("message", bufferMessage);
         conn.close();
         return;
+      }
+      if (conn.readyState !== WebSocket.OPEN) {
+        conn.off("message", bufferMessage);
+        await releaseRoomIfEmpty(parsed.projectId, parsed.branchId || "main");
+        return;
+      }
+      if (room.isDead) {
+        room = await getOrCreateRoom(parsed.projectId, parsed.branchId || "main");
       }
 
       const hub = getHub(room);
@@ -212,7 +257,7 @@ export function attachCollabServer(httpServer: HttpServer): WebSocketServer {
         }
       }
 
-      conn.on("message", (data: WebSocket.RawData) => {
+      const onMessage = (data: WebSocket.RawData) => {
         try {
           const buf =
             data instanceof ArrayBuffer
@@ -224,15 +269,23 @@ export function attachCollabServer(httpServer: HttpServer): WebSocketServer {
             case messageSync: {
               const encoder = encoding.createEncoder();
               encoding.writeVarUint(encoder, messageSync);
-              if (parsed.readOnly) {
-                // Read-only guests may request state (step 1) but any update they
-                // send (step 2 / update) is dropped so the shared doc never changes.
-                const syncType = decoding.readVarUint(decoder);
-                if (syncType === syncProtocol.messageYjsSyncStep1) {
-                  syncProtocol.readSyncStep1(decoder, encoder, room.doc);
+              const syncType = decoding.readVarUint(decoder);
+              if (syncType === syncProtocol.messageYjsSyncStep1) {
+                syncProtocol.readSyncStep1(decoder, encoder, room.doc);
+              } else if (
+                syncType === syncProtocol.messageYjsSyncStep2 ||
+                syncType === syncProtocol.messageYjsUpdate
+              ) {
+                const update = decoding.readVarUint8Array(decoder);
+                const denied = parsed.readOnly
+                  ? ["read-only"]
+                  : yjsUpdateDeniedKeys(room.doc, update, parsed.actor, room.accessRules());
+                if (denied.length > 0) {
+                  // Drop the whole message. Step 2 snaps the sender back to the server doc.
+                  syncProtocol.writeSyncStep2(encoder, room.doc);
+                } else {
+                  Y.applyUpdate(room.doc, update, conn);
                 }
-              } else {
-                syncProtocol.readSyncMessage(decoder, encoder, room.doc, conn);
               }
               if (encoding.length(encoder) > 1) send(conn, encoder);
               break;
@@ -251,7 +304,10 @@ export function attachCollabServer(httpServer: HttpServer): WebSocketServer {
         } catch (err) {
           console.error("[collab] message error", err);
         }
-      });
+      };
+      conn.off("message", bufferMessage);
+      conn.on("message", onMessage);
+      for (const data of pending) onMessage(data);
 
       const onAwarenessTrack = (
         { added, removed }: { added: number[]; updated: number[]; removed: number[] },

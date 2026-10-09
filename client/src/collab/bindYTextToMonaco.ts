@@ -6,10 +6,17 @@
  * longer matches Y.Text (LF) and the caret you see is not where keystrokes go.
  * We pin LF for the life of the binding and sync with LF-safe offsets.
  */
-import * as monaco from "monaco-editor";
+import * as monaco from "monaco-editor/esm/vs/editor/editor.api";
 import { createMutex } from "lib0/mutex";
 import * as Y from "yjs";
 import type { Awareness } from "y-protocols/awareness";
+
+/** The first model fill must not be undoable, or Ctrl+Z wipes the file. */
+export function sealModelUndo(model: monaco.editor.ITextModel): void {
+  const internal = model as monaco.editor.ITextModel & { _commandManager?: { clear: () => void } };
+  internal._commandManager?.clear();
+  model.pushStackElement();
+}
 
 function forceLf(model: monaco.editor.ITextModel): void {
   if (model.getEOL() !== "\n") {
@@ -54,6 +61,8 @@ export function bindYTextToMonaco(
   forceLf(model);
   if (model.getValue() !== initial) model.setValue(initial);
   forceLf(model);
+  sealModelUndo(model);
+  queueMicrotask(() => sealModelUndo(model));
 
   const rerenderDecorations = () => {
     if (!awareness) return;

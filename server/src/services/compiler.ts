@@ -10,11 +10,16 @@ import {
   projectDir,
   readProjectConfig,
 } from "./projectFs.js";
+import { parseTexLog, texErrorCount, type TexIssue } from "./texLog.js";
 
 const execFileAsync = promisify(execFile);
 
 export type CompileResult = {
   ok: boolean;
+  pdfUpdated: boolean;
+  /** Exit 0, no log errors, PDF already on disk, and this run did not rewrite it. */
+  upToDate: boolean;
+  issues: TexIssue[];
   engine: LatexEngine;
   usedLatexmk: boolean;
   log: string;
@@ -22,21 +27,34 @@ export type CompileResult = {
   durationMs: number;
 };
 
-/** TeX installs (TinyTeX, MacTeX) often sit outside the PATH of GUI/IDE shells. */
+/**
+ * TeX installs (TinyTeX, MacTeX, MiKTeX, TeX Live) often sit outside the PATH of GUI shells.
+ * Paranoid mode (the default) confines `\input` and `\openout` to the project tree.
+ */
 export function texEnv(): NodeJS.ProcessEnv {
   const home = os.homedir();
+  const localApp = process.env.LOCALAPPDATA ?? path.join(home, "AppData", "Local");
+  const programFiles = process.env.ProgramFiles ?? "C:\\Program Files";
+  const texYears = ["2026", "2025", "2024", "2023"];
   const candidates = [
     path.join(home, "Library/TinyTeX/bin/universal-darwin"),
     path.join(home, "Library/TinyTeX/bin/aarch64-darwin"),
     path.join(home, "Library/TinyTeX/bin/x86_64-darwin"),
     path.join(home, ".TinyTeX/bin/x86_64-linux"),
     path.join(home, ".TinyTeX/bin/aarch64-linux"),
+    path.join(home, ".TinyTeX/bin/windows"),
+    path.join(home, "AppData", "Roaming", "TinyTeX", "bin", "windows"),
+    path.join(localApp, "Programs", "MiKTeX", "miktex", "bin", "x64"),
+    path.join(programFiles, "MiKTeX", "miktex", "bin", "x64"),
     "/Library/TeX/texbin",
-    "/usr/local/texlive/2026/bin/universal-darwin",
-    "/usr/local/texlive/2025/bin/universal-darwin",
-    "/usr/local/texlive/2024/bin/universal-darwin",
     "/opt/homebrew/bin",
     "/usr/local/bin",
+    ...texYears.flatMap((year) => [
+      `/usr/local/texlive/${year}/bin/universal-darwin`,
+      `/usr/local/texlive/${year}/bin/x86_64-linux`,
+      `/usr/local/texlive/${year}/bin/aarch64-linux`,
+      `C:\\texlive\\${year}\\bin\\windows`,
+    ]),
   ];
   const seen = new Set<string>();
   const dirs: string[] = [];
@@ -46,7 +64,23 @@ export function texEnv(): NodeJS.ProcessEnv {
     seen.add(dir);
     dirs.push(dir);
   }
-  return { ...process.env, PATH: dirs.join(path.delimiter) };
+  const env: NodeJS.ProcessEnv = { ...process.env, PATH: dirs.join(path.delimiter) };
+  if (loadConfig().latex.paranoidFileAccess !== false) {
+    env.openin_any = "p";
+    env.openout_any = "p";
+    env.shell_escape = "p";
+  }
+  return env;
+}
+
+/** Project rc files stay off while a share session or AI link is live, even if the host opted in. */
+export async function projectLatexmkrcAllowed(projectId: string): Promise<boolean> {
+  if (loadConfig().latex.allowProjectLatexmkrc !== true) return false;
+  const { listSharesForProject } = await import("./share.js");
+  const { listLiveAi } = await import("./aiShare.js");
+  if (listSharesForProject(projectId).some((session) => session.status === "active")) return false;
+  if (listLiveAi(projectId).length > 0) return false;
+  return true;
 }
 
 let latexmkAvailable: boolean | null = null;
@@ -103,10 +137,12 @@ async function compileWithLatexmk(
   engine: LatexEngine,
   outDir: string,
   timeoutMs: number,
+  allowRc: boolean,
   onChunk?: (chunk: string) => void,
 ): Promise<{ code: number; log: string }> {
   const engineFlag = engine === "xelatex" ? "-xelatex" : "-pdf";
   const args = [
+    ...(allowRc ? [] : ["-norc"]),
     engineFlag,
     "-interaction=nonstopmode",
     "-f",
@@ -225,23 +261,48 @@ async function compileProjectUnlocked(
       : `[openleaf] latexmk not found; using ${engine} + bibtex fallback\n`,
   );
 
+  const allowRc = await projectLatexmkrcAllowed(id);
   const result = useMk
-    ? await compileWithLatexmk(cwd, projectCfg.mainFile, engine, outRel, cfg.latex.timeoutMs, onChunk)
+    ? await compileWithLatexmk(cwd, projectCfg.mainFile, engine, outRel, cfg.latex.timeoutMs, allowRc, onChunk)
     : await compileFallback(cwd, projectCfg.mainFile, engine, outRel, cfg.latex.timeoutMs, onChunk);
 
   const pdfAbs = pdfPathAbs(id, projectCfg.mainFile, cwd);
-  // TeX often exits non-zero on warnings/errors even when a PDF was written.
-  const ok = fs.existsSync(pdfAbs);
-  const pdfRelative = ok ? path.relative(cwd, pdfAbs).replace(/\\/g, "/") : null;
+  let pdfMtime = 0;
+  try {
+    pdfMtime = fs.statSync(pdfAbs).mtimeMs;
+  } catch {
+    pdfMtime = 0;
+  }
+  // latexmk prints "Nothing to do" and does not repeat an earlier failed run.
+  // The engine log on disk is the record of whether that PDF is actually clean.
+  const jobname = path.basename(projectCfg.mainFile, path.extname(projectCfg.mainFile));
+  let diskLog = "";
+  try {
+    diskLog = fs.readFileSync(path.join(outAbs, `${jobname}.log`), "utf8");
+  } catch {
+    diskLog = "";
+  }
+  // Coarse filesystem timestamps can land in the second before Date.now().
+  const pdfExists = pdfMtime > 0;
+  const pdfUpdated = pdfExists && pdfMtime >= started - 2000;
+  const issues = parseTexLog(`${result.log}\n${diskLog}`, { defaultFile: projectCfg.mainFile });
+  const ok = result.code === 0 && texErrorCount(issues) === 0 && pdfExists;
+  const upToDate = ok && !pdfUpdated;
+  const pdfRelative = pdfExists ? path.relative(cwd, pdfAbs).replace(/\\/g, "/") : null;
 
   if (!ok) {
-    onChunk?.("\n[openleaf] compile finished without a PDF (check log for errors)\n");
-  } else if (result.code !== 0) {
-    onChunk?.("\n[openleaf] PDF written with TeX warnings/errors (see log)\n");
+    onChunk?.(
+      pdfExists
+        ? "\n[openleaf] PDF was not updated cleanly — see the issues in the log\n"
+        : "\n[openleaf] compile finished without a new PDF (check log for errors)\n",
+    );
   }
 
   return {
     ok,
+    pdfUpdated,
+    upToDate,
+    issues,
     engine,
     usedLatexmk: useMk,
     log: result.log,

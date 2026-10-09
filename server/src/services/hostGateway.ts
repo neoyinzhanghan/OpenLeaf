@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { CONFIG_DIR, loadConfig } from "../config.js";
+import { getConfigDir, loadConfig } from "../config.js";
 import { updateHostCredentialsUrl } from "./hostAuth.js";
 
 /**
@@ -35,7 +35,7 @@ let stopping = false;
 let restartAttempt = 0;
 
 function persistPath(): string {
-  const dir = process.env.OPENLEAF_HOST_AUTH_DIR || CONFIG_DIR;
+  const dir = process.env.OPENLEAF_HOST_AUTH_DIR || getConfigDir();
   return path.join(dir, "host-gateway.json");
 }
 
@@ -136,6 +136,7 @@ function pushLog(g: HostGateway, line: string) {
 }
 
 async function hostnameResolves(hostname: string): Promise<boolean> {
+  if (process.env.OPENLEAF_TUNNEL_SKIP_DNS === "1") return hostname.length > 0;
   try {
     const res = await fetch(
       `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(hostname)}&type=A`,
@@ -241,8 +242,9 @@ function scheduleRestart(): void {
 /**
  * Start (or reuse) the host public tunnel. Safe to call more than once.
  */
-export async function startHostGateway(): Promise<HostGateway> {
-  if (disabled()) return localFallback("Host gateway disabled (OPENLEAF_HOST_GATEWAY=0)");
+export async function startHostGateway(opts?: { demand?: boolean }): Promise<HostGateway> {
+  if (opts?.demand) stopping = false;
+  if (disabled() && !opts?.demand) return localFallback("Host gateway disabled (OPENLEAF_HOST_GATEWAY=0)");
 
   if (gateway && (gateway.status === "active" || gateway.status === "starting") && gateway.proc) {
     return gateway;
@@ -277,7 +279,8 @@ export async function startHostGateway(): Promise<HostGateway> {
     ? ["tunnel", "--no-autoupdate", "run", "--token", token]
     : ["tunnel", "--url", `http://127.0.0.1:${port}`, "--no-autoupdate", "--protocol", "quic"];
 
-  const proc = spawn(bin, args, {
+  const shellScript = bin.endsWith(".sh");
+  const proc = spawn(shellScript ? "sh" : bin, shellScript ? [bin, ...args] : args, {
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, NO_COLOR: "1" },
   });
@@ -341,11 +344,17 @@ export async function startHostGateway(): Promise<HostGateway> {
     await ready;
   } catch (err) {
     g.status = "error";
-    g.error = err instanceof Error ? err.message : String(err);
+    const code = err && typeof err === "object" && "code" in err ? String((err as { code?: unknown }).code) : "";
+    g.error =
+      code === "EACCES"
+        ? "cloudflared could not be started (permission denied). Reinstall it or check OPENLEAF_CLOUDFLARED."
+        : err instanceof Error
+          ? err.message
+          : String(err);
     killProc(g);
     teardown(g);
     persist();
-    console.warn(`[host-gateway] tunnel failed (${g.error})`);
+    console.warn(`[host-gateway] tunnel failed (${g.error})`, code === "EACCES" ? err : "");
     scheduleRestart();
     return g;
   }
@@ -370,11 +379,6 @@ export function stopHostGateway(): void {
   console.log("[host-gateway] stopped");
 }
 
-for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
-  process.once(sig, () => {
-    stopHostGateway();
-  });
-}
 process.once("exit", () => {
   if (gateway) killProc(gateway);
 });

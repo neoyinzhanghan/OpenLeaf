@@ -477,11 +477,13 @@ export async function startShare(projectId: string, input: StartShareInput): Pro
   };
   sessionsByKey.set(key, session);
 
-  const proc = spawn(
-    bin,
-    ["tunnel", "--url", `http://127.0.0.1:${port}`, "--no-autoupdate", "--protocol", "quic"],
-    { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, NO_COLOR: "1" } },
-  );
+  const tunnelArgs = ["tunnel", "--url", `http://127.0.0.1:${port}`, "--no-autoupdate", "--protocol", "quic"];
+  const shellScript = bin.endsWith(".sh");
+  const proc = spawn(shellScript ? "sh" : bin, shellScript ? [bin, ...tunnelArgs] : tunnelArgs, {
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, NO_COLOR: "1" },
+    detached: true,
+  });
   session.proc = proc;
 
   const ready = new Promise<void>((resolve, reject) => {
@@ -562,7 +564,8 @@ function killProc(s: ShareSession) {
   const p = s.proc;
   if (!p || p.exitCode !== null || p.killed) return;
   try {
-    p.kill("SIGTERM");
+    if (p.pid) process.kill(-p.pid, "SIGTERM");
+    else p.kill("SIGTERM");
     const t = setTimeout(() => {
       try {
         if (p.exitCode === null) p.kill("SIGKILL");
@@ -580,6 +583,10 @@ function teardown(s: ShareSession) {
   if (s.expiryTimer) {
     clearTimeout(s.expiryTimer);
     s.expiryTimer = null;
+  }
+  if (s.dnsProbeTimer) {
+    clearTimeout(s.dnsProbeTimer);
+    s.dnsProbeTimer = null;
   }
   if (s.hostname && sessionsByHost.get(s.hostname) === s) sessionsByHost.delete(s.hostname);
   // Rotating the secret makes every outstanding cookie fail even if the
@@ -618,13 +625,6 @@ export function stopAllShares(): void {
   }
 }
 
-for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
-  process.once(sig, () => {
-    stopAllShares();
-    // Give cloudflared a moment to receive SIGTERM before we exit.
-    setTimeout(() => process.exit(0), 200).unref();
-  });
-}
 process.once("exit", () => {
   for (const s of sessionsByKey.values()) killProc(s);
 });

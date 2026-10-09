@@ -1,12 +1,17 @@
+import { noteHostAuth } from "./hostAuthBus";
 import type {
   AppConfig,
   CommentAnchor,
   CommentThread,
   CompileResult,
   DiffHighlightsResult,
+  FileAccessLevel,
+  FileAccessView,
   FilePayload,
   GitCommitInfo,
   GitCommitResult,
+  LibraryCollections,
+  PaperRecord,
   ProjectMeta,
   SynctexForwardHit,
   SynctexHit,
@@ -35,8 +40,9 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     let message = res.statusText;
     try {
-      const body = (await res.json()) as { error?: string };
+      const body = (await res.json()) as { error?: string; code?: string };
       if (body.error) message = body.error;
+      noteHostAuth(res.status, body.code);
     } catch {
       /* ignore */
     }
@@ -327,6 +333,34 @@ export function createProject(id: string, fromTemplate?: string): Promise<Projec
   return request("/api/projects", {
     method: "POST",
     body: JSON.stringify({ id, fromTemplate }),
+  });
+}
+
+export function createProjectNamed(name: string, fromTemplate?: string): Promise<ProjectMeta> {
+  return request("/api/projects", {
+    method: "POST",
+    body: JSON.stringify({ name, fromTemplate }),
+  });
+}
+
+export function renameProject(id: string, name: string): Promise<ProjectMeta> {
+  return request(`/api/projects/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  });
+}
+
+export function getFileAccess(id: string): Promise<FileAccessView> {
+  return request(`/api/projects/${encodeURIComponent(id)}/file-access`);
+}
+
+export function putFileAccessRules(
+  id: string,
+  body: { upsert?: { path: string; level: FileAccessLevel }[]; delete?: string[] },
+): Promise<FileAccessView> {
+  return request(`/api/projects/${encodeURIComponent(id)}/file-access/rules`, {
+    method: "PUT",
+    body: JSON.stringify(body),
   });
 }
 
@@ -659,5 +693,351 @@ export function generateTrackChanges(
         resolve(result);
       })
       .catch(reject);
+  });
+}
+
+// --- Citation library (host-only) -------------------------------------------
+
+export function listLibraryPapers(opts?: {
+  q?: string;
+  tag?: string;
+  tags?: string[];
+  collection?: string;
+  starred?: boolean;
+  status?: import("./types").ReadingStatus;
+  sort?: import("./types").LibrarySort;
+  limit?: number;
+}): Promise<{ papers: PaperRecord[] }> {
+  const params = new URLSearchParams();
+  if (opts?.q) params.set("q", opts.q);
+  if (opts?.tag) params.set("tag", opts.tag);
+  if (opts?.tags?.length) params.set("tags", opts.tags.join(","));
+  if (opts?.collection) params.set("collection", opts.collection);
+  if (opts?.starred === true) params.set("starred", "1");
+  if (opts?.starred === false) params.set("starred", "0");
+  if (opts?.status) params.set("status", opts.status);
+  if (opts?.sort) params.set("sort", opts.sort);
+  if (opts?.limit != null) params.set("limit", String(opts.limit));
+  const qs = params.toString();
+  return request(`/api/library${qs ? `?${qs}` : ""}`);
+}
+
+export function getLibraryPaper(citekey: string): Promise<PaperRecord> {
+  return request(`/api/library/${encodeURIComponent(citekey)}`);
+}
+
+export function createLibraryPaper(
+  body: Partial<PaperRecord> & { title: string },
+): Promise<PaperRecord> {
+  return request("/api/library", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function patchLibraryPaper(
+  citekey: string,
+  body: Partial<Omit<PaperRecord, "citekey" | "addedAt" | "integrity">> & { citekey?: string },
+): Promise<PaperRecord> {
+  return request(`/api/library/${encodeURIComponent(citekey)}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export function bulkPatchLibraryPapers(body: {
+  citekeys: string[];
+  starred?: boolean;
+  status?: import("./types").ReadingStatus;
+  rating?: number;
+  tags?: string[];
+  tagsAdd?: string[];
+  tagsRemove?: string[];
+  collections?: string[];
+  collectionsAdd?: string[];
+  collectionsRemove?: string[];
+}): Promise<{ papers: PaperRecord[]; count: number }> {
+  return request("/api/library/bulk", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function deleteLibraryPaper(citekey: string): Promise<void> {
+  return request(`/api/library/${encodeURIComponent(citekey)}`, { method: "DELETE" });
+}
+
+export function getLibraryCollections(): Promise<LibraryCollections> {
+  return request("/api/library/collections");
+}
+
+export function putLibraryCollections(body: LibraryCollections): Promise<LibraryCollections> {
+  return request("/api/library/collections", { method: "PUT", body: JSON.stringify(body) });
+}
+
+export function createLibraryCollection(id: string, name: string): Promise<LibraryCollections> {
+  return request("/api/library/collections", {
+    method: "POST",
+    body: JSON.stringify({ id, name }),
+  });
+}
+
+export function deleteLibraryCollection(id: string): Promise<LibraryCollections> {
+  return request(`/api/library/collections/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export function reindexLibrary(): Promise<{ count: number }> {
+  return request("/api/library/reindex", { method: "POST", body: "{}" });
+}
+
+export function lookupLibraryExternal(body: {
+  doi?: string;
+  arxivId?: string;
+  title?: string;
+  url?: string;
+}): Promise<{ paper: PaperRecord }> {
+  return request("/api/library/lookup", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function importLibraryLink(body: {
+  link: string;
+  citekey?: string;
+  dryRun?: boolean;
+}): Promise<{
+  paper: PaperRecord;
+  created: boolean;
+  existingCitekey?: string;
+  match?: "doi" | "arxiv" | "title" | "citekey";
+}> {
+  return request("/api/library/import/link", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function importLibraryBibtex(bibtex: string): Promise<{
+  imported: PaperRecord[];
+  skipped: Array<{
+    citekey: string;
+    reason: string;
+    existingCitekey?: string;
+    match?: "doi" | "arxiv" | "title" | "citekey";
+  }>;
+  errors: Array<{ citekey: string; error: string }>;
+}> {
+  return request("/api/library/import/bibtex", {
+    method: "POST",
+    body: JSON.stringify({ bibtex }),
+  });
+}
+
+export function importLibraryPdf(body: {
+  pdfBase64: string;
+  filename?: string;
+  titleHint?: string;
+  citekey?: string;
+}): Promise<{
+  paper: PaperRecord;
+  created: boolean;
+  resolvedVia: string;
+  existingCitekey?: string;
+  match?: "doi" | "arxiv" | "title" | "citekey";
+}> {
+  return request("/api/library/import/pdf", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function exportLibraryPapers(body: {
+  citekeys?: string[];
+  collection?: string;
+  format: "bibtex" | "ris";
+}): Promise<{ text: string; count: number; filename: string; format: "bibtex" | "ris" }> {
+  return request("/api/library/export", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function libraryPdfUrl(citekey: string, bust?: number): string {
+  const qs = bust != null ? `?t=${bust}` : "";
+  return `/api/library/${encodeURIComponent(citekey)}/pdf${qs}`;
+}
+
+export type LibraryPdfSourceHint = {
+  citekey: string;
+  hasLocal: boolean;
+  directUrl: string | null;
+  source: "local" | "arxiv" | "unpaywall" | "none";
+  canFetch: boolean;
+};
+
+export function getLibraryPdfSource(
+  citekey: string,
+  opts?: { probe?: boolean },
+): Promise<LibraryPdfSourceHint> {
+  const qs = opts?.probe ? "?probe=1" : "";
+  return request(`/api/library/${encodeURIComponent(citekey)}/pdf-source${qs}`);
+}
+
+export function fetchLibraryPdf(citekey: string): Promise<{
+  paper: PaperRecord;
+  source: "arxiv" | "unpaywall";
+  bytes: number;
+}> {
+  return request(`/api/library/${encodeURIComponent(citekey)}/fetch-pdf`, {
+    method: "POST",
+    body: "{}",
+  });
+}
+
+export function listLibraryAnnotations(
+  citekey: string,
+): Promise<{ annotations: import("./types").PaperAnnotation[] }> {
+  return request(`/api/library/${encodeURIComponent(citekey)}/annotations`);
+}
+
+export function createLibraryAnnotation(
+  citekey: string,
+  body: {
+    kind?: "note" | "highlight" | "underline" | "area" | "pin";
+    body?: string;
+    quote?: string;
+    color?: string;
+    page?: number;
+    x?: number;
+    y?: number;
+    w?: number;
+    h?: number;
+    rects?: Array<{ x: number; y: number; w: number; h: number }>;
+  },
+): Promise<{ annotation: import("./types").PaperAnnotation }> {
+  return request(`/api/library/${encodeURIComponent(citekey)}/annotations`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function patchLibraryAnnotation(
+  citekey: string,
+  id: string,
+  body: Partial<{
+    kind: "note" | "highlight" | "underline" | "area" | "pin";
+    body: string;
+    quote: string;
+    color: string;
+    page: number;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    rects: Array<{ x: number; y: number; w: number; h: number }>;
+  }>,
+): Promise<{ annotation: import("./types").PaperAnnotation }> {
+  return request(`/api/library/${encodeURIComponent(citekey)}/annotations/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export function deleteLibraryAnnotation(citekey: string, id: string): Promise<void> {
+  return request(`/api/library/${encodeURIComponent(citekey)}/annotations/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
+export function checkLibraryIntegrity(body?: {
+  force?: boolean;
+  citekeys?: string[];
+}): Promise<{
+  results: Array<{
+    citekey: string;
+    integrity: PaperRecord["integrity"];
+    changed: boolean;
+    detail?: string;
+  }>;
+}> {
+  return request("/api/library/integrity/check", {
+    method: "POST",
+    body: JSON.stringify(body ?? {}),
+  });
+}
+
+export function checkLibraryPaperIntegrity(
+  citekey: string,
+  body?: { force?: boolean },
+): Promise<{
+  citekey: string;
+  integrity: PaperRecord["integrity"];
+  changed: boolean;
+  detail?: string;
+}> {
+  return request(`/api/library/${encodeURIComponent(citekey)}/integrity`, {
+    method: "POST",
+    body: JSON.stringify(body ?? {}),
+  });
+}
+
+export function enrichLibrary(body?: {
+  force?: boolean;
+  citekeys?: string[];
+  checkIntegrity?: boolean;
+  delayMs?: number;
+}): Promise<{
+  results: Array<{
+    citekey: string;
+    enriched: boolean;
+    reason?: string;
+    paper: PaperRecord;
+  }>;
+  enriched: number;
+  total: number;
+}> {
+  return request("/api/library/enrich", {
+    method: "POST",
+    body: JSON.stringify(body ?? {}),
+  });
+}
+
+export function enrichLibraryPaper(
+  citekey: string,
+  body?: { force?: boolean; checkIntegrity?: boolean },
+): Promise<{
+  citekey: string;
+  enriched: boolean;
+  reason?: string;
+  paper: PaperRecord;
+}> {
+  return request(`/api/library/${encodeURIComponent(citekey)}/enrich`, {
+    method: "POST",
+    body: JSON.stringify(body ?? {}),
+  });
+}
+
+export function citeLibraryIntoProject(
+  projectId: string,
+  body: { citekey: string; file?: string; line?: number },
+): Promise<{ bibFile: string; inserted: boolean }> {
+  return request(`/api/projects/${encodeURIComponent(projectId)}/library/cite`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export type CitationInstance = {
+  citekey: string;
+  file: string;
+  line: number;
+  claimText: string;
+  verdict: "supporting" | "contrasting" | "mentioning" | "unverifiable" | "not_checked";
+  evidence: string;
+  confidence: number;
+  flaggedForReview: boolean;
+  checkedAt: string | null;
+};
+
+export function listProjectCitations(projectId: string): Promise<{ instances: CitationInstance[] }> {
+  return request(`/api/projects/${encodeURIComponent(projectId)}/citations`);
+}
+
+export function checkProjectCitations(
+  projectId: string,
+  body?: { force?: boolean },
+): Promise<{
+  integrity: Array<{ citekey: string; integrity: PaperRecord["integrity"] }>;
+  claims: CitationInstance[];
+}> {
+  return request(`/api/projects/${encodeURIComponent(projectId)}/citations/check`, {
+    method: "POST",
+    body: JSON.stringify(body ?? {}),
   });
 }

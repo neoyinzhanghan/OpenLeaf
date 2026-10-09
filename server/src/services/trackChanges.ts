@@ -420,13 +420,18 @@ async function generateTrackChangesUnlocked(
   toRaw: string,
   onChunk?: (chunk: string) => void,
 ): Promise<TrackChangesResult> {
+  // Resolve commit hashes before checking latexdiff, so a bad hash is 404/400
+  // rather than 501 "latexdiff is not installed".
+  const from = await resolveTrackChangesCommit(id, fromRaw);
+  const to = await resolveTrackChangesCommit(id, toRaw);
+  if (from.hash === to.hash) throw err(400, "from and to are the same commit");
   if (!(await hasLatexdiff())) {
     throw err(501, "latexdiff is not installed (TeX Live latexdiff package)");
   }
 
-  const from = await resolveTrackChangesCommit(id, fromRaw);
-  const to = await resolveTrackChangesCommit(id, toRaw);
-  if (from.hash === to.hash) throw err(400, "from and to are the same commit");
+  if (!(await hasLatexdiff())) {
+    throw err(501, "latexdiff is not installed (TeX Live latexdiff package)");
+  }
 
   const projectCfg = await readProjectConfig(id);
   const scratch = trackChangesScratchDir(id, from.hash, to.hash);
@@ -437,6 +442,9 @@ async function generateTrackChangesUnlocked(
     onChunk?.(`[openleaf] using cached track-changes PDF ${from.shortHash} → ${to.shortHash}\n`);
     return {
       ok: true,
+      pdfUpdated: true,
+      upToDate: false,
+      issues: [],
       engine: projectCfg.engine ?? "pdflatex",
       usedLatexmk: false,
       log: "",

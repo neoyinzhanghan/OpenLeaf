@@ -2,6 +2,7 @@
   "host": "0.0.0.0",
   "port": 8787,
   "projectsRoot": "projects",
+  "libraryRoot": "library",
   "latex": {
     "engine": "pdflatex",
     "autoCompile": true,
@@ -17,5 +18,9 @@
   },
   "git": {
     "enabled": true
-  }
+  },
+  "user": {
+    "displayName": "Your Name"
+  },
+  "access": "localhost"
 }

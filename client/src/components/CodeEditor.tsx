@@ -1,9 +1,10 @@
 import Editor, { type BeforeMount, type OnMount } from "@monaco-editor/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { editor as monacoEditor, type editor } from "monaco-editor";
+import { editor as monacoEditor, type editor } from "monaco-editor/esm/vs/editor/editor.api";
 import type { Awareness } from "y-protocols/awareness";
 import type * as Y from "yjs";
-import { bindYTextToMonaco, type YMonacoBinding } from "../collab/bindYTextToMonaco";
+import { bindYTextToMonaco, sealModelUndo, type YMonacoBinding } from "../collab/bindYTextToMonaco";
+import { latexBeginEndInsert } from "../latex/completions";
 import {
   BIBTEX_LANGUAGE,
   LATEX_LANGUAGE,
@@ -38,6 +39,14 @@ export type CommentMark = {
   threadId?: string;
 };
 
+/** Integrity / claim-support gutter markers (same decoration mechanism as comments). */
+export type CitationGutterMark = {
+  line: number;
+  citekey: string;
+  /** supporting | contrasting | mentioning | unverifiable | not_checked | retracted | mismatch */
+  kind: string;
+};
+
 export type CommentSelection = {
   line: number;
   column: number;
@@ -63,7 +72,10 @@ type Props = {
   onSave: () => void;
   jumpTo?: EditorJumpTarget | null;
   citations?: string[];
+  citationHints?: import("../latex/completions").LatexCitationHint[];
   labels?: string[];
+  /** Called when the user inserts a library citekey that is not yet in the project .bib. */
+  onLibraryCite?: (citekey: string) => void;
   onForwardSearch?: (line: number, column: number) => void;
   /** Collaborative binding */
   yText?: Y.Text | null;
@@ -72,6 +84,8 @@ type Props = {
   readOnly?: boolean;
   /** Gutter markers for comment threads on this file */
   commentMarks?: CommentMark[];
+  /** Citation integrity / claim gutter markers on this file */
+  citationMarks?: CitationGutterMark[];
   /** Cmd/Ctrl+Alt+M or selection helper — open compose for current selection */
   onRequestComment?: (sel: CommentSelection) => void;
   /** Click a gutter mark → focus that thread in the comments panel */
@@ -148,12 +162,15 @@ export function CodeEditor({
   onSave,
   jumpTo,
   citations = [],
+  citationHints = [],
   labels = [],
+  onLibraryCite,
   onForwardSearch,
   yText = null,
   awareness = null,
   readOnly = false,
   commentMarks = [],
+  citationMarks = [],
   onRequestComment,
   onOpenCommentThread,
   changeMarks = null,
@@ -167,6 +184,7 @@ export function CodeEditor({
   const monacoRef = useRef<typeof import("monaco-editor") | null>(null);
   const decoRef = useRef<string[]>([]);
   const commentDecoRef = useRef<string[]>([]);
+  const citationDecoRef = useRef<string[]>([]);
   const changeDecoRef = useRef<string[]>([]);
   const suggestDecoRef = useRef<string[]>([]);
   const changeZoneIdsRef = useRef<string[]>([]);
@@ -191,9 +209,13 @@ export function CodeEditor({
   const readOnlyRef = useRef(readOnly);
   readOnlyRef.current = readOnly;
   const citationsRef = useRef(citations);
+  const citationHintsRef = useRef(citationHints);
   const labelsRef = useRef(labels);
+  const onLibraryCiteRef = useRef(onLibraryCite);
   citationsRef.current = citations;
+  citationHintsRef.current = citationHints;
   labelsRef.current = labels;
+  onLibraryCiteRef.current = onLibraryCite;
   const pathRef = useRef(path);
   pathRef.current = path;
   const bindingRef = useRef<YMonacoBinding | null>(null);
@@ -209,12 +231,16 @@ export function CodeEditor({
     registerLatexLanguage(monaco);
     setLatexSuggestContext(() => ({
       citations: citationsRef.current,
+      citationHints: citationHintsRef.current,
       labels: labelsRef.current,
     }));
     // Every model (including ones @monaco-editor/react creates from `path`) must
     // stay on LF so Yjs offsets match, especially for Windows guests.
     monaco.editor.onDidCreateModel((model) => {
       forceModelLf(model, monaco);
+    });
+    monaco.editor.registerCommand("openleaf.syncLibraryCite", (_accessor, citekey: string) => {
+      if (typeof citekey === "string" && citekey) onLibraryCiteRef.current?.(citekey);
     });
   };
 
@@ -302,6 +328,38 @@ export function CodeEditor({
         endColumn: pos.column,
         quote: lineText,
       });
+    });
+
+    const typingEditor = ed as typeof ed & { onDidType(listener: (text: string) => void): { dispose(): void } };
+    typingEditor.onDidType((typed: string) => {
+      if (typed !== "}" || readOnlyRef.current) return;
+      const model = ed.getModel();
+      const pos = ed.getPosition();
+      if (!model || !pos || model.getLanguageId() !== LATEX_LANGUAGE) return;
+      const line = model.getLineContent(pos.lineNumber);
+      const before = line.slice(0, pos.column - 1);
+      const rest = line.slice(pos.column - 1);
+      const endLine = Math.min(model.getLineCount(), pos.lineNumber + 4);
+      const following = model.getValueInRange({
+        startLineNumber: pos.lineNumber,
+        startColumn: pos.column,
+        endLineNumber: endLine,
+        endColumn: model.getLineMaxColumn(endLine),
+      });
+      const insert = latexBeginEndInsert(before, rest, following);
+      if (!insert) return;
+      ed.executeEdits("latex-begin-end", [
+        {
+          range: {
+            startLineNumber: pos.lineNumber,
+            startColumn: pos.column,
+            endLineNumber: pos.lineNumber,
+            endColumn: pos.column,
+          },
+          text: insert,
+        },
+      ]);
+      ed.setPosition({ lineNumber: pos.lineNumber + 1, column: 2 });
     });
 
     ed.onMouseDown((e) => {
@@ -455,6 +513,46 @@ export function CodeEditor({
       })),
     );
   }, [commentMarks, editorReady, path]);
+
+  // Citation integrity / claim-support gutter marks (same mechanism as comments / highlight-since)
+  useEffect(() => {
+    const ed = editorRef.current;
+    if (!ed || !editorReady) return;
+    const marks = citationMarks.filter((m) => m.line >= 1);
+    citationDecoRef.current = ed.deltaDecorations(
+      citationDecoRef.current,
+      marks.map((m) => {
+        const kind = m.kind;
+        const color =
+          kind === "retracted" || kind === "contrasting"
+            ? "#B91C1C"
+            : kind === "mismatch" || kind === "unverifiable"
+              ? "#B45309"
+              : kind === "supporting"
+                ? "#0F766E"
+                : "#64748B";
+        return {
+          range: {
+            startLineNumber: m.line,
+            startColumn: 1,
+            endLineNumber: m.line,
+            endColumn: 1,
+          },
+          options: {
+            isWholeLine: false,
+            linesDecorationsClassName: `citation-line-glyph citation-${kind}`,
+            hoverMessage: {
+              value: `Citation \`${m.citekey}\` · ${kind} _(triage — not certified)_`,
+            },
+            overviewRuler: {
+              color,
+              position: monacoEditor.OverviewRulerLane.Center,
+            },
+          },
+        };
+      }),
+    );
+  }, [citationMarks, editorReady, path]);
 
   // Cursor-style show-changes: green additions + red deleted view zones.
   // Re-apply on model swap (file/path remount) — decorations die with the old model.
@@ -703,6 +801,7 @@ export function CodeEditor({
     const binding = bindYTextToMonaco(yText, model, new Set([ed]), awareness ?? undefined);
     bindingRef.current = binding;
     forceModelLf(model, monacoApi);
+    sealModelUndo(model);
 
     // Web fonts (JetBrains Mono) load async. Until glyph metrics match what Monaco
     // measured at mount, the painted caret x-position drifts from the click target.
@@ -835,9 +934,9 @@ export function CodeEditor({
           fontLigatures: false,
           suggestOnTriggerCharacters: true,
           quickSuggestions: {
-            other: true,
-            comments: false,
-            strings: true,
+            other: "on",
+            comments: "off",
+            strings: "on",
           },
           suggest: {
             showWords: false,

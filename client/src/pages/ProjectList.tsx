@@ -1,14 +1,22 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
-import { createProject, listProjects } from "../api/client";
+import { Link, useSearchParams } from "react-router-dom";
+import { createProjectNamed, listProjects } from "../api/client";
 import { hostGateway, hostLogout, type HostGatewayView } from "../api/share";
 import type { ProjectMeta } from "../api/types";
+import { HostAccessPanel } from "../components/HostAccessPanel";
+import { ProjectCard } from "../components/ProjectHostActions";
 import { ThemePicker } from "../components/ThemeToggle";
-import { copyText } from "../lib/clipboard";
+import { readLastProject, rememberProject, type LastProject } from "../lib/lastProject";
+import { projectFolderName } from "../projectFolder";
 import { useSession } from "../session/SessionContext";
 
 export function ProjectList() {
   const { session, refresh } = useSession();
+  const [lastProject, setLastProject] = useState<LastProject | null>(null);
+  useEffect(() => {
+    setLastProject(readLastProject());
+  }, []);
+  const [params] = useSearchParams();
   const remoteHost = session.kind === "host" && session.remote;
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
   const [name, setName] = useState("");
@@ -16,7 +24,9 @@ export function ProjectList() {
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [gateway, setGateway] = useState<HostGatewayView | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [phoneOpen, setPhoneOpen] = useState(false);
+  const title = name.trim();
+  const folder = title ? projectFolderName(title) : null;
 
   const refreshProjects = async () => {
     setProjects(await listProjects());
@@ -58,12 +68,11 @@ export function ProjectList() {
 
   const onCreate = async (e: FormEvent) => {
     e.preventDefault();
-    const id = name.trim();
-    if (!id) return;
+    if (!title || !folder) return;
     setBusy(true);
     setError(null);
     try {
-      await createProject(id, "example-article");
+      await createProjectNamed(title, "example-article");
       setName("");
       await refreshProjects();
     } catch (err) {
@@ -73,8 +82,6 @@ export function ProjectList() {
     }
   };
 
-  const publicUrl = gateway && !gateway.localOnly && gateway.url ? gateway.url : null;
-
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -83,6 +90,14 @@ export function ProjectList() {
           <span className="brand-mark">OpenLeaf</span>
           <span className="brand-sub">local LaTeX</span>
         </div>
+        <nav className="topbar-nav" aria-label="Primary">
+          <Link to="/" className="btn btn-quiet is-active" aria-current="page">
+            Projects
+          </Link>
+          <Link to="/library" className="btn btn-quiet">
+            Library
+          </Link>
+        </nav>
         <div className="topbar-end">
           {remoteHost && (
             <button
@@ -100,8 +115,16 @@ export function ProjectList() {
       </header>
       <main className="home">
         <h1>Projects</h1>
+        {params.get("pair") === "invalid" && (
+          <div className="error-banner">
+            This link has expired or was already used. On your computer, open OpenLeaf → Open on your phone → New
+            link.
+          </div>
+        )}
         <p className="home-lead">
           Local folders with a main <code>.tex</code>, bibliography, and figures — edit and compile side by side.
+          Your personal reference collection lives separately in{" "}
+          <Link to="/library">Library</Link>.
         </p>
 
         {remoteHost && (
@@ -111,45 +134,16 @@ export function ProjectList() {
           </div>
         )}
 
-        {!remoteHost && publicUrl && (
+        {!remoteHost && (
           <div className="host-gateway-card">
             <p className="guest-kicker">Open on your phone</p>
-            <p>
-              Persistent Cloudflare URL for this machine. Sign in as <strong>admin</strong> with the host
-              password. The address changes if OpenLeaf or the tunnel restarts.
-            </p>
-            <div className="host-gateway-url-row">
-              <code className="host-gateway-url">{publicUrl}</code>
-              <button
-                type="button"
-                className="btn btn-quiet"
-                onClick={() => {
-                  void copyText(publicUrl).then((ok) => {
-                    if (!ok) {
-                      setError("Could not copy the URL — select it and copy manually");
-                      return;
-                    }
-                    setCopied(true);
-                    window.setTimeout(() => setCopied(false), 1600);
-                  });
-                }}
-              >
-                {copied ? "Copied" : "Copy"}
-              </button>
-            </div>
-            {gateway && !gateway.dnsReady && (
-              <p className="home-actions-hint">DNS is still propagating — wait a few seconds, then open it.</p>
-            )}
-          </div>
-        )}
-
-        {!remoteHost && gateway?.localOnly && (
-          <div className="host-gateway-card">
-            <p className="guest-kicker">Phone access</p>
-            <p>
-              No public Cloudflare tunnel yet. Install <code>cloudflared</code> on this machine, then restart
-              OpenLeaf to get a link you can open on your phone.
-            </p>
+            <p>Same Wi-Fi uses a one-time link. From anywhere starts a tunnel only when you ask for it.</p>
+            <button type="button" className="btn btn-primary" onClick={() => setPhoneOpen(true)}>
+              Open on your phone
+            </button>
+            {gateway?.url && !gateway.localOnly ? (
+              <p className="home-actions-hint">A remote tunnel is already running. The phone dialog can reuse it.</p>
+            ) : null}
           </div>
         )}
 
@@ -157,19 +151,22 @@ export function ProjectList() {
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="methods-draft"
-            pattern="[a-zA-Z0-9._-]+"
-            title="Letters, numbers, dots, underscores, hyphens"
-            aria-label="New project id"
+            placeholder="My first paper"
+            aria-label="New project name"
           />
-          <button className="btn btn-primary" type="submit" disabled={busy || !name.trim()}>
+          <button className="btn btn-primary" type="submit" disabled={busy || !title || !folder}>
             {busy ? "Creating…" : "Create from example"}
           </button>
         </form>
+        {title && folder && folder !== title ? (
+          <p className="home-actions-hint">
+            Folder name: <code>{folder}</code>
+          </p>
+        ) : null}
         <p className="home-actions-hint">
-          Seeds a starter article you can rename and rewrite. Id: letters, numbers, <code>.</code> <code>_</code>{" "}
-          <code>-</code>.
+          Seeds a starter article you can rename and rewrite. Click a project title to rename it. Spaces are fine.
         </p>
+        {!remoteHost && <HostAccessPanel open={phoneOpen} onClose={() => setPhoneOpen(false)} />}
 
         {error && <div className="error-banner">{error}</div>}
 
@@ -181,17 +178,18 @@ export function ProjectList() {
           )}
           {!loading &&
             projects.map((p) => (
-              <Link key={p.id} to={`/p/${encodeURIComponent(p.id)}`} className="project-item">
-                <div>
-                  <h2>{p.name}</h2>
-                  <p>
-                    {p.mainFile} · {p.engine}
-                  </p>
-                </div>
-                <span className="project-item-go" aria-hidden>
-                  →
-                </span>
-              </Link>
+              <ProjectCard
+                key={p.id}
+                project={p}
+                onRenamed={(next) => {
+                  const prev = readLastProject();
+                  if (prev && (prev.id === p.id || prev.id === next.id)) {
+                    rememberProject({ id: next.id, name: next.name });
+                    setLastProject({ id: next.id, name: next.name });
+                  }
+                  void refreshProjects();
+                }}
+              />
             ))}
           {!loading && projects.length === 0 && !error && (
             <div className="empty-hint empty-hint-card">
@@ -203,6 +201,17 @@ export function ProjectList() {
           )}
         </div>
       </main>
+      <nav className={`phone-tabbar${lastProject ? " has-project" : ""}`} aria-label="Primary">
+        <Link to="/" aria-current="page">
+          Projects
+        </Link>
+        {lastProject ? (
+          <Link to={`/p/${encodeURIComponent(lastProject.id)}`} className="phone-tabbar-project">
+            <span>{lastProject.name}</span>
+          </Link>
+        ) : null}
+        <Link to="/library">Library</Link>
+      </nav>
     </div>
   );
 }

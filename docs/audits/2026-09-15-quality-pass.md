@@ -118,7 +118,7 @@ See §11. Conversation start recorded **68 pass / 0 fail** before the additional
 ### HTTP, live `:8787` (read-only except noted)
 
 1. Health and SPA bootstrap
-2. List projects (observed real papers: `USCAP2027_DeepHeme_Monitoring`, retreat talk, etc. — **not opened for writes**)
+2. List projects (observed real papers: `a user paper`, retreat talk, etc. — **not opened for writes**)
 3. Open `example-article` metadata, tree, `main.tex`, `openleaf.json`
 4. Timeline, branch leaves, trash (empty), merge status (`204` none)
 5. Comments list (empty), identities, history
@@ -395,7 +395,7 @@ These are **not** caused by the overnight commits; (1) and (2) are **fixed in so
 
 ## 11. Final test, lint, type-check, and build results
 
-Commands (repo root `/home/yinzh/Projects/OpenLeaf`):
+Commands (repo root `the checkout`):
 
 | Command | Result |
 |---------|--------|
