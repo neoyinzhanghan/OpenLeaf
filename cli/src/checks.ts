@@ -202,24 +202,14 @@ export async function runChecks(opts: { smoke?: boolean } = {}): Promise<CheckRe
     checks.push(pass("library-dir", "The citation library directory exists."));
   }
 
-  if (nodeMajor() < 20) {
+  if (!nodeMajor()) {
     checks.push(
       fail(
         "node-version",
         "error",
-        `Node ${process.version} is older than 20.`,
-        "OpenLeaf will not run reliably.",
-        "Install Node.js 20 or newer from https://nodejs.org/",
-      ),
-    );
-  } else if (nodeMajor() === 20) {
-    checks.push(
-      fail(
-        "node-version",
-        "warning",
-        `Node ${process.version} runs, and Node 22 is the version this release is tested with.`,
-        "A future release may require Node 22.",
-        "Install Node.js 22 from https://nodejs.org/ when you can. .nvmrc in this repo is 22.",
+        `Node ${process.version} does not meet the runtime requirement.`,
+        "The citation library requires built-in node:sqlite support.",
+        "Install the latest Node.js 22 release (22.13 or newer) from https://nodejs.org/",
       ),
     );
   } else {

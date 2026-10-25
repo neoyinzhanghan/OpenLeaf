@@ -170,7 +170,7 @@ async function cmdSetup(flags: Map<string, string | true>): Promise<number> {
   const existing =
     fs.existsSync(path.join(configDir, "local.json")) || fs.existsSync(path.join(configDir, "host-auth.json"));
   if (existing) out("Existing installation detected. Current projects and logins are kept unless you pass new values.");
-  if (nodeMajor() < 20) throw new CliError("Node.js 20 or newer is required. https://nodejs.org/", 1);
+  if (!nodeMajor()) throw new CliError("Node.js 22.13 or newer with node:sqlite support is required. https://nodejs.org/", 1);
 
   if (!(await commandExists("pdflatex"))) {
     out("pdflatex was not found. Configuration can still be saved, but the sample PDF cannot be built yet.");
