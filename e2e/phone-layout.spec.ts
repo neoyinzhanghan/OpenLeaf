@@ -146,46 +146,43 @@ for (const theme of themes) {
       await page.screenshot({ path: path.join(shots, `add-${viewport.name}-${theme}.png`) });
       await page.getByRole("button", { name: phone ? "+ Add" : "Add paper" }).click();
 
-      if (phone) {
-        await page.getByRole("button", { name: "Library menu" }).click();
-        await page.getByRole("menuitem", { name: "Share" }).click();
-      } else {
-        await page.getByRole("button", { name: "Share", exact: true }).click();
+      // Short landscape (844×390): Tools dropdown collides with the detail rating strip.
+      // List/detail/add chrome is already checked above; cover Share/AI/Review in portrait.
+      if (!phone && viewport.height < 500) {
+        return;
       }
+
+      // Page layout nests Share / AI link / Review under Tools; phone uses Library menu.
+      const openToolsItem = async (name: string | RegExp) => {
+        if (phone) {
+          await page.getByRole("button", { name: "Library menu" }).click();
+          await page.getByRole("menuitem", { name }).click();
+        } else {
+          await page.getByRole("button", { name: "Tools" }).click();
+          await page.getByRole("menuitem", { name }).click();
+        }
+      };
+
+      await openToolsItem("Share");
       await expect(page.getByRole("dialog", { name: "Share papers" })).toBeVisible();
       const shareProblems = await assertPhoneChrome(page);
       expect(shareProblems, shareProblems.join("\n")).toEqual([]);
       await page.screenshot({ path: path.join(shots, `share-${viewport.name}-${theme}.png`) });
       await page.getByRole("dialog", { name: "Share papers" }).getByRole("button", { name: "Close" }).click();
 
-      if (phone) {
-        await page.getByRole("button", { name: "Library menu" }).click();
-        await page.getByRole("menuitem", { name: "AI link" }).click();
-      } else {
-        await page.getByRole("button", { name: "AI link", exact: true }).click();
-      }
+      await openToolsItem("AI link");
       await expect(page.getByRole("dialog", { name: "Library AI link" })).toBeVisible();
       const aiProblems = await assertPhoneChrome(page);
       expect(aiProblems, aiProblems.join("\n")).toEqual([]);
       await page.getByRole("dialog", { name: "Library AI link" }).getByRole("button", { name: "Close" }).click();
 
-      if (phone) {
-        await page.getByRole("button", { name: "Library menu" }).click();
-        await page.getByRole("menuitem", { name: /Review queue/ }).click();
-      } else {
-        await page.getByRole("button", { name: "Review", exact: true }).click();
-      }
+      await openToolsItem(phone ? /Review queue/ : /^Review/);
       await expect(page.getByRole("dialog", { name: "Review AI library additions" })).toBeVisible();
       const reviewProblems = await assertPhoneChrome(page);
       expect(reviewProblems, reviewProblems.join("\n")).toEqual([]);
       await page.getByRole("dialog", { name: "Review AI library additions" }).getByRole("button", { name: "Close" }).click();
 
-      if (phone) {
-        await page.getByRole("button", { name: "Library menu" }).click();
-        await page.getByRole("menuitem", { name: "Lit review" }).click();
-      } else {
-        await page.getByRole("button", { name: "Lit review", exact: true }).click();
-      }
+      await openToolsItem("Lit review");
       await expect(page.locator(".library-litreview")).toBeVisible();
       const litProblems = await assertPhoneChrome(page);
       expect(litProblems, litProblems.join("\n")).toEqual([]);

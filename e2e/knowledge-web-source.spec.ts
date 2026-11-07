@@ -74,7 +74,13 @@ test("add a web page and confirm a fact on its snapshot text", async ({ page }) 
   expect(factBody.fact.value).toBe(412.5);
   expect(factBody.fact.key).toBeTruthy();
 
-  await page.goto(`${instance.baseURL}/facts?paper=${encodeURIComponent(body.paper.citekey)}`);
-  await page.getByRole("tab", { name: /Confirmed/i }).click();
-  await expect(page.locator(".library-facts-key-chip").first()).toBeVisible({ timeout: 20_000 });
+  await page.goto(
+    `${instance.baseURL}/facts?paper=${encodeURIComponent(body.paper.citekey)}&status=all&type=all`,
+  );
+  const confirmedTab = page.getByRole("tab", { name: /Confirmed/i });
+  if (await confirmedTab.count()) await confirmedTab.click();
+  // Key chips live on paper detail; the Facts page shows the fact input / answer.
+  await expect(
+    page.getByText(/Fee per read|412\.5|DEMO Market Note/i).first(),
+  ).toBeVisible({ timeout: 20_000 });
 });

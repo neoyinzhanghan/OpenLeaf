@@ -3981,7 +3981,7 @@ button.lib-badge:hover {
   position: absolute;
   top: calc(100% + 4px);
   right: 0;
-  z-index: 20;
+  z-index: 80;
   display: grid;
   gap: 0.15rem;
   min-width: 168px;

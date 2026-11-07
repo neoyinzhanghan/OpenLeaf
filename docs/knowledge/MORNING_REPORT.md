@@ -75,6 +75,6 @@ Screenshots under `docs/knowledge/morning/`:
 
 - SyncTeX PDF review overlay still deferred.
 - Scale journey is a reduced synthetic sandbox (400 facts); the brief’s 2k/300/150 target is the next soak.
-- Full `npm run e2e` (entire suite beyond journeys) should still be watched on CI for unrelated flakes.
+- Short landscape Library (844×390): Tools dropdown can sit under the detail rating strip — e2e covers list/detail/add there and Share/AI/Review in portrait; raise the menu or collapse Tools further if you care about that orientation.
 - Canvas `displayLabel` still truncates long names at ~40 chars — hover card shows the full name.
 - Keyboard review mode on Facts/inbox (c/r shortcuts) is only partial (guided Trail has j/k).
