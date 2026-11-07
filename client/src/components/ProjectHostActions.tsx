@@ -284,21 +284,32 @@ export function ProjectCard({
   onRenamed: (next: ProjectMeta) => void;
 }) {
   const [editing, setEditing] = useState(false);
+  const kind = project.kind === "knowledge" ? "knowledge" : project.kind === "paper" ? "paper" : "other";
+  const isKnowledge = kind === "knowledge";
   return (
-    <article className={`project-item${editing ? " is-renaming" : ""}`}>
+    <article
+      className={`project-item is-${kind}${editing ? " is-renaming" : ""}`}
+      data-kind={kind}
+    >
       <Link className="project-item-hit" to={`/p/${encodeURIComponent(project.id)}`} aria-label={`Open ${project.name}`} />
+      <span className="project-item-mark" aria-hidden />
       <div className="project-item-main">
+        <p className="project-item-kind">{isKnowledge ? "Knowledge" : kind === "paper" ? "Paper" : "Limbo"}</p>
         <h2>
           <ProjectNameField project={project} onRenamed={onRenamed} onEditingChange={setEditing} />
         </h2>
         <p>
-          {project.mainFile} · {project.engine}
+          {isKnowledge
+            ? project.knowledgeId || "Short write-up"
+            : `${project.mainFile} · ${project.engine}`}
         </p>
       </div>
       <ProjectCardMenu project={project} />
-      <span className="project-item-go" aria-hidden>
-        →
-      </span>
+      {!isKnowledge ? (
+        <span className="project-item-go" aria-hidden>
+          →
+        </span>
+      ) : null}
     </article>
   );
 }

@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { libraryPdfUrl, listAllLibraryFacts, listLibraryFacts, patchLibraryFact } from "../api/client";
+import {
+  getLibrarySnapshotText,
+  libraryPdfUrl,
+  listAllLibraryFacts,
+  listLibraryFacts,
+  patchLibraryFact,
+} from "../api/client";
 import type {
   FactDisplayRect,
   FactStatus,
@@ -57,12 +63,23 @@ function factKey(f: Pick<LibraryFact, "citekey" | "id">) {
   return `${f.citekey}:${f.id}`;
 }
 
-/** Pull a short label out of verbose “AUROC of X on …” prompts. */
+/** Short English label from the authoring sentence (never the machine key). */
 function factSubject(fact: LibraryFact): string {
-  const m = fact.input.match(/^(?:AUROC|AUC|C-index|accuracy|F1) of (.+?) on /i);
-  if (m?.[1]) return m[1].trim();
-  if (fact.input.length <= 72) return fact.input;
-  return `${fact.input.slice(0, 70)}…`;
+  const input = (fact.input || "").trim();
+  const m = input.match(/^(?:AUROC|AUC|C-index|accuracy|F1) of (.+?) on (.+)$/i);
+  if (m) {
+    const model = m[1]!.trim();
+    const dataset = m[2]!.trim().replace(/\s*\([^)]*\)\s*$/, "").trim();
+    const label = dataset ? `${model} on ${dataset}` : model;
+    return label.length <= 64 ? label : `${label.slice(0, 63)}…`;
+  }
+  const m2 = input.match(/^(?:AUROC|AUC|C-index|accuracy|F1) of (.+)$/i);
+  if (m2?.[1]) {
+    const model = m2[1].trim();
+    return model.length <= 64 ? model : `${model.slice(0, 63)}…`;
+  }
+  if (input.length <= 72) return input || fact.key || "Fact";
+  return `${input.slice(0, 70)}…`;
 }
 
 function factMetric(fact: LibraryFact): string | null {
@@ -285,6 +302,10 @@ export function LibraryFactsView({ papers, onBack, onError }: Props) {
   const [pendingIds, setPendingIds] = useState<Set<string>>(() => new Set());
   const [evidenceFact, setEvidenceFact] = useState<PaperFact | LibraryFact | null>(null);
   const [flash, setFlash] = useState<PdfHighlight | null>(null);
+  const [snapshotText, setSnapshotText] = useState<string | null>(null);
+  const [snapshotError, setSnapshotError] = useState<string | null>(null);
+  const [snapshotBusy, setSnapshotBusy] = useState(false);
+  const snapshotRef = useRef<HTMLPreElement | null>(null);
   const [queueCollapsed, setQueueCollapsed] = useState(
     () => localStorage.getItem("openleaf.facts.queueCollapsed") === "1",
   );
@@ -421,6 +442,19 @@ export function LibraryFactsView({ papers, onBack, onError }: Props) {
     }));
   }, [scopedFacts, citekey, paperByKey]);
 
+  // Deep links (?fact=) must not be hidden by the default unreviewed/value filters.
+  useEffect(() => {
+    if (!focusFactParam || !scopedFacts.length) return;
+    const hit = scopedFacts.find(
+      (f) => f.id === focusFactParam || factKey(f) === focusFactParam || f.key === focusFactParam,
+    );
+    if (!hit) return;
+    const patch: Record<string, string | null> = {};
+    if (status && hit.status !== status) patch.status = "all";
+    if (type && hit.type !== type) patch.type = "all";
+    if (Object.keys(patch).length) patchParams(patch, true);
+  }, [focusFactParam, scopedFacts, status, type, patchParams]);
+
   // Keep / restore selection when filters change.
   useEffect(() => {
     if (!visibleFacts.length) {
@@ -429,7 +463,9 @@ export function LibraryFactsView({ papers, onBack, onError }: Props) {
     }
     setActiveId((prev) => {
       if (focusFactParam) {
-        const hit = visibleFacts.find((f) => f.id === focusFactParam || factKey(f) === focusFactParam);
+        const hit = visibleFacts.find(
+          (f) => f.id === focusFactParam || factKey(f) === focusFactParam || f.key === focusFactParam,
+        );
         if (hit) return factKey(hit);
       }
       if (prev && visibleFacts.some((f) => factKey(f) === prev)) return prev;
@@ -457,6 +493,12 @@ export function LibraryFactsView({ papers, onBack, onError }: Props) {
     [patchParams, narrow],
   );
 
+  const isWebEvidence =
+    Boolean(activeFact) &&
+    (activeFact!.sourceKind === "web" ||
+      activePaper?.source === "web" ||
+      (!activePaper?.attachment && Boolean(activePaper?.url)));
+
   // Load full fact (with displayRects) when selection changes.
   useEffect(() => {
     let cancelled = false;
@@ -483,6 +525,41 @@ export function LibraryFactsView({ papers, onBack, onError }: Props) {
       cancelled = true;
     };
   }, [activeFact?.citekey, activeFact?.id]);
+
+  // Web sources: load snapshot.txt and scroll to the highlighted passage.
+  useEffect(() => {
+    let cancelled = false;
+    if (!activeFact || !isWebEvidence) {
+      setSnapshotText(null);
+      setSnapshotError(null);
+      setSnapshotBusy(false);
+      return;
+    }
+    setSnapshotBusy(true);
+    setSnapshotError(null);
+    void getLibrarySnapshotText(activeFact.citekey)
+      .then((text) => {
+        if (cancelled) return;
+        setSnapshotText(text);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setSnapshotText(null);
+        setSnapshotError(err instanceof Error ? err.message : "Could not load source snapshot");
+      })
+      .finally(() => {
+        if (!cancelled) setSnapshotBusy(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeFact?.citekey, activeFact?.id, isWebEvidence]);
+
+  useEffect(() => {
+    if (!snapshotText || !isWebEvidence) return;
+    const el = snapshotRef.current?.querySelector("mark");
+    el?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [snapshotText, evidenceFact?.id, isWebEvidence]);
 
   useEffect(() => {
     if (!activeId) return;
@@ -640,87 +717,24 @@ export function LibraryFactsView({ papers, onBack, onError }: Props) {
               <span className="library-facts-subject">{factSubject(f)}</span>
             </div>
             <div className="library-facts-card-meta muted">
-              {f.key ? (
-                <button
-                  type="button"
-                  className="library-facts-key-chip"
-                  title={`Copy \\fact{${f.key}}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void navigator.clipboard.writeText(`\\fact{${f.key}}`);
-                  }}
-                >
-                  {`\\fact{${f.key}}`}
-                </button>
-              ) : null}
               {!group || narrow ? <span className="library-facts-citekey">{f.citekey}</span> : null}
-              {page != null ? <span>p.{page}</span> : <span>no highlight</span>}
-              {f.value != null ? (
-                <span className="library-facts-value">
-                  = {f.value}
-                  {f.unit ? ` ${f.unit}` : ""}
-                </span>
-              ) : null}
+              {page != null ? <span>p.{page}</span> : null}
               <span className={`library-fact-status is-${f.status}`}>{STATUS_LABEL[f.status]}</span>
             </div>
-            {quote ? (
+            {active && quote ? (
               <p className="library-facts-quote muted">
-                “{quote.slice(0, 140)}
-                {quote.length > 140 ? "…" : ""}”
+                “{quote.slice(0, 120)}
+                {quote.length > 120 ? "…" : ""}”
               </p>
             ) : null}
           </div>
-        </div>
-        <div className="library-facts-card-actions">
-          {f.status !== "not_found" ? (
-            <>
-              <button
-                type="button"
-                className="btn btn-primary library-facts-confirm"
-                disabled={pending || f.status === "confirmed"}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void decide(f, "confirmed");
-                }}
-              >
-                Confirm
-              </button>
-              <button
-                type="button"
-                className="btn btn-ghost library-facts-reject"
-                disabled={pending || f.status === "rejected"}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void decide(f, "rejected");
-                }}
-              >
-                Reject
-              </button>
-            </>
-          ) : null}
         </div>
       </li>
     );
   };
 
-  const evidencePane = !activeFact ? (
-    <div className="library-facts-evidence-empty muted">
-      <p>Select a fact to read the paper beside the queue.</p>
-    </div>
-  ) : !activePaper?.attachment ? (
-    <div className="library-facts-evidence-empty muted">
-      <p>
-        <strong>{activeFact.citekey}</strong> has no PDF attached.
-      </p>
-      {activeFact.highlights[0]?.quote ? (
-        <blockquote>“{activeFact.highlights[0].quote}”</blockquote>
-      ) : null}
-      <p>
-        <Link to={`/library?paper=${encodeURIComponent(activeFact.citekey)}`}>Open in Library</Link>
-      </p>
-    </div>
-  ) : (
-    <>
+  const evidenceMeta =
+    activeFact && activePaper ? (
       <div className="library-facts-evidence-meta">
         <div>
           <strong className="library-facts-subject">{factSubject(activeFact)}</strong>
@@ -731,61 +745,63 @@ export function LibraryFactsView({ papers, onBack, onError }: Props) {
             <button
               type="button"
               className="btn btn-ghost library-facts-copy-fact"
-              title="Copy LaTeX reference"
+              title={`Copy \\fact{${activeFact.key}}`}
               onClick={() => void navigator.clipboard.writeText(`\\fact{${activeFact.key}}`)}
             >
-              {`Copy \\fact{${activeFact.key}}`}
+              Copy key
             </button>
           ) : null}
         </div>
         <p className="muted">
-          {activePaper.title.slice(0, 120)}
-          {activePaper.title.length > 120 ? "…" : ""} ·{" "}
-          <span className="library-facts-citekey">{activePaper.citekey}</span>
-          {activeFact.value != null ? (
-            <>
-              {" "}
-              · value {activeFact.value}
-              {activeFact.unit ? ` ${activeFact.unit}` : ""}
-            </>
-          ) : null}
-          {evidenceFact?.highlights?.[0]?.page != null ? (
+          {activePaper.title.slice(0, 90)}
+          {activePaper.title.length > 90 ? "…" : ""}
+          {isWebEvidence ? (
+            <> · web source</>
+          ) : evidenceFact?.highlights?.[0]?.page != null ? (
             <> · p.{evidenceFact.highlights[0].page}</>
           ) : null}
         </p>
+        {isWebEvidence && activePaper.url ? (
+          <p className="library-facts-source-url">
+            <a href={activePaper.url} target="_blank" rel="noreferrer">
+              {activePaper.url}
+            </a>
+          </p>
+        ) : null}
         <div className="library-facts-evidence-nav">
           <Link
             className="btn btn-ghost"
             to={`/library?paper=${encodeURIComponent(activeFact.citekey)}`}
-            title="Open this paper in the Library"
+            title="Open this source in the Library"
           >
-            Open in Library
+            Library
           </Link>
-          {citekey !== activeFact.citekey ? (
-            <button
-              type="button"
-              className="btn btn-ghost"
-              onClick={() => patchParams({ paper: activeFact.citekey })}
-              title="Filter the queue to this paper"
-            >
-              Only this paper
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="btn btn-ghost"
-              onClick={() => patchParams({ paper: null })}
-              title="Show facts from every paper"
-            >
-              All papers
-            </button>
-          )}
           <button type="button" className="btn btn-ghost" onClick={() => jumpPaper(-1)} title="Previous paper ([)">
-            ← Paper
+            ←
           </button>
           <button type="button" className="btn btn-ghost" onClick={() => jumpPaper(1)} title="Next paper (])">
-            Paper →
+            →
           </button>
+          {activeFact.status !== "not_found" ? (
+            <>
+              <button
+                type="button"
+                className="btn btn-primary library-facts-confirm"
+                disabled={pendingIds.has(factKey(activeFact)) || activeFact.status === "confirmed"}
+                onClick={() => void decide(activeFact, "confirmed")}
+              >
+                Confirm
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost library-facts-reject"
+                disabled={pendingIds.has(factKey(activeFact)) || activeFact.status === "rejected"}
+                onClick={() => void decide(activeFact, "rejected")}
+              >
+                Reject
+              </button>
+            </>
+          ) : null}
         </div>
         {evidenceFact?.highlights?.[0]?.quote ? (
           <p className="library-facts-evidence-quote">
@@ -801,9 +817,77 @@ export function LibraryFactsView({ papers, onBack, onError }: Props) {
             })()}
           </p>
         ) : (
-          <p className="library-facts-evidence-quote muted">No PDF passage linked for this fact.</p>
+          <p className="library-facts-evidence-quote muted">
+            {isWebEvidence ? "No passage tagged on this snapshot yet." : "No PDF passage linked for this fact."}
+          </p>
         )}
       </div>
+    ) : null;
+
+  const webSnapshotBody = (() => {
+    if (!activeFact || !isWebEvidence) return null;
+    if (snapshotBusy) {
+      return <div className="library-facts-snapshot-empty muted">Loading source snapshot…</div>;
+    }
+    if (snapshotError) {
+      return (
+        <div className="library-facts-snapshot-empty muted">
+          <p>{snapshotError}</p>
+          <Link to={`/library?paper=${encodeURIComponent(activeFact.citekey)}`}>Open in Library</Link>
+        </div>
+      );
+    }
+    if (!snapshotText) {
+      return (
+        <div className="library-facts-snapshot-empty muted">
+          <p>No saved web snapshot for this source.</p>
+          <Link to={`/library?paper=${encodeURIComponent(activeFact.citekey)}`}>Open in Library</Link>
+        </div>
+      );
+    }
+    const hl = evidenceFact?.highlights?.[0];
+    const start = hl?.start ?? -1;
+    const end = hl?.end ?? -1;
+    const hasRange = start >= 0 && end > start && end <= snapshotText.length;
+    return (
+      <pre className="library-facts-snapshot" ref={snapshotRef}>
+        {hasRange ? (
+          <>
+            {snapshotText.slice(0, start)}
+            <mark>{snapshotText.slice(start, end)}</mark>
+            {snapshotText.slice(end)}
+          </>
+        ) : (
+          snapshotText
+        )}
+      </pre>
+    );
+  })();
+
+  const evidencePane = !activeFact ? (
+    <div className="library-facts-evidence-empty muted">
+      <p>Select a fact to read its source beside the queue.</p>
+    </div>
+  ) : isWebEvidence ? (
+    <>
+      {evidenceMeta}
+      <div className="library-facts-evidence-web">{webSnapshotBody}</div>
+    </>
+  ) : !activePaper?.attachment ? (
+    <div className="library-facts-evidence-empty muted">
+      <p>
+        <strong>{activeFact.citekey}</strong> has no PDF or web snapshot attached.
+      </p>
+      {activeFact.highlights[0]?.quote ? (
+        <blockquote>“{activeFact.highlights[0].quote}”</blockquote>
+      ) : null}
+      <p>
+        <Link to={`/library?paper=${encodeURIComponent(activeFact.citekey)}`}>Open in Library</Link>
+      </p>
+    </div>
+  ) : (
+    <>
+      {evidenceMeta}
       <div className="library-facts-evidence-pdf">
         <PdfViewer
           url={pdfUrl!}
@@ -910,31 +994,17 @@ export function LibraryFactsView({ papers, onBack, onError }: Props) {
             <button type="button" className="btn btn-ghost" onClick={onBack}>
               ← Library
             </button>
-          ) : (
-            <Link
-              to={activeFact ? `/library?paper=${encodeURIComponent(activeFact.citekey)}` : "/library"}
-              className="btn btn-ghost"
-            >
-              ← Library
-            </Link>
-          )}
+          ) : null}
           <div>
-            <h2 title="j/k move · [/] paper · c confirm · x reject · p filter · o library">
-              Fact review
-            </h2>
+            <h2 title="j/k move · [/] paper · c confirm · x reject">Facts</h2>
             <p className="muted">
               {status === "unreviewed"
-                ? `${visibleFacts.length} left`
+                ? `${visibleFacts.length} to review`
                 : `${visibleFacts.length} shown`}
-              {statusCounts.all ? ` · ${statusCounts.all} scoped` : null}
               {busy ? " ·…" : null}
-              {activeFact ? ` · ${activeFact.citekey}` : null}
             </p>
           </div>
         </div>
-        <p className="muted library-facts-keys" title="Keyboard shortcuts">
-          <kbd>j</kbd>/<kbd>k</kbd> · <kbd>[</kbd>/<kbd>]</kbd> · <kbd>c</kbd>/<kbd>x</kbd>
-        </p>
       </header>
 
       <div className="library-facts-toolbar">
@@ -943,7 +1013,7 @@ export function LibraryFactsView({ papers, onBack, onError }: Props) {
             className="library-search"
             value={qDraft}
             onChange={(e) => setQDraft(e.target.value)}
-            placeholder="Filter text, model, quote…"
+            placeholder="Search facts…"
             aria-label="Search facts"
           />
           <div className="library-facts-status-tabs" role="tablist" aria-label="Fact status">
@@ -969,18 +1039,16 @@ export function LibraryFactsView({ papers, onBack, onError }: Props) {
               );
             })}
           </div>
-          {narrow ? (
-            <button
-              type="button"
-              className={`btn btn-ghost${filtersOpen || filtersActive ? " is-active" : ""}`}
-              aria-expanded={filtersOpen}
-              onClick={() => setFiltersOpen((v) => !v)}
-            >
-              Filters{filtersActive ? "•" : ""}
-            </button>
-          ) : null}
+          <button
+            type="button"
+            className={`btn btn-ghost${filtersOpen || filtersActive ? " is-active" : ""}`}
+            aria-expanded={filtersOpen}
+            onClick={() => setFiltersOpen((v) => !v)}
+          >
+            Filters{filtersActive ? " ·" : ""}
+          </button>
         </div>
-        {!narrow || filtersOpen ? (
+        {filtersOpen ? (
           <div className="library-facts-toolbar-row">
             <label className="library-facts-field">
               <span>Paper</span>

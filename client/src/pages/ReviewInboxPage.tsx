@@ -14,8 +14,11 @@ import { readLastProject, type LastProject } from "../lib/lastProject";
 import { useSession } from "../session/SessionContext";
 
 function itemOpenHref(item: KnowledgeInboxItem): string | null {
+  if (item.type === "fact" && item.citekey && item.factId) {
+    return `/facts?paper=${encodeURIComponent(item.citekey)}&fact=${encodeURIComponent(item.factId)}&status=all&type=all`;
+  }
   if (item.type === "fact" && item.citekey) {
-    return `/facts?paper=${encodeURIComponent(item.citekey)}`;
+    return `/facts?paper=${encodeURIComponent(item.citekey)}&status=all&type=all`;
   }
   if (item.type === "knowledge") {
     const id = item.id.startsWith("kn:") ? item.id : `kn:${item.id}`;
@@ -211,7 +214,7 @@ export function ReviewInboxPage() {
                     {item.type === "fact" && item.citekey && item.factId ? (
                       <>
                         <Link
-                          to={`/facts?paper=${encodeURIComponent(item.citekey)}`}
+                          to={`/facts?paper=${encodeURIComponent(item.citekey)}&fact=${encodeURIComponent(item.factId)}&status=all&type=all`}
                           className="btn btn-quiet"
                           onClick={() => {
                             setSeenPassages((prev) => new Set(prev).add(`${item.citekey}:${item.factId}`));

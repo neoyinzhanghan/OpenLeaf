@@ -29,6 +29,9 @@ export type ProjectMeta = {
   mainFile: string;
   engine: LatexEngine;
   path: string;
+  /** Explicit taxonomy from openleaf.json. Absent means neither authored paper nor knowledge item. */
+  kind?: "paper" | "knowledge";
+  knowledgeId?: string;
 };
 
 export type StoredFileAccessRule = {
@@ -319,6 +322,8 @@ export async function listProjects(): Promise<ProjectMeta[]> {
       mainFile: cfg.mainFile,
       engine: cfg.engine ?? loadConfig().latex.engine,
       path: path.join(root, entry.name),
+      ...(cfg.kind ? { kind: cfg.kind } : {}),
+      ...(cfg.knowledgeId ? { knowledgeId: cfg.knowledgeId } : {}),
     });
   }
   projects.sort((a, b) => a.id.localeCompare(b.id));
@@ -337,6 +342,8 @@ export async function getProject(id: string): Promise<ProjectMeta> {
     mainFile: cfg.mainFile,
     engine: cfg.engine ?? loadConfig().latex.engine,
     path: dir,
+    ...(cfg.kind ? { kind: cfg.kind } : {}),
+    ...(cfg.knowledgeId ? { knowledgeId: cfg.knowledgeId } : {}),
   };
 }
 
@@ -765,6 +772,11 @@ export async function createProject(id: string, fromTemplate = "example-article"
   } else {
     await copyDir(templateDir, dest);
     await writeProjectConfig(id, { identities: defaultProjectIdentities() });
+  }
+  // Article-template creates are authored papers; knowledge create overwrites kind afterward.
+  const cfg = await readProjectConfig(id);
+  if (!cfg.kind && fromTemplate !== "__knowledge_blank__") {
+    await writeProjectConfig(id, { kind: "paper" });
   }
   // Initialize per-project git backup repo with an initial snapshot
   try {

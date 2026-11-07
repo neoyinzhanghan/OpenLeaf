@@ -8,7 +8,7 @@ import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { getPaper, listAllRecords } from "./index.js";
-import { ensureLibraryRoot, factsPath, paperDir } from "./paths.js";
+import { ensureLibraryRoot, factsPath, paperDir, papersDir } from "./paths.js";
 import {
   getPdfTextForPaper,
   highlightDisplayRects,
@@ -218,6 +218,7 @@ async function writeFile(citekey: string, data: FactsFile): Promise<void> {
   await ensureBakOnce(citekey, file);
   await fsPromises.writeFile(file, `${JSON.stringify(data, null, 2)}\n`, "utf8");
   invalidateFactKeyIndex();
+  lightFactsCache = null;
 }
 
 async function withDisplay(citekey: string, fact: PaperFact): Promise<PaperFactView> {
@@ -511,34 +512,98 @@ export async function countTaggedFacts(
   return file.facts.filter((f) => f.highlights.length > 0).length;
 }
 
+type LightFactsCache = { stamp: string; facts: LibraryFactView[] };
+let lightFactsCache: LightFactsCache | null = null;
+
+async function citekeysWithFacts(only?: string): Promise<string[]> {
+  if (only) {
+    return fs.existsSync(factsPath(only)) ? [only] : [];
+  }
+  const root = papersDir();
+  if (!fs.existsSync(root)) return [];
+  const dirs = await fsPromises.readdir(root);
+  const hits = await Promise.all(
+    dirs.map(async (citekey) => {
+      try {
+        await fsPromises.access(factsPath(citekey));
+        return citekey;
+      } catch {
+        return null;
+      }
+    }),
+  );
+  return hits.filter((c): c is string => Boolean(c));
+}
+
 export async function listAllFacts(opts?: {
   citekey?: string;
   type?: FactType;
   status?: FactStatus;
   q?: string;
-  /** Skip PDF display-rect computation (graph/inbox). Default false. */
+  /** Skip PDF display-rect computation (graph/inbox/queue). Default false. */
   skipDisplay?: boolean;
 }): Promise<LibraryFactView[]> {
-  const records = await listAllRecords();
   const q = opts?.q?.trim().toLowerCase() ?? "";
-  const out: LibraryFactView[] = [];
-  for (const paper of records) {
-    if (opts?.citekey && paper.citekey !== opts.citekey) continue;
-    const file = await readFile(paper.citekey);
-    for (const fact of file.facts) {
-      if (opts?.type && fact.type !== opts.type) continue;
-      if (opts?.status && fact.status !== opts.status) continue;
-      if (q) {
-        const hay = `${fact.input}\n${fact.answer}\n${fact.key ?? ""}\n${fact.highlights.map((h) => h.quote).join("\n")}`.toLowerCase();
-        if (!hay.includes(q)) continue;
-      }
-      const view = opts?.skipDisplay
-        ? ({ ...fact, displayRects: [], paperTitle: paper.title } as LibraryFactView)
-        : { ...(await withDisplay(paper.citekey, fact)), paperTitle: paper.title };
-      out.push(view);
+  const unfilteredLight =
+    Boolean(opts?.skipDisplay) && !opts?.citekey && !opts?.type && !opts?.status && !q;
+
+  if (unfilteredLight) {
+    const { getFactKeyIndex } = await import("./factKeyIndex.js");
+    const idx = await getFactKeyIndex();
+    if (lightFactsCache && lightFactsCache.stamp === idx.stamp) {
+      return lightFactsCache.facts;
     }
   }
+
+  const citekeys = await citekeysWithFacts(opts?.citekey);
+  const chunks = await Promise.all(
+    citekeys.map(async (citekey) => {
+      let paperTitle = citekey;
+      try {
+        paperTitle = (await getPaper(citekey)).title;
+      } catch {
+        /* keep citekey */
+      }
+      const file = await readFile(citekey);
+      const rows: LibraryFactView[] = [];
+      // Load PDF text once per paper when display rects are needed.
+      let pages: Awaited<ReturnType<typeof getPdfTextForPaper>>["pages"] | null = null;
+      const needDisplay =
+        !opts?.skipDisplay && file.facts.some((f) => f.highlights.length > 0 && f.sourceKind !== "web");
+      if (needDisplay) {
+        try {
+          pages = (await getPdfTextForPaper(citekey)).pages;
+        } catch {
+          pages = null;
+        }
+      }
+      for (const fact of file.facts) {
+        if (opts?.type && fact.type !== opts.type) continue;
+        if (opts?.status && fact.status !== opts.status) continue;
+        if (q) {
+          const hay = `${fact.input}\n${fact.answer}\n${fact.key ?? ""}\n${fact.highlights.map((h) => h.quote).join("\n")}`.toLowerCase();
+          if (!hay.includes(q)) continue;
+        }
+        if (opts?.skipDisplay) {
+          rows.push({ ...fact, displayRects: [], paperTitle });
+          continue;
+        }
+        let displayRects: PaperFactView["displayRects"] = [];
+        if (fact.highlights.length && fact.sourceKind !== "web" && pages) {
+          displayRects = highlightDisplayRects(pages, fact.highlights);
+        }
+        rows.push({ ...fact, displayRects, paperTitle });
+      }
+      return rows;
+    }),
+  );
+  const out = chunks.flat();
   out.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  if (unfilteredLight) {
+    const { getFactKeyIndex } = await import("./factKeyIndex.js");
+    const idx = await getFactKeyIndex();
+    lightFactsCache = { stamp: idx.stamp, facts: out };
+  }
   return out;
 }
 

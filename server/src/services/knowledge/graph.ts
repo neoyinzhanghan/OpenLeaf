@@ -6,6 +6,7 @@
  * is unavailable.
  */
 import { listAllFacts } from "../library/facts.js";
+import { humanizeFactLabel } from "../library/factKey.js";
 import { getPaper } from "../library/index.js";
 import { computeFactStatus, type Status } from "./status.js";
 import { scanKnowledgeUniverse, knowledgeContentStamp } from "./graphScan.js";
@@ -30,6 +31,16 @@ export type GraphNode = {
   inputs: string[];
   outputs: string[];
   updatedAt: string;
+  /** false = indexed but not knowledge-cited; client draws these faintly. */
+  inTree?: boolean;
+  /** Stable open target — e.g. library/papers/<citekey>/facts.json#<factId>. */
+  pathRef?: string;
+  citekey?: string;
+  knowledgeId?: string;
+  projectId?: string;
+  factKey?: string;
+  value?: number | null;
+  unit?: string;
 };
 
 export type GraphEdge = { from: string; to: string; flagged: boolean };
@@ -147,7 +158,12 @@ export async function neighborhoodOf(
       extraNodes.push({
         id: fid,
         kind: "fact",
-        name: fact.key,
+        name: humanizeFactLabel({
+          input: fact.input,
+          key: fact.key,
+          value: fact.value ?? null,
+          unit: fact.unit || "",
+        }),
         status,
         why: fact.status === "rejected" ? ["rejected by reviewer"] : [],
         collection: paper.collections[0] || "unsorted",

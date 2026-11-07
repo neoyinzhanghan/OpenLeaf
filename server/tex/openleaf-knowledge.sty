@@ -5,8 +5,8 @@
 \RequirePackage{mdframed}
 \RequirePackage{xspace}
 
+\makeatletter
 \providecommand{\olv@unknown}[1]{\textbf{\textcolor{red}{??#1}}}
-\InputIfFileExists{openleaf-values.tex}{}{}
 
 \newcommand{\fact}[1]{%
   \@ifundefined{olv@fact@#1}{\olv@unknown{#1}}{\csname olv@fact@#1\endcsname}%
@@ -33,19 +33,24 @@
 }
 \newenvironment{calculation}[2][]{%
   \refstepcounter{olvstep}%
-  \par\smallskip\noindent\textbf{\theolvstep\,·\,Calculation.}\ #2\ $=\ $\ignorespaces
+  \par\smallskip\noindent\textbf{\theolvstep.\ Calculation.}\ #2\ $=\ $\ignorespaces
 }{\par\smallskip}
 \newenvironment{assumption}[1][]{%
   \refstepcounter{olvstep}%
-  \par\smallskip\noindent\textbf{\theolvstep\,·\,Assumption.}\ignorespaces
+  \par\smallskip\noindent\textbf{\theolvstep.\ Assumption.}\ignorespaces
 }{\par\smallskip}
 \newenvironment{judgment}[1][]{%
   \refstepcounter{olvstep}%
-  \par\smallskip\noindent\textbf{\theolvstep\,·\,Judgment call.}\ignorespaces
+  \par\smallskip\noindent\textbf{\theolvstep.\ Judgment call.}\ignorespaces
 }{\par\smallskip}
 \newcommand{\set}[2]{#2}
 \newcommand{\conclusion}[1]{%
   \begin{mdframed}[backgroundcolor=black!3,linewidth=0.4pt]
   \textbf{Conclusion.}\ #1
   \end{mdframed}}
+
+% Load values AFTER macros are defined. openleaf-values.tex ends with \makeatother;
+% if loaded earlier it would break \@ifundefined in the definitions above.
+\InputIfFileExists{openleaf-values.tex}{}{}
+\makeatother
 \endinput

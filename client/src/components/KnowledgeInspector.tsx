@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   getKnowledgeImpact,
   getKnowledgeSteps,
@@ -88,6 +89,14 @@ export function KnowledgeInspector({ projectId, target, onClose, onChanged }: Pr
           {fact.answer ? <blockquote className="knowledge-passage">{fact.answer}</blockquote> : null}
           {impactCount != null ? <p className="muted">Also used by {impactCount} flagged downstream</p> : null}
           <div className="knowledge-inspector-actions">
+            <Link
+              className="btn btn-quiet"
+              to={`/facts?paper=${encodeURIComponent(fact.citekey)}&fact=${encodeURIComponent(fact.id)}&status=all&type=all`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              See source
+            </Link>
             <button
               type="button"
               className="btn btn-primary"

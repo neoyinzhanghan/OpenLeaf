@@ -6,6 +6,7 @@ import fs from "node:fs";
 import fsPromises from "node:fs/promises";
 import path from "node:path";
 import { listAllFacts } from "../library/facts.js";
+import { humanizeFactLabel } from "../library/factKey.js";
 import { getPaper, listAllRecords } from "../library/index.js";
 import { getProjectsRootAbs } from "../../config.js";
 import { listKnowledgeItems } from "./items.js";
@@ -15,6 +16,9 @@ import { computeFactStatus, computeItemStatus, computeProjectStatus, type Status
 import type { GraphEdge } from "./graph.js";
 import type { IndexNode } from "./graphIndex.js";
 
+/** Bump when derived node labels change so the Kùzu cache rebuilds. */
+const LABEL_SCHEMA = "fact-label-v2";
+
 export type ScanPayload = {
   stamp: string;
   nodes: IndexNode[];
@@ -23,7 +27,7 @@ export type ScanPayload = {
 };
 
 export async function knowledgeContentStamp(): Promise<string> {
-  const parts: string[] = [];
+  const parts: string[] = [LABEL_SCHEMA];
   const root = getProjectsRootAbs();
   if (fs.existsSync(root)) {
     const names = await fsPromises.readdir(root);
@@ -127,7 +131,12 @@ export async function scanKnowledgeUniverse(): Promise<ScanPayload> {
     push({
       id,
       kind: "fact",
-      name: fact.key,
+      name: humanizeFactLabel({
+        input: fact.input,
+        key: fact.key,
+        value: fact.value ?? null,
+        unit: fact.unit || "",
+      }),
       status,
       why: fact.status === "rejected" ? ["rejected by reviewer"] : [],
       collection,
@@ -180,35 +189,40 @@ export async function scanKnowledgeUniverse(): Promise<ScanPayload> {
     }
   }
 
+  // Authored papers only (`kind: "paper"`). Notes/benches/etc. are not paper nodes;
+  // knowledge items are already added above via kind: "knowledge".
   if (fs.existsSync(root)) {
     const names = await fsPromises.readdir(root);
     await Promise.all(
       names.map(async (name) => {
         try {
           const cfg = await readProjectConfig(name);
-          if (cfg.kind === "knowledge") return;
-          const mainPath = path.join(root, name, cfg.mainFile || "main.tex");
-          const text = await fsPromises.readFile(mainPath, "utf8");
-          if (!/\\fact\{|\\kn\{|\\knref\{/.test(text)) return;
-          const parsed = parseKnowledge({ [cfg.mainFile || "main.tex"]: text });
-          const inputs: string[] = [];
-          for (const r of parsed.refs) {
-            if (r.kind === "fact" && r.key) inputs.push(`fact:${r.key}`);
-            if ((r.kind === "kn" || r.kind === "knref") && r.id) inputs.push(`kn:${r.id}`);
+          if (cfg.kind !== "paper") return;
+          const mainFile = cfg.mainFile || "main.tex";
+          const mainPath = path.join(root, name, mainFile);
+          let inputs: string[] = [];
+          try {
+            const text = await fsPromises.readFile(mainPath, "utf8");
+            if (/\\fact\{|\\kn\{|\\knref\{/.test(text)) {
+              const parsed = parseKnowledge({ [mainFile]: text });
+              for (const r of parsed.refs) {
+                if (r.kind === "fact" && r.key) inputs.push(`fact:${r.key}`);
+                if ((r.kind === "kn" || r.kind === "knref") && r.id) inputs.push(`kn:${r.id}`);
+              }
+            }
+          } catch {
+            /* paper may not have a readable main file yet */
           }
-          if (!inputs.length) return;
-          // Only keep edges to nodes that exist
           const existing = inputs.filter((id) => byId.has(id));
-          if (!existing.length) return;
-          const collection = cfg.collection || "unsorted";
-          const status = computeProjectStatus(
-            existing.map((id) => byId.get(id)?.status ?? "up-to-date"),
-          );
+          const collection = cfg.collection || "papers";
+          const status = existing.length
+            ? computeProjectStatus(existing.map((id) => byId.get(id)?.status ?? "up-to-date"))
+            : ("up-to-date" as Status);
           const id = `proj:${name}`;
           push({
             id,
             kind: "project",
-            name: cfg.name || name,
+            name: cfg.name || name.replace(/_/g, " "),
             status,
             why: status === "flagged" ? ["depends on flagged or rejected upstream"] : [],
             collection,

@@ -25,7 +25,7 @@ export function LibraryPage() {
             <img className="brand-logo" src="/logo.png" alt="OpenLeaf logo" />
             <span className="brand-mark">OpenLeaf</span>
           </Link>
-          <span className="brand-sub">citation library</span>
+          <span className="brand-sub">library</span>
         </div>
         <nav className="topbar-nav" aria-label="Primary">
           <Link to="/" className="btn btn-quiet">

@@ -20,7 +20,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   getKnowledgeGraph,
   getKnowledgeInbox,
@@ -35,6 +35,8 @@ import {
 import { hostLogout } from "../api/share";
 import { ErrorBanner } from "../components/ErrorBanner";
 import { ThemePicker } from "../components/ThemeToggle";
+import { KnowledgeDependencyReview } from "../components/KnowledgeDependencyReview";
+import { openNodeFromGraph, openNodeHref } from "../lib/knowledgeLinks";
 import { readLastProject, type LastProject } from "../lib/lastProject";
 import { useSession } from "../session/SessionContext";
 
@@ -87,12 +89,73 @@ function cssVar(name: string, fallback: string): string {
 function kindColor(kind: KindKey): string {
   if (kind === "fact") return cssVar("--kind-fact", "#5ec4b6");
   if (kind === "knowledge") return cssVar("--kind-knowledge", "#a78bfa");
-  if (kind === "project") return cssVar("--kind-project", "#6ba3e8");
+  if (kind === "project") return cssVar("--kind-project", "#e2a35a");
   return cssVar("--kind-source", "#8a96a3");
+}
+
+function kindLabel(kind: KindKey): string {
+  if (kind === "project") return "Paper";
+  if (kind === "knowledge") return "Knowledge";
+  if (kind === "fact") return "Fact";
+  return "Source";
+}
+
+/** Draw node geometry: papers = rounded square, knowledge = double ring, facts/sources = circle/diamond. */
+function strokeNodeShape(
+  ctx: CanvasRenderingContext2D,
+  kind: KindKey,
+  x: number,
+  y: number,
+  r: number,
+): void {
+  if (kind === "project") {
+    const s = r * 1.05;
+    const rad = Math.max(2, r * 0.28);
+    ctx.beginPath();
+    ctx.roundRect(x - s, y - s, s * 2, s * 2, rad);
+    return;
+  }
+  if (kind === "knowledge") {
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    return;
+  }
+  if (kind === "source") {
+    ctx.beginPath();
+    ctx.moveTo(x, y - r);
+    ctx.lineTo(x + r * 0.75, y);
+    ctx.lineTo(x, y + r);
+    ctx.lineTo(x - r * 0.75, y);
+    ctx.closePath();
+    return;
+  }
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
 }
 
 function statusNeedsAttention(status: KnowledgeStatus): boolean {
   return status === "needs-review" || status === "unreviewed" || status === "flagged" || status === "rejected";
+}
+
+function statusLabel(status: KnowledgeStatus): string {
+  switch (status) {
+    case "needs-review":
+      return "Needs review";
+    case "unreviewed":
+      return "Unreviewed";
+    case "up-to-date":
+      return "Up to date";
+    case "flagged":
+      return "Flagged";
+    case "rejected":
+      return "Rejected";
+    case "confirmed":
+      return "Confirmed";
+    case "reviewed":
+      return "Reviewed";
+    default:
+      return status.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  }
 }
 
 function isDetailKind(kind: KnowledgeGraphNode["kind"]): boolean {
@@ -122,29 +185,57 @@ function mergeGraphPatch(
 function nodeRadius(n: KnowledgeGraphNode): number {
   if (n.kind === "source") return 5;
   if (n.kind === "fact") return 6.5;
-  if (n.kind === "project") return 13;
-  return 8.5 + Math.min(6, (n.outputs?.length ?? 0) * 1.5);
+  if (n.kind === "project") return 14;
+  // Knowledge: slightly larger than facts, smaller than papers.
+  return 10 + Math.min(4, (n.outputs?.length ?? 0) * 1.2);
 }
 
-function openNodeHref(node: KnowledgeGraphNode, projectByKn: Map<string, string>): string | null {
-  if (node.kind === "knowledge") {
-    const kn = node.id.startsWith("kn:") ? node.id.slice(3) : node.id;
-    const projectId = projectByKn.get(kn);
-    return projectId ? `/p/${encodeURIComponent(projectId)}` : null;
+/** Prefer English `note`/name; never show raw slug keys in the UI. */
+function displayLabel(n: KnowledgeGraphNode, maxLen = 44): string {
+  const raw = (n.name || n.note || n.id).trim();
+  if (!raw) return n.id;
+  // Old cached graphs may still have slug names — soften them client-side.
+  const looksLikeSlug = /^[a-z][a-z0-9]+(?:-[a-z0-9]+)+$/.test(raw);
+  let text = raw;
+  if (looksLikeSlug && n.note?.trim()) {
+    const m = n.note.match(/^(AUROC|AUC|C-index|accuracy|F1)\s+of\s+(.+?)(?:\s+on\s+(.+))?$/i);
+    if (m) {
+      const model = m[2]!.trim();
+      const dataset = (m[3] || "").trim().replace(/\s*\([^)]*\)\s*$/, "");
+      text = dataset ? `${model} on ${dataset}` : `${m[1]} of ${model}`;
+    } else {
+      text = n.note.trim();
+    }
+  } else if (looksLikeSlug) {
+    text = raw
+      .split("-")
+      .map((w, i) => {
+        if (["of", "on", "for", "and", "the", "a", "an", "vs", "to", "in", "per", "by"].includes(w) && i > 0) {
+          return w;
+        }
+        if (["auroc", "auc", "f1", "tcga", "nsclc", "luad", "lusc", "abmil", "clam", "dsmil", "mil"].includes(w)) {
+          return w.toUpperCase();
+        }
+        return w.charAt(0).toUpperCase() + w.slice(1);
+      })
+      .join(" ")
+      .replace(/\s+(\d+)$/, " ($1)");
   }
-  if (node.kind === "project") {
-    const id = node.id.startsWith("proj:") ? node.id.slice(5) : node.id;
-    return `/p/${encodeURIComponent(id)}`;
-  }
-  if (node.kind === "fact") {
-    return `/facts?q=${encodeURIComponent(node.name)}`;
-  }
-  if (node.kind === "source") {
-    const citekey = node.id.startsWith("src:") ? node.id.slice(4) : node.id;
-    return `/library?paper=${encodeURIComponent(citekey)}`;
-  }
-  return null;
+  text = text.replace(/\s+/g, " ").trim();
+  if (text.length > maxLen) return `${text.slice(0, maxLen - 1).trimEnd()}…`;
+  return text;
 }
+
+function labelPriority(n: KnowledgeGraphNode, focusId: string | null, lit: Set<string> | null): number {
+  if (focusId && n.id === focusId) return 100;
+  if (lit?.has(n.id) && n.kind === "knowledge") return 90;
+  if (n.kind === "knowledge") return 80;
+  if (n.kind === "project") return 70;
+  if (lit?.has(n.id)) return 60;
+  if (n.kind === "source") return 40;
+  return 20;
+}
+
 
 function shortestPath(adj: Map<string, string[]>, from: string, to: string): string[] | null {
   if (from === to) return [from];
@@ -199,7 +290,6 @@ function branchSet(
 export function KnowledgePage() {
   const { session, refresh } = useSession();
   const remoteHost = session.kind === "host" && session.remote;
-  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const [baseGraph, setBaseGraph] = useState<KnowledgeGraph | null>(null);
   const [revealPatch, setRevealPatch] = useState<{
@@ -218,7 +308,7 @@ export function KnowledgePage() {
   const [vy, setVy] = useState(0);
   const [anim, setAnim] = useState(false);
   const [focus, setFocus] = useState<string | null>(params.get("focus"));
-  const [depth, setDepth] = useState<"1" | "2" | "all">("all");
+  const [depth, setDepth] = useState<"1" | "2" | "all">("2");
   const [kinds, setKinds] = useState<Record<KindKey, boolean>>({
     source: true,
     fact: true,
@@ -228,6 +318,7 @@ export function KnowledgePage() {
   /** When false (default), facts/sources stay hidden until focus reveals them. */
   const [alwaysShowDetails, setAlwaysShowDetails] = useState(false);
   const [attention, setAttention] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
 
   const graph = useMemo(
     () => (baseGraph ? mergeGraphPatch(baseGraph, revealPatch) : null),
@@ -238,7 +329,6 @@ export function KnowledgePage() {
   const [q, setQ] = useState("");
   const [pathMode, setPathMode] = useState(false);
   const [pathTo, setPathTo] = useState<string | null>(null);
-  const [trail, setTrail] = useState<string[]>([]);
   const [hover, setHover] = useState<{ id: string; sx: number; sy: number } | null>(null);
   const [tick, setTick] = useState(0);
 
@@ -252,6 +342,8 @@ export function KnowledgePage() {
   const panRef = useRef<{ sx: number; sy: number; vx: number; vy: number } | null>(null);
   const dragRef = useRef<{ id: string; sx: number; sy: number; moved: boolean } | null>(null);
   const suppressClick = useRef(false);
+  const didInitialFit = useRef(false);
+  const focusIdRef = useRef<string | null>(focus);
   const cameraRef = useRef({ zoom, vx, vy, anim });
   const uiRef = useRef({
     focus,
@@ -265,6 +357,7 @@ export function KnowledgePage() {
   });
 
   cameraRef.current = { zoom, vx, vy, anim };
+  focusIdRef.current = focus;
   uiRef.current = { focus, depth, kinds, attention, labels, collapsed, pathTo, alwaysShowDetails };
 
   useEffect(() => {
@@ -302,10 +395,14 @@ export function KnowledgePage() {
     };
   }, []);
 
-  // Build simulation when graph arrives
+  // Build / refresh simulation when graph data changes.
+  // Do NOT refit the camera on incremental neighborhood hydrates — that zooms the user out.
   useEffect(() => {
     if (!graph) return;
     const saved = readLayout();
+    const prevById = byIdRef.current;
+    const incremental = prevById.size > 0;
+    const anchor = focusIdRef.current ? prevById.get(focusIdRef.current) : null;
     const colCenters = new Map<string, { x: number; y: number }>();
     graph.collections.forEach((c, i) => {
       const angle = (i / Math.max(1, graph.collections.length)) * Math.PI * 2;
@@ -313,13 +410,27 @@ export function KnowledgePage() {
     });
 
     const nodes: SimNode[] = graph.nodes.map((n, i) => {
+      const prev = prevById.get(n.id);
+      if (prev) {
+        return {
+          ...n,
+          r: nodeRadius(n),
+          x: prev.x,
+          y: prev.y,
+          vx: prev.vx,
+          vy: prev.vy,
+        };
+      }
       const c = colCenters.get(n.collection) ?? { x: 0, y: 0 };
       const pos = saved[n.id];
+      // New neighborhood nodes spawn near the focused node (or collection center).
+      const jitter = ((Math.sin(i * 12.9898) * 10000) % 40) - 20;
+      const jitterY = ((Math.cos(i * 78.233) * 10000) % 40) - 20;
       return {
         ...n,
         r: nodeRadius(n),
-        x: pos?.x ?? c.x + (Math.sin(i * 12.9898) * 10000) % 120 - 60,
-        y: pos?.y ?? c.y + (Math.cos(i * 78.233) * 10000) % 120 - 60,
+        x: pos?.x ?? (anchor?.x ?? c.x) + jitter,
+        y: pos?.y ?? (anchor?.y ?? c.y) + jitterY,
       };
     });
     const byId = new Map(nodes.map((n) => [n.id, n]));
@@ -353,29 +464,32 @@ export function KnowledgePage() {
       )
       .force("charge", forceManyBody().strength(-180))
       .force("collide", forceCollide<SimNode>().radius((d) => d.r + 4).iterations(2))
-      .force("center", forceCenter(0, 0).strength(0.04))
+      .force("center", forceCenter(0, 0).strength(incremental ? 0.01 : 0.04))
       .force(
         "x",
-        forceX<SimNode>((d) => colCenters.get(d.collection)?.x ?? 0).strength(0.04),
+        forceX<SimNode>((d) => colCenters.get(d.collection)?.x ?? 0).strength(incremental ? 0.01 : 0.04),
       )
       .force(
         "y",
-        forceY<SimNode>((d) => colCenters.get(d.collection)?.y ?? 0).strength(0.04),
+        forceY<SimNode>((d) => colCenters.get(d.collection)?.y ?? 0).strength(incremental ? 0.01 : 0.04),
       )
-      .alpha(0.85)
+      .alpha(incremental ? 0.2 : 0.85)
       .alphaDecay(0.028);
 
     sim.on("tick", () => setTick((t) => t + 1));
     sim.on("end", () => writeLayout(nodesRef.current));
     simRef.current = sim;
 
-    // Fit after first settle frames
-    const t = window.setTimeout(() => {
-      fitTo(nodes, false);
-    }, 80);
+    let t: number | undefined;
+    if (!didInitialFit.current) {
+      t = window.setTimeout(() => {
+        fitTo(nodes, false);
+        didInitialFit.current = true;
+      }, 80);
+    }
 
     return () => {
-      window.clearTimeout(t);
+      if (t != null) window.clearTimeout(t);
       sim.stop();
       writeLayout(nodesRef.current);
     };
@@ -455,19 +569,34 @@ export function KnowledgePage() {
   }, [focus, depth]);
 
   const nodeIsVisible = useCallback(
-    (n: KnowledgeGraphNode, lit: Set<string> | null, path: Set<string> | null) => {
+    (n: KnowledgeGraphNode, _lit: Set<string> | null, _path: Set<string> | null) => {
       if (collapsed[n.collection]) return false;
       if (!kinds[n.kind]) return false;
       if (attention && !statusNeedsAttention(n.status)) return false;
+      return true;
+    },
+    [collapsed, kinds, attention],
+  );
+
+  /** Bright = primary tree / focused branch. Everything else stays faintly visible. */
+  const nodeIsBright = useCallback(
+    (n: KnowledgeGraphNode, lit: Set<string> | null, path: Set<string> | null) => {
+      if (n.inTree === false && !alwaysShowDetails) {
+        if (focus === n.id) return true;
+        if (lit?.has(n.id)) return true;
+        if (path?.has(n.id)) return true;
+        return false;
+      }
       if (isDetailKind(n.kind) && !alwaysShowDetails) {
         if (!focus) return false;
         if (lit?.has(n.id)) return true;
         if (path?.has(n.id)) return true;
         return false;
       }
+      if (lit && !lit.has(n.id) && !(path?.has(n.id))) return false;
       return true;
     },
-    [collapsed, kinds, attention, alwaysShowDetails, focus],
+    [alwaysShowDetails, focus],
   );
 
   const visibleNodes = useCallback(() => {
@@ -525,7 +654,7 @@ export function KnowledgePage() {
       setFocus(id);
       setPathTo(null);
       setPathMode(false);
-      setTrail((t) => [id, ...t.filter((x) => x !== id)].slice(0, 8));
+      setMoreOpen(false);
       setParams(
         (prev) => {
           const next = new URLSearchParams(prev);
@@ -569,16 +698,27 @@ export function KnowledgePage() {
         .filter((n) => {
           if (ui.collapsed[n.collection] || !ui.kinds[n.kind]) return false;
           if (ui.attention && !statusNeedsAttention(n.status)) return false;
-          if (isDetailKind(n.kind) && !ui.alwaysShowDetails) {
-            if (!ui.focus) return false;
-            if (lit?.has(n.id)) return true;
-            if (pathSet?.has(n.id)) return true;
-            return false;
-          }
           return true;
         })
         .map((n) => n.id),
     );
+
+    const brightOf = (n: KnowledgeGraphNode): boolean => {
+      if (n.inTree === false && !ui.alwaysShowDetails) {
+        if (ui.focus === n.id) return true;
+        if (lit?.has(n.id)) return true;
+        if (pathSet?.has(n.id)) return true;
+        return false;
+      }
+      if (isDetailKind(n.kind) && !ui.alwaysShowDetails) {
+        if (!ui.focus) return false;
+        if (lit?.has(n.id)) return true;
+        if (pathSet?.has(n.id)) return true;
+        return false;
+      }
+      if (lit && !lit.has(n.id) && !(pathSet?.has(n.id))) return false;
+      return true;
+    };
 
     // Collection bubbles when collapsed
     const collapsedCenters = new Map<string, { x: number; y: number; count: number; flag: boolean }>();
@@ -613,42 +753,7 @@ export function KnowledgePage() {
     ctx.translate(cam.vx, cam.vy);
     ctx.scale(cam.zoom, cam.zoom);
 
-    // Soft collection halos
-    const byCol = new Map<string, SimNode[]>();
-    for (const n of nodes) {
-      if (ui.collapsed[n.collection] || !visible.has(n.id)) continue;
-      const list = byCol.get(n.collection) ?? [];
-      list.push(n);
-      byCol.set(n.collection, list);
-    }
-    for (const [col, list] of byCol) {
-      if (list.length < 2) continue;
-      let x0 = Infinity;
-      let y0 = Infinity;
-      let x1 = -Infinity;
-      let y1 = -Infinity;
-      for (const n of list) {
-        x0 = Math.min(x0, (n.x ?? 0) - n.r);
-        y0 = Math.min(y0, (n.y ?? 0) - n.r);
-        x1 = Math.max(x1, (n.x ?? 0) + n.r);
-        y1 = Math.max(y1, (n.y ?? 0) + n.r);
-      }
-      const pad = 28;
-      ctx.beginPath();
-      ctx.setLineDash([4, 6]);
-      ctx.strokeStyle = cssVar("--line-strong", "#2c3642");
-      ctx.globalAlpha = 0.35;
-      ctx.roundRect(x0 - pad, y0 - pad, x1 - x0 + pad * 2, y1 - y0 + pad * 2, 18);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.globalAlpha = 0.55;
-      ctx.fillStyle = cssVar("--ink-faint", "#5f6b78");
-      ctx.font = "600 10px var(--font), sans-serif";
-      ctx.fillText(col.toUpperCase(), x0 - pad + 8, y0 - pad + 14);
-      ctx.globalAlpha = 1;
-    }
-
-    // Edges
+    // Edges — faint atmosphere first, bright links on top
     for (const link of links) {
       const a = link.source as SimNode;
       const b = link.target as SimNode;
@@ -657,7 +762,7 @@ export function KnowledgePage() {
       if (!pa || !pb) continue;
       if (pa.bubble && pb.bubble && pa.bubble === pb.bubble) continue;
       const onPath = pathSet ? pathSet.has(a.id) && pathSet.has(b.id) : false;
-      const inFocus = lit ? lit.has(a.id) && lit.has(b.id) : true;
+      const bright = brightOf(a) && brightOf(b);
       ctx.beginPath();
       ctx.moveTo(pa.x, pa.y);
       ctx.lineTo(pb.x, pb.y);
@@ -672,8 +777,8 @@ export function KnowledgePage() {
         grad.addColorStop(1, kindColor(b.kind));
         ctx.strokeStyle = grad;
         ctx.setLineDash([]);
-        ctx.lineWidth = (inFocus ? 1.25 : 0.7) / cam.zoom;
-        ctx.globalAlpha = lit ? (inFocus ? 0.75 : 0.12) : 0.35;
+        ctx.lineWidth = (bright ? 1.25 : 0.55) / cam.zoom;
+        ctx.globalAlpha = bright ? 0.7 : 0.1;
       }
       ctx.stroke();
       ctx.setLineDash([]);
@@ -711,31 +816,61 @@ export function KnowledgePage() {
       if (!visible.has(n.id) || ui.collapsed[n.collection]) continue;
       const x = n.x ?? 0;
       const y = n.y ?? 0;
-      const inFocus = lit ? lit.has(n.id) : true;
+      const bright = brightOf(n);
       const onPath = pathSet?.has(n.id);
-      ctx.globalAlpha = lit ? (inFocus || onPath ? 1 : 0.18) : 1;
+      const ghost = !bright;
+      const drawR = ghost ? Math.max(2.2, n.r * 0.55) : n.r;
+      ctx.globalAlpha = ghost ? 0.16 : 1;
 
-      if (n.status === "flagged" || onPath) {
-        ctx.beginPath();
-        ctx.arc(x, y, n.r + 4, 0, Math.PI * 2);
+      if (!ghost && (n.status === "flagged" || onPath)) {
+        strokeNodeShape(ctx, n.kind, x, y, drawR + 4);
         ctx.strokeStyle = flagColor;
         ctx.lineWidth = 2 / cam.zoom;
         ctx.globalAlpha *= 0.85;
         ctx.stroke();
-        ctx.globalAlpha = lit ? (inFocus || onPath ? 1 : 0.18) : 1;
+        ctx.globalAlpha = 1;
       }
 
-      ctx.beginPath();
-      ctx.arc(x, y, n.r, 0, Math.PI * 2);
       const fill = kindColor(n.kind);
-      if (n.status === "rejected") {
+      if (ghost) {
+        strokeNodeShape(ctx, n.kind, x, y, drawR);
+        ctx.fillStyle = fill;
+        ctx.globalAlpha = 0.14;
+        ctx.fill();
+        ctx.globalAlpha = 0.22;
+        ctx.strokeStyle = fill;
+        ctx.lineWidth = 1 / cam.zoom;
+        ctx.stroke();
+      } else if (n.kind === "knowledge") {
+        // Knowledge: filled disc + outer ring — reads differently from paper squares.
+        strokeNodeShape(ctx, n.kind, x, y, drawR);
+        ctx.fillStyle = cssVar("--bg-elevated", "#13181e");
+        ctx.fill();
+        ctx.strokeStyle = fill;
+        ctx.lineWidth = 2.4 / cam.zoom;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(x, y, Math.max(2.5, drawR * 0.45), 0, Math.PI * 2);
+        ctx.fillStyle = n.status === "rejected" ? rejectColor : fill;
+        ctx.globalAlpha = checked(n.status) || n.status === "rejected" ? 0.95 : 0.75;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      } else if (n.status === "rejected") {
+        strokeNodeShape(ctx, n.kind, x, y, drawR);
         ctx.fillStyle = rejectColor;
         ctx.globalAlpha *= 0.9;
         ctx.fill();
-      } else if (checked(n.status)) {
+      } else if (checked(n.status) || n.kind === "project") {
+        strokeNodeShape(ctx, n.kind, x, y, drawR);
         ctx.fillStyle = fill;
         ctx.fill();
+        if (n.kind === "project") {
+          ctx.strokeStyle = cssVar("--bg", "#0b0e11");
+          ctx.lineWidth = 1.5 / cam.zoom;
+          ctx.stroke();
+        }
       } else {
+        strokeNodeShape(ctx, n.kind, x, y, drawR);
         ctx.fillStyle = cssVar("--bg-elevated", "#13181e");
         ctx.fill();
         ctx.strokeStyle = fill;
@@ -743,16 +878,101 @@ export function KnowledgePage() {
         ctx.stroke();
       }
 
-      const showLabel =
-        ui.labels === "all" ||
-        (ui.labels === "auto" &&
-          (cam.zoom > 1.05 || n.kind === "project" || (lit && lit.has(n.id)) || focus === n.id));
-      if (showLabel) {
-        ctx.fillStyle = cssVar("--ink", "#eef2f6");
-        ctx.font = `500 ${11 / cam.zoom}px var(--font), sans-serif`;
-        ctx.globalAlpha = lit && !inFocus ? 0.25 : 0.9;
-        ctx.fillText(n.name.slice(0, 42), x + n.r + 4, y + 3);
+      ctx.globalAlpha = 1;
+    }
+
+    // Labels in a second pass with collision avoidance (no overlapping text).
+    type LabelBox = { x0: number; y0: number; x1: number; y1: number };
+    const placed: LabelBox[] = [];
+    const gap = 10 / cam.zoom;
+    const overlaps = (a: LabelBox, b: LabelBox) =>
+      !(a.x1 + gap < b.x0 || b.x1 + gap < a.x0 || a.y1 + gap < b.y0 || b.y1 + gap < a.y0);
+
+    const labelCandidates = nodes
+      .filter((n) => {
+        if (!visible.has(n.id) || ui.collapsed[n.collection]) return false;
+        if (!brightOf(n)) return false;
+        if (ui.labels === "off") return false;
+        if (ui.labels === "all") return true;
+        if (focus === n.id) return true;
+        if (focus) {
+          // One knowledge/project label while focused — neighbors only as facts/sources when zoomed.
+          if (n.kind === "knowledge" || n.kind === "project") return false;
+          return Boolean(lit?.has(n.id)) && cam.zoom >= 1.2;
+        }
+        return n.kind === "knowledge" || n.kind === "project";
+      })
+      .sort(
+        (a, b) =>
+          labelPriority(b, focus, lit) - labelPriority(a, focus, lit) ||
+          a.name.localeCompare(b.name),
+      );
+
+    const fontPx = 11 / cam.zoom;
+    ctx.font = `500 ${fontPx}px var(--font), sans-serif`;
+    const maxLabels = ui.labels === "all" ? 60 : focus ? 14 : 12;
+    let drawnLabels = 0;
+
+    for (const n of labelCandidates) {
+      if (drawnLabels >= maxLabels) break;
+      const x = n.x ?? 0;
+      const y = n.y ?? 0;
+      const drawR = n.r;
+      const text = displayLabel(n, n.kind === "fact" ? 32 : 40);
+      const tw = ctx.measureText(text).width;
+      const th = fontPx * 1.35;
+      const slot = 14 / cam.zoom;
+      const offsets: Array<{ dx: number; dy: number; align: CanvasTextAlign }> = [
+        { dx: drawR + 6 / cam.zoom, dy: fontPx * 0.35, align: "left" },
+        { dx: drawR + 6 / cam.zoom, dy: fontPx * 0.35 - slot, align: "left" },
+        { dx: drawR + 6 / cam.zoom, dy: fontPx * 0.35 + slot, align: "left" },
+        { dx: -(drawR + 6 / cam.zoom), dy: fontPx * 0.35, align: "right" },
+        { dx: -(drawR + 6 / cam.zoom), dy: fontPx * 0.35 - slot, align: "right" },
+        { dx: -(drawR + 6 / cam.zoom), dy: fontPx * 0.35 + slot, align: "right" },
+        { dx: 0, dy: -(drawR + 8 / cam.zoom), align: "center" },
+        { dx: 0, dy: drawR + fontPx + 6 / cam.zoom, align: "center" },
+      ];
+      let chosen: { box: LabelBox; ox: number; oy: number; align: CanvasTextAlign } | null = null;
+      for (const off of offsets) {
+        const tx = x + off.dx;
+        const ty = y + off.dy;
+        const x0 =
+          off.align === "left" ? tx : off.align === "right" ? tx - tw : tx - tw / 2;
+        const box: LabelBox = { x0, y0: ty - th * 0.85, x1: x0 + tw, y1: ty + th * 0.35 };
+        if (placed.some((p) => overlaps(box, p))) continue;
+        chosen = { box, ox: tx, oy: ty, align: off.align };
+        break;
       }
+      // Focused node always gets a label even if crowded — push others aside by forcing place.
+      if (!chosen && focus === n.id) {
+        const tx = x + drawR + 6 / cam.zoom;
+        const ty = y + fontPx * 0.35;
+        chosen = {
+          box: { x0: tx, y0: ty - th * 0.85, x1: tx + tw, y1: ty + th * 0.35 },
+          ox: tx,
+          oy: ty,
+          align: "left",
+        };
+      }
+      if (!chosen) continue;
+      placed.push(chosen.box);
+      drawnLabels += 1;
+
+      const bg = cssVar("--bg", "#0b0e11");
+      ctx.globalAlpha = 0.78;
+      ctx.fillStyle = bg;
+      ctx.fillRect(
+        chosen.box.x0 - 3 / cam.zoom,
+        chosen.box.y0 - 2 / cam.zoom,
+        tw + 6 / cam.zoom,
+        th + 3 / cam.zoom,
+      );
+      ctx.globalAlpha = 0.96;
+      ctx.fillStyle = cssVar("--ink", "#eef2f6");
+      ctx.textAlign = chosen.align;
+      ctx.textBaseline = "alphabetic";
+      ctx.fillText(text, chosen.ox, chosen.oy);
+      ctx.textAlign = "start";
       ctx.globalAlpha = 1;
     }
 
@@ -844,8 +1064,10 @@ export function KnowledgePage() {
       .x((d) => d.x ?? 0)
       .y((d) => d.y ?? 0)
       .addAll(candidates);
-    let best: SimNode | null = null;
-    let bestD = Infinity;
+    let bestBright: SimNode | null = null;
+    let bestBrightD = Infinity;
+    let bestGhost: SimNode | null = null;
+    let bestGhostD = Infinity;
     tree.visit((node, x0, y0, x1, y1) => {
       if (!node.length) {
         let leaf: typeof node | undefined = node;
@@ -854,9 +1076,16 @@ export function KnowledgePage() {
           const dx = (d.x ?? 0) - wx;
           const dy = (d.y ?? 0) - wy;
           const dist = Math.hypot(dx, dy);
-          if (dist <= d.r + 4 / cam.zoom && dist < bestD) {
-            best = d;
-            bestD = dist;
+          const bright = nodeIsBright(d, focusedBranch, path);
+          const hitR = (bright ? d.r : Math.max(2.2, d.r * 0.55)) + 4 / cam.zoom;
+          if (dist <= hitR) {
+            if (bright && dist < bestBrightD) {
+              bestBright = d;
+              bestBrightD = dist;
+            } else if (!bright && dist < bestGhostD) {
+              bestGhost = d;
+              bestGhostD = dist;
+            }
           }
           leaf = leaf.next;
         }
@@ -864,8 +1093,8 @@ export function KnowledgePage() {
       }
       return x0 > wx + 20 || x1 < wx - 20 || y0 > wy + 20 || y1 < wy - 20;
     });
-    return best;
-  }, [nodeIsVisible, focusedBranch, pathIds]);
+    return bestBright ?? bestGhost;
+  }, [nodeIsVisible, nodeIsBright, focusedBranch, pathIds]);
 
   const onPointerDown = (e: ReactPointerEvent) => {
     if (e.button !== 0) return;
@@ -1008,7 +1237,7 @@ export function KnowledgePage() {
       const n = byIdRef.current.get(focus);
       if (!n) return;
       const href = openNodeHref(n, projectByKn);
-      if (href) navigate(href);
+      if (href) openNodeFromGraph(href);
     }
   };
 
@@ -1079,25 +1308,55 @@ export function KnowledgePage() {
   const focusNode = focus ? byIdRef.current.get(focus) : null;
   const hoverNode = hover ? byIdRef.current.get(hover.id) : null;
 
-  const collectionRows = useMemo(() => {
-    if (!graph) return [];
-    return graph.collections.map((name) => {
-      const members = graph.nodes.filter((n) => n.collection === name);
-      return {
-        name,
-        count: members.length,
-        flagText: members.some((n) => statusNeedsAttention(n.status)) ? "needs attention" : "",
-      };
-    });
-  }, [graph]);
-
   const panelList = useMemo(() => {
     if (!graph) return [];
     if (!focus || !focusedBranch) {
-      return graph.nodes.filter((n) => n.kind === "knowledge" || n.kind === "project").slice(0, 60);
+      return graph.nodes
+        .filter((n) => (n.kind === "knowledge" || n.kind === "project") && n.inTree !== false)
+        .slice(0, 80);
     }
-    return graph.nodes.filter((n) => focusedBranch.has(n.id));
-  }, [focus, focusedBranch, graph]);
+    return graph.nodes.filter((n) => focusedBranch.has(n.id) && nodeIsBright(n, focusedBranch, pathIds ? new Set(pathIds) : null));
+  }, [focus, focusedBranch, graph, nodeIsBright, pathIds]);
+
+  const builtOn = useMemo(() => {
+    if (!focusNode) return [];
+    return focusNode.inputs
+      .map((id) => byIdRef.current.get(id) ?? graph?.nodes.find((n) => n.id === id))
+      .filter((n): n is KnowledgeGraphNode => Boolean(n));
+  }, [focusNode, graph, tick]);
+
+  const usedBy = useMemo(() => {
+    if (!focusNode) return [];
+    return focusNode.outputs
+      .map((id) => byIdRef.current.get(id) ?? graph?.nodes.find((n) => n.id === id))
+      .filter((n): n is KnowledgeGraphNode => Boolean(n));
+  }, [focusNode, graph, tick]);
+
+  const clearFocus = useCallback(() => {
+    setFocus(null);
+    setPathTo(null);
+    setPathMode(false);
+    setRevealPatch(null);
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("focus");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [setParams]);
+
+  const jumpToSearchHit = useCallback(
+    (n: KnowledgeGraphNode) => {
+      setQ("");
+      void getKnowledgeNeighborhood(n.id, 2).then((patch) => {
+        setRevealPatch(patch);
+        window.setTimeout(() => focusOn(n.id, true), 50);
+      });
+    },
+    [focusOn],
+  );
 
   return (
     <div className="app-shell knowledge-shell">
@@ -1163,114 +1422,146 @@ export function KnowledgePage() {
             <div className="knowledge-loading" role="status" aria-live="polite">
               <div className="knowledge-loading-orb" aria-hidden />
               <div className="knowledge-loading-copy">
-                <strong>Building knowledge graph</strong>
-                <p>Only facts cited by knowledge items appear here.</p>
+                <strong>Loading knowledge</strong>
+                <p>Click any item to see what it rests on.</p>
               </div>
             </div>
           ) : null}
+
           <div className="knowledge-toolbar">
-            <div className="knowledge-toolbar-group">
-              <button type="button" className="btn btn-quiet" aria-label="Zoom out" onClick={() => zoomBy(0.8)}>
-                −
-              </button>
-              <span className="knowledge-zoom-label">{Math.round(zoom * 100)}%</span>
-              <button type="button" className="btn btn-quiet" aria-label="Zoom in" onClick={() => zoomBy(1.25)}>
-                +
-              </button>
-              <button type="button" className="btn btn-quiet" onClick={() => fitTo(visibleNodes(), true)}>
-                Fit all
-              </button>
-              <button
-                type="button"
-                className="btn btn-quiet"
-                onClick={() => {
-                  if (!focus || !focusedBranch) {
-                    fitTo(visibleNodes(), true);
-                    return;
-                  }
-                  fitTo(
-                    visibleNodes().filter((n) => focusedBranch.has(n.id)),
-                    true,
-                  );
-                }}
-              >
-                Fit branch
-              </button>
-            </div>
-            <div className="knowledge-toolbar-group">
-              <label>
-                Depth{" "}
-                <select
-                  value={depth}
-                  onChange={(e) => setDepth(e.target.value as "1" | "2" | "all")}
-                  aria-label="Focus depth"
-                >
-                  <option value="1">1 step</option>
-                  <option value="2">2 steps</option>
-                  <option value="all">All</option>
-                </select>
-              </label>
-              <button
-                type="button"
-                className={`btn btn-quiet${pathMode ? " is-active" : ""}`}
-                onClick={() => {
-                  setPathMode(true);
-                  setPathTo(null);
-                }}
-              >
-                How does it connect…
-              </button>
-              {(pathMode || pathTo) && (
-                <button
-                  type="button"
-                  className="btn btn-quiet"
-                  onClick={() => {
-                    setPathMode(false);
-                    setPathTo(null);
-                  }}
-                >
-                  Clear path
-                </button>
-              )}
-              <button
-                type="button"
-                className={`btn btn-quiet${attention ? " is-active" : ""}`}
-                onClick={() => setAttention((v) => !v)}
-              >
-                Needs attention
-              </button>
-              <button
-                type="button"
-                className={`btn btn-quiet${alwaysShowDetails ? " is-active" : ""}`}
-                title="When off, facts and sources stay hidden until you focus a related node"
-                onClick={() => setAlwaysShowDetails((v) => !v)}
-              >
-                {alwaysShowDetails ? "Facts: always" : "Facts: on focus"}
-                {revealing ? "…" : ""}
-              </button>
-              <button
-                type="button"
-                className="btn btn-quiet"
-                onClick={() => {
-                  setFocus(null);
-                  setPathTo(null);
-                  setPathMode(false);
-                  setRevealPatch(null);
-                }}
-              >
-                Clear focus
-              </button>
-            </div>
-            <div className="knowledge-toolbar-group">
+            <div className="knowledge-toolbar-group knowledge-toolbar-search">
               <input
                 type="search"
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                placeholder="Find…"
+                placeholder="Search knowledge…"
                 aria-label="Search knowledge graph"
               />
+              {q.trim() ? (
+                <ul className="knowledge-search-pop" role="listbox" aria-label="Search results">
+                  {searchHits.map((n) => (
+                    <li key={n.id}>
+                      <button type="button" onClick={() => jumpToSearchHit(n)}>
+                        <span className="knowledge-kind-dot" data-kind={n.kind} />
+                        <span className="knowledge-search-pop-name">{displayLabel(n)}</span>
+                        <span className="knowledge-search-pop-kind">{n.kind}</span>
+                      </button>
+                    </li>
+                  ))}
+                  {searchHits.length === 0 ? (
+                    <li className="knowledge-search-pop-empty">No matches</li>
+                  ) : null}
+                </ul>
+              ) : null}
+            </div>
+            <div className="knowledge-toolbar-group">
+              <button type="button" className="btn btn-quiet" aria-label="Zoom out" onClick={() => zoomBy(0.8)}>
+                −
+              </button>
+              <button type="button" className="btn btn-quiet" aria-label="Zoom in" onClick={() => zoomBy(1.25)}>
+                +
+              </button>
+              <button
+                type="button"
+                className="btn btn-quiet"
+                onClick={() => {
+                  if (focus && focusedBranch) {
+                    fitTo(
+                      visibleNodes().filter((n) => focusedBranch.has(n.id)),
+                      true,
+                    );
+                    return;
+                  }
+                  fitTo(visibleNodes(), true);
+                }}
+              >
+                Fit
+              </button>
+              <div className="knowledge-more">
+                <button
+                  type="button"
+                  className={`btn btn-quiet${moreOpen ? " is-active" : ""}`}
+                  aria-expanded={moreOpen}
+                  aria-haspopup="menu"
+                  onClick={() => setMoreOpen((v) => !v)}
+                >
+                  More
+                </button>
+                {moreOpen ? (
+                  <div className="knowledge-more-menu" role="menu">
+                    <label role="menuitem">
+                      Depth
+                      <select
+                        value={depth}
+                        onChange={(e) => setDepth(e.target.value as "1" | "2" | "all")}
+                        aria-label="Focus depth"
+                      >
+                        <option value="1">1 step</option>
+                        <option value="2">2 steps</option>
+                        <option value="all">All</option>
+                      </select>
+                    </label>
+                    <label role="menuitem">
+                      Labels
+                      <select
+                        value={labels}
+                        onChange={(e) => setLabels(e.target.value as "auto" | "all" | "off")}
+                      >
+                        <option value="auto">Auto</option>
+                        <option value="all">All</option>
+                        <option value="off">Off</option>
+                      </select>
+                    </label>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className={attention ? "is-active" : undefined}
+                      onClick={() => setAttention((v) => !v)}
+                    >
+                      {attention ? "Showing needs attention" : "Needs attention only"}
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className={alwaysShowDetails ? "is-active" : undefined}
+                      onClick={() => setAlwaysShowDetails((v) => !v)}
+                    >
+                      {alwaysShowDetails ? "Hide uncited facts" : "Show all facts"}
+                      {revealing ? "…" : ""}
+                    </button>
+                    {(Object.keys(kinds) as KindKey[]).map((k) => (
+                      <label key={k} role="menuitemcheckbox" aria-checked={kinds[k]}>
+                        <input
+                          type="checkbox"
+                          checked={kinds[k]}
+                          onChange={() => setKinds((prev) => ({ ...prev, [k]: !prev[k] }))}
+                        />
+                        <span className="knowledge-kind-dot" data-kind={k} />
+                        {kindLabel(k)}
+                        <span className="review-count">{kindCounts[k]}</span>
+                      </label>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
             </div>
           </div>
+
+          {pathMode ? (
+            <p className="knowledge-path-banner" role="status">
+              Click another node to show the path
+              <button
+                type="button"
+                className="btn btn-quiet"
+                onClick={() => {
+                  setPathMode(false);
+                  setPathTo(null);
+                }}
+              >
+                Cancel
+              </button>
+            </p>
+          ) : null}
 
           <canvas
             ref={canvasRef}
@@ -1283,193 +1574,203 @@ export function KnowledgePage() {
             onDoubleClick={() => fitTo(visibleNodes(), true)}
           />
 
-          <canvas
-            ref={miniRef}
-            className="knowledge-minimap"
-            aria-label="Minimap"
-            onClick={(e) => {
-              const mini = miniRef.current;
-              const wrap = wrapRef.current;
-              if (!mini || !wrap) return;
-              const mm = (mini as HTMLCanvasElement & { __mm?: { ox: number; oy: number; scale: number } }).__mm;
-              if (!mm) return;
-              const rect = mini.getBoundingClientRect();
-              const wx = (e.clientX - rect.left - mm.ox) / mm.scale;
-              const wy = (e.clientY - rect.top - mm.oy) / mm.scale;
-              centerOn(wx, wy, zoom);
-            }}
-          />
+          {graph && graph.nodes.length > 12 ? (
+            <canvas
+              ref={miniRef}
+              className="knowledge-minimap"
+              aria-label="Minimap"
+              onClick={(e) => {
+                const mini = miniRef.current;
+                const wrap = wrapRef.current;
+                if (!mini || !wrap) return;
+                const mm = (mini as HTMLCanvasElement & { __mm?: { ox: number; oy: number; scale: number } }).__mm;
+                if (!mm) return;
+                const rect = mini.getBoundingClientRect();
+                const wx = (e.clientX - rect.left - mm.ox) / mm.scale;
+                const wy = (e.clientY - rect.top - mm.oy) / mm.scale;
+                centerOn(wx, wy, zoom);
+              }}
+            />
+          ) : null}
 
           {hoverNode && hover ? (
             <div className="knowledge-hover-card" style={{ left: hover.sx, top: hover.sy }}>
               <div className="kh-kind">
                 <span className="knowledge-kind-dot" data-kind={hoverNode.kind} />
-                {hoverNode.kind} · {hoverNode.collection}
+                {kindLabel(hoverNode.kind)}
               </div>
-              <div className="kh-name">{hoverNode.name}</div>
-              <div className="kh-meta">
-                Status: {hoverNode.status}
-                {hoverNode.why.length ? ` — ${hoverNode.why.join("; ")}` : ""}
-                {hoverNode.note ? `\n${hoverNode.note}` : ""}
-                <br />
-                Built on {hoverNode.inputs.length} · used by {hoverNode.outputs.length}
-              </div>
+              <div className="kh-name">{displayLabel(hoverNode, 56)}</div>
             </div>
           ) : null}
 
-          <p className="knowledge-hint">Scroll to zoom · drag to pan · drag a node to move it · click to focus</p>
+          <p className="knowledge-hint">Click a node · Esc clears</p>
         </div>
 
         <aside className="knowledge-panel" aria-label="Knowledge panel">
-          <h2>{focusNode ? focusNode.name : "Knowledge tree"}</h2>
-          <p className="review-row-meta" style={{ margin: 0 }}>
-            {graph
-              ? `${graph.nodes.length} nodes · ${graph.edges.length} edges`
-              : "Loading graph…"}
-            {focusNode ? ` · ${focusNode.status}` : ""}
-          </p>
-
           {focusNode ? (
-            <div className="knowledge-panel-section">
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => {
-                  const href = openNodeHref(focusNode, projectByKn);
-                  if (href) navigate(href);
-                }}
-              >
-                Open
-              </button>
-            </div>
-          ) : null}
+            <>
+              <div className="knowledge-panel-head">
+                <button type="button" className="btn btn-quiet knowledge-panel-back" onClick={clearFocus}>
+                  ← All
+                </button>
+                <span className="knowledge-kind-dot" data-kind={focusNode.kind} />
+                <span className={`knowledge-status-chip${statusNeedsAttention(focusNode.status) ? " is-needs" : ""}`}>
+                  {statusLabel(focusNode.status)}
+                </span>
+              </div>
+              <h2>{displayLabel(focusNode, 72)}</h2>
+              <p className="knowledge-panel-lede">
+                {kindLabel(focusNode.kind)}
+                {focusNode.collection && focusNode.collection !== "unsorted" && focusNode.collection !== "papers"
+                  ? ` · ${focusNode.collection.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}`
+                  : ""}
+                {revealing ? " · updating…" : ""}
+              </p>
+              <div className="knowledge-panel-actions">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => {
+                    const href = openNodeHref(focusNode, projectByKn);
+                    if (href) openNodeFromGraph(href);
+                  }}
+                >
+                  {focusNode.kind === "project"
+                    ? "Open paper"
+                    : focusNode.kind === "knowledge"
+                      ? "Review write-up"
+                      : focusNode.kind === "fact"
+                        ? "See source"
+                        : "Open"}
+                </button>
+                <button
+                  type="button"
+                  className={`btn btn-quiet${pathMode ? " is-active" : ""}`}
+                  onClick={() => {
+                    setPathMode(true);
+                    setPathTo(null);
+                  }}
+                >
+                  Find path
+                </button>
+              </div>
 
-          {pathIds ? (
-            <div className="knowledge-panel-section">
-              <h3>Path</h3>
-              <ol className="knowledge-panel-list">
-                {pathIds.map((id) => (
-                  <li key={id}>
-                    <button type="button" onClick={() => focusOn(id, true)}>
-                      {byIdRef.current.get(id)?.name ?? id}
-                    </button>
-                  </li>
-                ))}
-              </ol>
-            </div>
-          ) : null}
+              {focusNode.kind === "knowledge" ? (
+                <div className="knowledge-panel-section">
+                  <KnowledgeDependencyReview
+                    nodeId={focusNode.id}
+                    projectId={
+                      focusNode.projectId ||
+                      projectByKn.get(
+                        focusNode.knowledgeId ||
+                          (focusNode.id.startsWith("kn:") ? focusNode.id.slice(3) : focusNode.id),
+                      )
+                    }
+                    compact
+                  />
+                </div>
+              ) : null}
 
-          {q.trim() ? (
-            <div className="knowledge-panel-section">
-              <h3>Search</h3>
-              <ul className="knowledge-search-hits">
-                {searchHits.map((n) => (
+              {pathIds ? (
+                <div className="knowledge-panel-section">
+                  <h3>Path</h3>
+                  <ol className="knowledge-panel-list">
+                    {pathIds.map((id) => (
+                      <li key={id}>
+                        <button type="button" onClick={() => focusOn(id, true)}>
+                          {(() => {
+                            const node = byIdRef.current.get(id);
+                            return node ? displayLabel(node) : id;
+                          })()}
+                        </button>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              ) : null}
+
+              {focusNode.kind !== "knowledge" ? (
+                <>
+                  <div className="knowledge-panel-section">
+                    <h3>Built on</h3>
+                    {builtOn.length ? (
+                      <ul className="knowledge-panel-list">
+                        {builtOn.map((n) => (
+                          <li key={n.id}>
+                            <button type="button" onClick={() => focusOn(n.id, true)}>
+                              <span className="knowledge-kind-dot" data-kind={n.kind} />
+                              {displayLabel(n)}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="knowledge-panel-empty">Nothing upstream</p>
+                    )}
+                  </div>
+
+                  <div className="knowledge-panel-section">
+                    <h3>Used by</h3>
+                    {usedBy.length ? (
+                      <ul className="knowledge-panel-list">
+                        {usedBy.map((n) => (
+                          <li key={n.id}>
+                            <button type="button" onClick={() => focusOn(n.id, true)}>
+                              <span className="knowledge-kind-dot" data-kind={n.kind} />
+                              {displayLabel(n)}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="knowledge-panel-empty">Nothing downstream</p>
+                    )}
+                  </div>
+                </>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <div className="knowledge-panel-head">
+                <h2>Knowledge</h2>
+              </div>
+              <p className="knowledge-panel-lede">
+                {graph
+                  ? (() => {
+                      const papers = panelList.filter((n) => n.kind === "project").length;
+                      const kn = panelList.filter((n) => n.kind === "knowledge").length;
+                      const parts = [];
+                      if (kn) parts.push(`${kn} knowledge`);
+                      if (papers) parts.push(`${papers} paper${papers === 1 ? "" : "s"}`);
+                      return `${parts.join(" · ") || "Nothing yet"} · click to explore`;
+                    })()
+                  : "Loading…"}
+              </p>
+              <ul className="knowledge-panel-list" aria-label="Knowledge and papers">
+                {panelList.map((n) => (
                   <li key={n.id}>
                     <button
                       type="button"
-                      onClick={() => {
-                        // Ensure the node exists in the sim (index may return out-of-tree facts).
-                        void getKnowledgeNeighborhood(n.id, 2).then((patch) => {
-                          setRevealPatch(patch);
-                          window.setTimeout(() => focusOn(n.id, true), 50);
-                        });
-                      }}
+                      className={`knowledge-panel-row${focus === n.id ? " is-active" : ""}${n.kind === "project" ? " is-paper" : " is-knowledge"}`}
+                      onClick={() => focusOn(n.id, true)}
                     >
                       <span className="knowledge-kind-dot" data-kind={n.kind} />
-                      {n.name}
+                      <span className="knowledge-panel-item-copy">
+                        <span className="knowledge-panel-item-name">{displayLabel(n)}</span>
+                        <span className="knowledge-panel-item-kind">{kindLabel(n.kind)}</span>
+                      </span>
+                      {statusNeedsAttention(n.status) ? (
+                        <span className="knowledge-status-chip is-needs">Needs review</span>
+                      ) : null}
                     </button>
                   </li>
                 ))}
-                {searchHits.length === 0 ? <li className="review-row-meta" style={{ padding: "0.5rem" }}>No matches</li> : null}
+                {!panelList.length && graph ? (
+                  <li className="knowledge-panel-empty">No knowledge or papers yet</li>
+                ) : null}
               </ul>
-            </div>
-          ) : null}
-
-          <div className="knowledge-panel-section">
-            <h3>Show</h3>
-            <div className="knowledge-filters">
-              {(Object.keys(kinds) as KindKey[]).map((k) => (
-                <label key={k}>
-                  <input
-                    type="checkbox"
-                    checked={kinds[k]}
-                    onChange={() => setKinds((prev) => ({ ...prev, [k]: !prev[k] }))}
-                  />
-                  <span className="knowledge-kind-dot" data-kind={k} />
-                  {k} ({kindCounts[k]})
-                </label>
-              ))}
-            </div>
-            <div style={{ marginTop: "0.55rem" }}>
-              <label>
-                Labels{" "}
-                <select value={labels} onChange={(e) => setLabels(e.target.value as "auto" | "all" | "off")}>
-                  <option value="auto">Auto</option>
-                  <option value="all">All</option>
-                  <option value="off">Off</option>
-                </select>
-              </label>
-            </div>
-          </div>
-
-          <div className="knowledge-panel-section">
-            <h3>Collections</h3>
-            <ul className="knowledge-panel-list">
-              {collectionRows.map((c) => (
-                <li key={c.name}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const members = nodesRef.current.filter((n) => n.collection === c.name);
-                      fitTo(members, true);
-                    }}
-                  >
-                    {c.name} <span className="review-count">{c.count}</span>
-                    {c.flagText ? ` · ${c.flagText}` : ""}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-quiet"
-                    onClick={() => setCollapsed((prev) => ({ ...prev, [c.name]: !prev[c.name] }))}
-                  >
-                    {collapsed[c.name] ? "Expand" : "Collapse"}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          {trail.length ? (
-            <div className="knowledge-panel-section">
-              <h3>Recently visited</h3>
-              <div className="knowledge-trail">
-                {trail.map((id) => (
-                  <button key={id} type="button" onClick={() => focusOn(id, true)}>
-                    {byIdRef.current.get(id)?.name ?? id}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : null}
-
-          <div className="knowledge-panel-section">
-            <h3>{focus ? "Focused branch" : "Nodes"}</h3>
-            <ul className="knowledge-panel-list" aria-label="Text alternative to the canvas">
-              {panelList.map((n) => (
-                <li key={n.id}>
-                  <button
-                    type="button"
-                    className={focus === n.id ? "is-active" : undefined}
-                    onClick={() => focusOn(n.id, true)}
-                  >
-                    <span className="knowledge-kind-dot" data-kind={n.kind} />
-                    {n.name}
-                    <span className="review-count"> · {n.status}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
+            </>
+          )}
         </aside>
       </div>
 

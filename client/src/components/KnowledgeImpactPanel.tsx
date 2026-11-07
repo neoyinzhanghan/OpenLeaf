@@ -1,24 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { getKnowledgeImpact, type KnowledgeGraphNode, type KnowledgeImpact } from "../api/client";
-
-function openHref(node: KnowledgeGraphNode): string | null {
-  if (node.kind === "knowledge") {
-    return `/knowledge?focus=${encodeURIComponent(node.id)}`;
-  }
-  if (node.kind === "project") {
-    const id = node.id.startsWith("proj:") ? node.id.slice(5) : node.id;
-    return `/p/${encodeURIComponent(id)}`;
-  }
-  if (node.kind === "fact") {
-    return `/facts?q=${encodeURIComponent(node.name)}`;
-  }
-  if (node.kind === "source") {
-    const citekey = node.id.startsWith("src:") ? node.id.slice(4) : node.id;
-    return `/library?paper=${encodeURIComponent(citekey)}`;
-  }
-  return null;
-}
+import { getKnowledgeImpact, type KnowledgeImpact } from "../api/client";
+import { openNodeHref } from "../lib/knowledgeLinks";
 
 export function KnowledgeImpactPanel({
   nodeId,
@@ -85,7 +68,7 @@ export function KnowledgeImpactPanel({
           ) : null}
           <ul className="knowledge-impact-chain">
             {flagged.map((n) => {
-              const href = openHref(n);
+              const href = openNodeHref(n);
               return (
                 <li key={n.id}>
                   <div>

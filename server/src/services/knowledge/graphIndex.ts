@@ -296,16 +296,27 @@ function attachIo(nodes: IndexNode[], edges: GraphEdge[]): GraphNode[] {
     if (from) from.outputs.push(e.to);
     if (to) to.inputs.push(e.from);
   }
-  return [...byId.values()].map(({ inTree: _i, pathRef: _p, citekey: _c, knowledgeId: _k, projectId: _pr, factKey: _f, value: _v, unit: _u, ...rest }) => rest);
+  return [...byId.values()].map(({ inTree, pathRef, citekey, knowledgeId, projectId, factKey, value, unit, ...rest }) => ({
+    ...rest,
+    inTree,
+    ...(pathRef ? { pathRef } : {}),
+    ...(citekey ? { citekey } : {}),
+    ...(knowledgeId ? { knowledgeId } : {}),
+    ...(projectId ? { projectId } : {}),
+    ...(factKey ? { factKey } : {}),
+    ...(value != null ? { value } : {}),
+    ...(unit ? { unit } : {}),
+  }));
 }
 
+/** Full indexed graph: in-tree nodes are primary; others are atmosphere (client draws faint). */
 export async function queryTreeGraph(): Promise<KnowledgeGraph | null> {
   if (!memoryFallback) return null;
   if (conn && readyStamp === memoryFallback.stamp) {
     try {
       const nodeRows = await queryAll(
         conn,
-        `MATCH (n:KnNode) WHERE n.inTree = true RETURN n.id AS id, n.kind AS kind, n.name AS name,
+        `MATCH (n:KnNode) RETURN n.id AS id, n.kind AS kind, n.name AS name,
           n.status AS status, n.why AS why, n.collection AS collection, n.note AS note,
           n.inTree AS inTree, n.pathRef AS pathRef, n.citekey AS citekey, n.knowledgeId AS knowledgeId,
           n.projectId AS projectId, n.factKey AS factKey, n.value AS value, n.unit AS unit, n.updatedAt AS updatedAt;`,
@@ -313,7 +324,6 @@ export async function queryTreeGraph(): Promise<KnowledgeGraph | null> {
       const edgeRows = await queryAll(
         conn,
         `MATCH (a:KnNode)-[r:BUILT_ON]->(b:KnNode)
-         WHERE a.inTree = true AND b.inTree = true
          RETURN a.id AS from, b.id AS to, r.flagged AS flagged;`,
       );
       const indexNodes = nodeRows.map(rowToNode);
@@ -335,10 +345,8 @@ export async function queryTreeGraph(): Promise<KnowledgeGraph | null> {
     }
   }
 
-  // Memory fallback: filter inTree
-  const indexNodes = memoryFallback.nodes.filter((n) => n.inTree);
-  const idSet = new Set(indexNodes.map((n) => n.id));
-  const edges = memoryFallback.edges.filter((e) => idSet.has(e.from) && idSet.has(e.to));
+  const indexNodes = memoryFallback.nodes;
+  const edges = memoryFallback.edges;
   const nodes = attachIo(indexNodes, edges);
   return {
     nodes,

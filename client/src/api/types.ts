@@ -41,7 +41,7 @@ export type PaperIntegrity = {
   reason?: string | null;
 };
 
-export type PaperSource = "doi" | "arxiv" | "pdf-upload" | "bibtex-import" | "manual";
+export type PaperSource = "doi" | "arxiv" | "pdf-upload" | "bibtex-import" | "manual" | "web";
 
 export type ReadingStatus = "unread" | "to-read" | "reading" | "read" | "archived";
 
@@ -147,6 +147,9 @@ export type ProjectMeta = {
   mainFile: string;
   engine: LatexEngine;
   path: string;
+  /** Explicit taxonomy from openleaf.json. Absent means neither authored paper nor knowledge item. */
+  kind?: "paper" | "knowledge";
+  knowledgeId?: string;
 };
 
 export type FileAccessReason = "protected" | "locked-host" | "locked-local" | null;

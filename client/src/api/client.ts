@@ -1265,6 +1265,16 @@ export type KnowledgeGraphNode = {
   inputs: string[];
   outputs: string[];
   updatedAt: string;
+  /** false = indexed atmosphere; drawn faint until focused. */
+  inTree?: boolean;
+  /** Stable open target — e.g. library/papers/<citekey>/facts.json#<factId>. */
+  pathRef?: string;
+  citekey?: string;
+  knowledgeId?: string;
+  projectId?: string;
+  factKey?: string;
+  value?: number | null;
+  unit?: string;
 };
 
 export type KnowledgeGraphEdge = { from: string; to: string; flagged: boolean };

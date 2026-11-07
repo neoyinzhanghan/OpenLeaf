@@ -95,13 +95,13 @@ function phoneMeta(paper: PaperRecord): string {
 
 function authorsLabel(paper: PaperRecord, opts?: { compact?: boolean }): string {
   if (!paper.authors.length) return "Unknown authors";
-  const names = paper.authors.map((a) =>
-    a.given ? `${a.family}, ${a.given}` : a.family,
-  );
-  if (opts?.compact && names.length > 6) {
-    return `${names.slice(0, 6).join("; ")}; … (+${names.length - 6})`;
+  if (opts?.compact) {
+    const first = paper.authors[0]!;
+    return paper.authors.length > 1 ? `${first.family} et al.` : first.family;
   }
-  return names.join("; ");
+  return paper.authors
+    .map((a) => (a.given ? `${a.family}, ${a.given}` : a.family))
+    .join("; ");
 }
 
 function integrityBadge(paper: PaperRecord): { label: string; className: string } {
@@ -146,7 +146,8 @@ export function LibraryPanel({
   const [sort, setSort] = useState<LibrarySort>("added");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [checkedKeys, setCheckedKeys] = useState<Set<string>>(new Set());
-  const [density, setDensity] = useState<Density>("comfortable");
+  const [density, setDensity] = useState<Density>(() => (variant === "page" ? "compact" : "comfortable"));
+  const [toolsOpen, setToolsOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [aiLinkOpen, setAiLinkOpen] = useState(false);
@@ -980,81 +981,172 @@ export function LibraryPanel({
       ) : null}
       <div className="history-drawer-head">
         <div>
-          <strong>{isPage ? "Citation library" : "Library"}</strong>
+          <strong>Library</strong>
           <div className="library-head-meta">
             {papers.length} paper{papers.length === 1 ? "" : "s"}
             {checkedKeys.size ? ` · ${checkedKeys.size} selected` : ""}
           </div>
         </div>
         <div className="history-drawer-actions">
-          <button
-            type="button"
-            className="btn btn-ghost btn-icon"
-            aria-label={density === "compact" ? "Comfortable density" : "Compact density"}
-            title={density === "compact" ? "Comfortable density" : "Compact density"}
-            onClick={() => setDensity((d) => (d === "compact" ? "comfortable" : "compact"))}
-          >
-            {density === "compact" ? "Comfortable" : "Compact"}
-          </button>
-          <button
-            type="button"
-            className={`btn btn-ghost${viewMode === "litreview" ? " is-active" : ""}`}
-            title="AI literature review table"
-            onClick={() => (viewMode === "litreview" ? setViewMode("browse") : seedLitReviewFromLibrary())}
-          >
-            Lit review
-          </button>
-          <Link
-            to={selectedKey ? `/facts?paper=${encodeURIComponent(selectedKey)}` : "/facts"}
-            className="btn btn-ghost"
-            title={selectedKey ? `Review facts for ${selectedKey}` : "Review extracted facts"}
-          >
-            Facts
-          </Link>
-          {projectId ? (
-            <button
-              type="button"
-              className="btn btn-ghost"
-              title="Scan & check project citations"
-              disabled={busy}
-              onClick={() => void runProjectCitationCheck()}
-            >
-              Check cites
-            </button>
-          ) : null}
-          <button
-            type="button"
-            className="btn btn-ghost"
-            title="Enrich from Crossref/OpenAlex and verify all papers"
-            disabled={busy}
-            onClick={() => void runCheckAll()}
-          >
-            {busy ? "Checking…" : "Check all"}
-          </button>
-          <button
-            type="button"
-            className="btn btn-ghost"
-            title="Share papers with a private link"
-            onClick={() => setShareOpen(true)}
-          >
-            Share
-          </button>
-          <button
-            type="button"
-            className="btn btn-ghost"
-            title="Mint an AI link for ChatGPT to verify and propose papers"
-            onClick={() => setAiLinkOpen(true)}
-          >
-            AI link
-          </button>
-          <button
-            type="button"
-            className={`btn btn-ghost${aiPendingCount ? " has-pending" : ""}`}
-            title="Review pending AI library additions"
-            onClick={() => setAiReviewOpen(true)}
-          >
-            Review{aiPendingCount ? ` (${aiPendingCount})` : ""}
-          </button>
+          {isPage ? (
+            <div className="library-tools">
+              <button
+                type="button"
+                className={`btn btn-ghost${toolsOpen ? " is-active" : ""}`}
+                aria-expanded={toolsOpen}
+                aria-haspopup="menu"
+                onClick={() => setToolsOpen((v) => !v)}
+              >
+                Tools
+              </button>
+              {toolsOpen ? (
+                <div className="library-tools-menu" role="menu">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setDensity((d) => (d === "compact" ? "comfortable" : "compact"));
+                    }}
+                  >
+                    {density === "compact" ? "Comfortable density" : "Compact density"}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className={viewMode === "litreview" ? "is-active" : undefined}
+                    onClick={() => {
+                      if (viewMode === "litreview") setViewMode("browse");
+                      else seedLitReviewFromLibrary();
+                      setToolsOpen(false);
+                    }}
+                  >
+                    Lit review
+                  </button>
+                  <Link
+                    role="menuitem"
+                    to={selectedKey ? `/facts?paper=${encodeURIComponent(selectedKey)}` : "/facts"}
+                    className="library-tools-link"
+                    onClick={() => setToolsOpen(false)}
+                  >
+                    Facts
+                  </Link>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={busy}
+                    onClick={() => {
+                      void runCheckAll();
+                      setToolsOpen(false);
+                    }}
+                  >
+                    {busy ? "Checking…" : "Check all"}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setShareOpen(true);
+                      setToolsOpen(false);
+                    }}
+                  >
+                    Share
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setAiLinkOpen(true);
+                      setToolsOpen(false);
+                    }}
+                  >
+                    AI link
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className={aiPendingCount ? "has-pending" : undefined}
+                    onClick={() => {
+                      setAiReviewOpen(true);
+                      setToolsOpen(false);
+                    }}
+                  >
+                    Review{aiPendingCount ? ` (${aiPendingCount})` : ""}
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="btn btn-ghost btn-icon"
+                aria-label={density === "compact" ? "Comfortable density" : "Compact density"}
+                title={density === "compact" ? "Comfortable density" : "Compact density"}
+                onClick={() => setDensity((d) => (d === "compact" ? "comfortable" : "compact"))}
+              >
+                {density === "compact" ? "Comfortable" : "Compact"}
+              </button>
+              <button
+                type="button"
+                className={`btn btn-ghost${viewMode === "litreview" ? " is-active" : ""}`}
+                title="AI literature review table"
+                onClick={() => (viewMode === "litreview" ? setViewMode("browse") : seedLitReviewFromLibrary())}
+              >
+                Lit review
+              </button>
+              <Link
+                to={selectedKey ? `/facts?paper=${encodeURIComponent(selectedKey)}` : "/facts"}
+                className="btn btn-ghost"
+                title={selectedKey ? `Review facts for ${selectedKey}` : "Review extracted facts"}
+              >
+                Facts
+              </Link>
+              {projectId ? (
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  title="Scan & check project citations"
+                  disabled={busy}
+                  onClick={() => void runProjectCitationCheck()}
+                >
+                  Check cites
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="btn btn-ghost"
+                title="Enrich from Crossref/OpenAlex and verify all papers"
+                disabled={busy}
+                onClick={() => void runCheckAll()}
+              >
+                {busy ? "Checking…" : "Check all"}
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                title="Share papers with a private link"
+                onClick={() => setShareOpen(true)}
+              >
+                Share
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                title="Mint an AI link for ChatGPT to verify and propose papers"
+                onClick={() => setAiLinkOpen(true)}
+              >
+                AI link
+              </button>
+              <button
+                type="button"
+                className={`btn btn-ghost${aiPendingCount ? " has-pending" : ""}`}
+                title="Review pending AI library additions"
+                onClick={() => setAiReviewOpen(true)}
+              >
+                Review{aiPendingCount ? ` (${aiPendingCount})` : ""}
+              </button>
+            </>
+          )}
           <button type="button" className="btn btn-primary" onClick={() => setImportOpen((v) => !v)}>
             Add paper
           </button>
@@ -1399,7 +1491,7 @@ export function LibraryPanel({
             </div>
           </div>
 
-          <div className="library-filter-group">
+          <div className="library-filter-group" data-section="collections">
             <div className="library-filter-heading">Collections</div>
             <div className="library-filters" role="toolbar" aria-label="Collections">
               {collections
@@ -1465,13 +1557,10 @@ export function LibraryPanel({
                 </button>
               </div>
             ) : null}
-            <p className="library-hint">
-              Folders for projects or reading lists. Creating while papers are selected adds them.
-            </p>
           </div>
 
-          <div className="library-filter-group">
-            <div className="library-filter-heading">Topics</div>
+          <details className="library-filter-group" data-section="topics">
+            <summary className="library-filter-heading">Topics{tagFilter ? ` · #${tagFilter}` : ""}</summary>
             <div className="library-filters" role="toolbar" aria-label="Topics">
               {allTags.length ? (
                 allTags.map((t) => (
@@ -1488,7 +1577,7 @@ export function LibraryPanel({
                 <span className="library-hint">No topics yet — add on a paper</span>
               )}
             </div>
-          </div>
+          </details>
         </div>
           ) : null}
         </div>
@@ -2130,7 +2219,10 @@ export function LibraryPanel({
               </div>
             </>
           ) : (
-            <div className="library-empty">Select a paper</div>
+            <div className="library-empty library-empty-detail">
+              <p>Select a paper</p>
+              <span className="muted">Search or pick from the list</span>
+            </div>
           )}
         </div>
           }

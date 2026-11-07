@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { isValidFactKey, slugifyFactKey, uniquifyFactKey } from "./factKey.js";
+import {
+  humanizeFactLabel,
+  isValidFactKey,
+  slugifyFactKey,
+  titleFromFactKey,
+  uniquifyFactKey,
+} from "./factKey.js";
 
 describe("fact keys", () => {
   it("accepts valid keys and rejects bad ones", () => {
@@ -22,5 +28,21 @@ describe("fact keys", () => {
     assert.equal(uniquifyFactKey(undefined, "Fee per read", taken), "fee-per-read-3");
     assert.equal(uniquifyFactKey("custom-key", "ignored", new Set()), "custom-key");
     assert.equal(uniquifyFactKey("bad Key!", "Fee per read", new Set(["fee-per-read"])), "fee-per-read-2");
+  });
+
+  it("humanizes keys and AUROC sentences into English labels", () => {
+    assert.equal(titleFromFactKey("auroc-of-abmil-on-tcga-nsclc-2"), "AUROC of ABMIL on TCGA NSCLC (2)");
+    assert.equal(
+      humanizeFactLabel({
+        input: "AUROC of ABMIL on TCGA-NSCLC (LUAD vs LUSC, slide-level)",
+        key: "auroc-of-abmil-on-tcga-nsclc-2",
+        value: 0.918,
+      }),
+      "ABMIL on TCGA-NSCLC · 0.918",
+    );
+    assert.equal(
+      humanizeFactLabel({ key: "fee-per-read", value: 12, unit: "USD" }),
+      "Fee per Read · 12 USD",
+    );
   });
 });

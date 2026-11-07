@@ -495,7 +495,9 @@ libraryRouter.get("/facts", async (req, res) => {
     const q = typeof req.query.q === "string" ? req.query.q : undefined;
     const type = typeRaw ? FactTypeSchema.parse(typeRaw) : undefined;
     const status = statusRaw ? FactStatusSchema.parse(statusRaw) : undefined;
-    const facts = await listAllFacts({ citekey, type, status, q });
+    // Queue/list never needs PDF display rects — those load per-paper on selection.
+    // Computing them here was multi-second for a few hundred facts.
+    const facts = await listAllFacts({ citekey, type, status, q, skipDisplay: true });
     res.json({ facts });
   } catch (err) {
     sendError(res, err);

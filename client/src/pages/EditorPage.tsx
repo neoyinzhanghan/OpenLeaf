@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { libraryPaperUrl } from "../latex/libraryLink";
 import type * as Y from "yjs";
 import {
@@ -42,6 +42,7 @@ import {
 } from "../api/client";
 import type { KnowledgeFactHint, KnowledgeItemHint } from "../latex/completions";
 import { extractOutNames, knowledgeCursorTarget, type KnowledgeCursorTarget } from "../latex/knowledgeSupport";
+import { KnowledgeDependencyReview } from "../components/KnowledgeDependencyReview";
 import { KnowledgeInspector } from "../components/KnowledgeInspector";
 import type { AppConfig, FileAccessLevel, FileChangeDiff, GitCommitInfo, PaperRecord, ProjectMeta, TimelineView, TreeNode } from "../api/types";
 import { guestLogout, hostLogout, listProjectAiReview, acceptAiReview, rejectAiReview, type AiReviewCollaborator, type AiReviewHunk } from "../api/share";
@@ -244,6 +245,8 @@ function normDiffPath(p: string): string {
 
 export function EditorPage() {
   const { id = "" } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const reviewMode = searchParams.get("review") === "1";
   const navigate = useNavigate();
   const guest = useGuest();
   const { session, refresh: refreshSession } = useSession();
@@ -280,6 +283,10 @@ export function EditorPage() {
   const [knowledgeFlagWhy, setKnowledgeFlagWhy] = useState<string[]>([]);
   const [knowledgeTarget, setKnowledgeTarget] = useState<KnowledgeCursorTarget>(null);
   const [knowledgeInspectorOpen, setKnowledgeInspectorOpen] = useState(false);
+  const [depReviewOpen, setDepReviewOpen] = useState(false);
+  useEffect(() => {
+    if (reviewMode && knowledgeMeta?.kind === "knowledge") setDepReviewOpen(true);
+  }, [reviewMode, knowledgeMeta?.kind, knowledgeMeta?.knowledgeId]);
   useEffect(() => {
     if (!id) return;
     rememberProject({ id, name: project?.name || id });
@@ -2400,6 +2407,27 @@ export function EditorPage() {
                   ? `${knowledgeSteps.filter((s) => s.status === "needs-review" || s.status === "flagged").length} of ${knowledgeSteps.length} steps need review`
                   : "No steps yet"}
               </span>
+              <button
+                type="button"
+                className={`btn btn-quiet toolbar-wide-only${depReviewOpen ? " is-active" : ""}`}
+                onClick={() => {
+                  setDepReviewOpen((v) => {
+                    const next = !v;
+                    setSearchParams(
+                      (prev) => {
+                        const p = new URLSearchParams(prev);
+                        if (next) p.set("review", "1");
+                        else p.delete("review");
+                        return p;
+                      },
+                      { replace: true },
+                    );
+                    return next;
+                  });
+                }}
+              >
+                Review trail
+              </button>
               <Link
                 className="btn btn-quiet toolbar-wide-only"
                 to={
@@ -3087,6 +3115,26 @@ export function EditorPage() {
           onClose={() => setKnowledgeInspectorOpen(false)}
           onChanged={() => void refreshKnowledgeUi()}
         />
+      ) : null}
+
+      {depReviewOpen && knowledgeMeta?.kind === "knowledge" && knowledgeMeta.knowledgeId ? (
+        <div className="editor-kn-review-rail" role="complementary" aria-label="Dependency review">
+          <KnowledgeDependencyReview
+            nodeId={`kn:${knowledgeMeta.knowledgeId}`}
+            projectId={id}
+            onClose={() => {
+              setDepReviewOpen(false);
+              setSearchParams(
+                (prev) => {
+                  const p = new URLSearchParams(prev);
+                  p.delete("review");
+                  return p;
+                },
+                { replace: true },
+              );
+            }}
+          />
+        </div>
       ) : null}
 
       {syncToast && <div className="sync-toast">{syncToast}</div>}

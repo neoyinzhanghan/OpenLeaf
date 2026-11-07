@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { createKnowledgeItem, createProjectNamed, listKnowledgeItems, listProjects } from "../api/client";
+import { createKnowledgeItem, createProjectNamed, listProjects } from "../api/client";
 import { hostGateway, hostLogout, type HostGatewayView } from "../api/share";
 import type { ProjectMeta } from "../api/types";
 import { ErrorBanner } from "../components/ErrorBanner";
@@ -13,6 +13,14 @@ import { useSession } from "../session/SessionContext";
 
 type ProjectFilter = "all" | "papers" | "knowledge";
 
+function isPaper(p: ProjectMeta): boolean {
+  return p.kind === "paper";
+}
+
+function isKnowledge(p: ProjectMeta): boolean {
+  return p.kind === "knowledge";
+}
+
 export function ProjectList() {
   const { session, refresh } = useSession();
   const navigate = useNavigate();
@@ -23,7 +31,6 @@ export function ProjectList() {
   const [params] = useSearchParams();
   const remoteHost = session.kind === "host" && session.remote;
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
-  const [knowledgeIds, setKnowledgeIds] = useState<Set<string>>(() => new Set());
   const [filter, setFilter] = useState<ProjectFilter>("all");
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -36,9 +43,7 @@ export function ProjectList() {
   const folder = title ? projectFolderName(title) : null;
 
   const refreshProjects = async () => {
-    const [list, kn] = await Promise.all([listProjects(), listKnowledgeItems()]);
-    setProjects(list);
-    setKnowledgeIds(new Set(kn.items.map((i) => i.id)));
+    setProjects(await listProjects());
   };
 
   useEffect(() => {
@@ -75,11 +80,12 @@ export function ProjectList() {
     };
   }, [remoteHost]);
 
-  const visible = useMemo(() => {
-    if (filter === "all") return projects;
-    if (filter === "knowledge") return projects.filter((p) => knowledgeIds.has(p.id));
-    return projects.filter((p) => !knowledgeIds.has(p.id));
-  }, [projects, knowledgeIds, filter]);
+  const papers = useMemo(() => projects.filter(isPaper), [projects]);
+  const knowledge = useMemo(() => projects.filter(isKnowledge), [projects]);
+  const other = useMemo(
+    () => projects.filter((p) => !isPaper(p) && !isKnowledge(p)),
+    [projects],
+  );
 
   const onCreate = async (e: FormEvent) => {
     e.preventDefault();
@@ -113,6 +119,27 @@ export function ProjectList() {
       setKnBusy(false);
     }
   };
+
+  const onRenamed = (prev: ProjectMeta) => (next: ProjectMeta) => {
+    const last = readLastProject();
+    if (last && (last.id === prev.id || last.id === next.id)) {
+      rememberProject({ id: next.id, name: next.name });
+      setLastProject({ id: next.id, name: next.name });
+    }
+    void refreshProjects();
+  };
+
+  const emptyLabel =
+    filter === "knowledge" ? "knowledge items" : filter === "papers" ? "papers" : "projects";
+
+  const showPapers = filter === "all" || filter === "papers";
+  const showKnowledge = filter === "all" || filter === "knowledge";
+  const showOther = filter === "all";
+  const nothingVisible =
+    !loading &&
+    ((filter === "papers" && papers.length === 0) ||
+      (filter === "knowledge" && knowledge.length === 0) ||
+      (filter === "all" && projects.length === 0));
 
   return (
     <div className="app-shell">
@@ -163,9 +190,8 @@ export function ProjectList() {
           </div>
         )}
         <p className="home-lead">
-          Local folders with a main <code>.tex</code>, bibliography, and figures — edit and compile side by side.
-          Your personal reference collection lives separately in <Link to="/library">Library</Link>. Knowledge items
-          are short write-ups in the same editor.
+          Authored papers and short knowledge write-ups share the editor, but they are not the same kind of thing.
+          Reference material lives in <Link to="/library">Library</Link>.
         </p>
 
         {remoteHost && (
@@ -217,7 +243,7 @@ export function ProjectList() {
             aria-label="New project name"
           />
           <button className="btn btn-primary" type="submit" disabled={busy || !title || !folder}>
-            {busy ? "Creating…" : "Create from example"}
+            {busy ? "Creating…" : "Create paper"}
           </button>
           <button
             type="button"
@@ -234,45 +260,83 @@ export function ProjectList() {
           </p>
         ) : null}
         <p className="home-actions-hint">
-          Seeds a starter article you can rename and rewrite. Knowledge items use the knowledge template and open in
-          the editor. Click a project title to rename it.
+          Papers get the article template. Knowledge items are short ring-marked write-ups with a stable{" "}
+          <code>\kn</code> id. Click a title to rename.
         </p>
         {!remoteHost && <HostAccessPanel open={phoneOpen} onClose={() => setPhoneOpen(false)} />}
 
         {error ? <ErrorBanner onDismiss={() => setError(null)}>{error}</ErrorBanner> : null}
 
-        <div className="project-list">
-          {loading && (
-            <div className="empty-hint" role="status" aria-live="polite">
-              Loading projects…
+        {loading && (
+          <div className="empty-hint" role="status" aria-live="polite">
+            Loading projects…
+          </div>
+        )}
+
+        {!loading && showPapers && papers.length > 0 ? (
+          <section className="project-section project-section-papers" aria-labelledby="papers-heading">
+            {filter === "all" ? (
+              <header className="project-section-head">
+                <h2 id="papers-heading">Papers</h2>
+                <p>Authored manuscripts with a full article layout.</p>
+              </header>
+            ) : (
+              <h2 id="papers-heading" className="sr-only">
+                Papers
+              </h2>
+            )}
+            <div className="project-list is-papers">
+              {papers.map((p) => (
+                <ProjectCard key={p.id} project={p} onRenamed={onRenamed(p)} />
+              ))}
             </div>
-          )}
-          {!loading &&
-            visible.map((p) => (
-              <ProjectCard
-                key={p.id}
-                project={p}
-                onRenamed={(next) => {
-                  const prev = readLastProject();
-                  if (prev && (prev.id === p.id || prev.id === next.id)) {
-                    rememberProject({ id: next.id, name: next.name });
-                    setLastProject({ id: next.id, name: next.name });
-                  }
-                  void refreshProjects();
-                }}
-              />
-            ))}
-          {!loading && visible.length === 0 && !error && (
-            <div className="empty-hint empty-hint-card">
-              <strong>No {filter === "all" ? "projects" : filter} yet</strong>
-              <p>
-                {filter === "knowledge"
-                  ? "Use “New knowledge item” above to start a short write-up."
-                  : "Pick a name above, then create from the example template."}
-              </p>
+          </section>
+        ) : null}
+
+        {!loading && showKnowledge && knowledge.length > 0 ? (
+          <section className="project-section project-section-knowledge" aria-labelledby="knowledge-heading">
+            {filter === "all" ? (
+              <header className="project-section-head">
+                <h2 id="knowledge-heading">Knowledge</h2>
+                <p>Short write-ups — not papers. Open one to edit the claim.</p>
+              </header>
+            ) : (
+              <h2 id="knowledge-heading" className="sr-only">
+                Knowledge
+              </h2>
+            )}
+            <div className="project-list is-knowledge">
+              {knowledge.map((p) => (
+                <ProjectCard key={p.id} project={p} onRenamed={onRenamed(p)} />
+              ))}
             </div>
-          )}
-        </div>
+          </section>
+        ) : null}
+
+        {!loading && showOther && other.length > 0 ? (
+          <section className="project-section project-section-other" aria-labelledby="other-heading">
+            <header className="project-section-head">
+              <h2 id="other-heading">Limbo</h2>
+              <p>Benches, talks, and folders that are neither papers nor knowledge items.</p>
+            </header>
+            <div className="project-list is-other">
+              {other.map((p) => (
+                <ProjectCard key={p.id} project={p} onRenamed={onRenamed(p)} />
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        {nothingVisible && !error ? (
+          <div className="empty-hint empty-hint-card">
+            <strong>No {emptyLabel} yet</strong>
+            <p>
+              {filter === "knowledge"
+                ? "Use “New knowledge item” above to start a short write-up."
+                : "Pick a name above, then create a paper from the example template."}
+            </p>
+          </div>
+        ) : null}
       </main>
       <nav className={`phone-tabbar${lastProject ? " has-project" : ""} has-knowledge`} aria-label="Primary">
         <Link to="/" aria-current="page">
