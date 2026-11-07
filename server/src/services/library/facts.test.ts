@@ -309,8 +309,12 @@ describe("library facts", () => {
     const confirmed = await updateFact(citekey, fact.id, { status: "confirmed" });
     assert.equal(confirmed.status, "confirmed");
 
-    const rejected = await updateFact(citekey, fact.id, { status: "rejected" });
+    const rejected = await updateFact(citekey, fact.id, {
+      status: "rejected",
+      rejectReason: "Wrong metric — accuracy instead of AUC",
+    });
     assert.equal(rejected.status, "rejected");
+    assert.equal(rejected.rejectReason, "Wrong metric — accuracy instead of AUC");
 
     const edited = await updateFact(
       citekey,

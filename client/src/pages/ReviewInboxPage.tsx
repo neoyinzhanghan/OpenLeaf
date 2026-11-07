@@ -20,6 +20,11 @@ function itemOpenHref(item: KnowledgeInboxItem): string | null {
   if (item.type === "fact" && item.citekey) {
     return `/facts?paper=${encodeURIComponent(item.citekey)}&status=all&type=all`;
   }
+  if (item.type === "step" && item.projectId) {
+    const q = new URLSearchParams({ review: "1" });
+    if (item.stepId) q.set("step", item.stepId);
+    return `/p/${encodeURIComponent(item.projectId)}?${q.toString()}`;
+  }
   if (item.type === "knowledge") {
     const id = item.id.startsWith("kn:") ? item.id : `kn:${item.id}`;
     return `/knowledge?focus=${encodeURIComponent(id)}`;
@@ -29,6 +34,13 @@ function itemOpenHref(item: KnowledgeInboxItem): string | null {
     return `/p/${encodeURIComponent(id)}`;
   }
   return `/knowledge?focus=${encodeURIComponent(item.id)}`;
+}
+
+function statusDotClass(status: string): string {
+  if (status === "rejected") return "is-reject";
+  if (status === "flagged") return "is-flag";
+  if (status === "needs-review" || status === "unreviewed") return "is-needs";
+  return "is-ok";
 }
 
 function impactNodeId(item: KnowledgeInboxItem): string {
@@ -108,10 +120,19 @@ export function ReviewInboxPage() {
 
   const rejectFact = async (item: KnowledgeInboxItem) => {
     if (!item.citekey || !item.factId) return;
+    const reason = window.prompt("Why are you rejecting this fact? (required)", "");
+    if (reason == null) return;
+    if (!reason.trim()) {
+      setError("A reason is required when rejecting a fact.");
+      return;
+    }
     const key = `${item.citekey}:${item.factId}`;
     setBusyId(key);
     try {
-      await patchLibraryFact(item.citekey, item.factId, { status: "rejected" });
+      await patchLibraryFact(item.citekey, item.factId, {
+        status: "rejected",
+        rejectReason: reason.trim(),
+      });
       setImpactNode(impactNodeId(item));
       await load();
     } catch (err) {
@@ -200,7 +221,11 @@ export function ReviewInboxPage() {
                 <div key={rowKey} className="review-row">
                   <div>
                     <div className="review-row-label">
-                      <span className="knowledge-kind-dot" data-kind={item.type === "step" ? "knowledge" : item.type} />
+                      <span
+                        className={`knowledge-status-dot ${statusDotClass(item.status)}`}
+                        title={item.status}
+                        aria-hidden
+                      />
                       {item.label || item.id}
                     </div>
                     <div className="review-row-meta">
@@ -208,6 +233,7 @@ export function ReviewInboxPage() {
                       {item.citekey ? ` · ${item.citekey}` : ""}
                       {item.createdBy ? ` · ${item.createdBy}` : ""}
                       {` · ${item.status}`}
+                      {item.why?.length ? ` — ${item.why[0]}` : ""}
                     </div>
                   </div>
                   <div className="review-row-actions">

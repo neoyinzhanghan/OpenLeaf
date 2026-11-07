@@ -9,8 +9,8 @@ import { fileURLToPath } from "node:url";
 import { getRepoRoot } from "../../config.js";
 import { listAllFacts } from "../library/facts.js";
 import { parseKnowledge } from "./parse.js";
-import { evaluateKnowledgeGraph } from "./evaluate.js";
-import { renderValuesFile } from "./valuesFile.js";
+import { evaluateKnowledgeGraph, formatKnowledgeNumber } from "./evaluate.js";
+import { renderValuesFile, type ValuesFileBuiltOn } from "./valuesFile.js";
 import { listKnowledgeItems } from "./items.js";
 import { readProjectConfig, resolveProjectPath } from "../projectFs.js";
 
@@ -137,6 +137,44 @@ export async function prepareKnowledgeCompile(projectId: string): Promise<Prepar
     }
   }
 
+  const factByKey = new Map(allFacts.filter((f) => f.key).map((f) => [f.key!, f]));
+  const knById = new Map(knItems.map((k) => [k.knowledgeId, k]));
+  const builtOnKeys = new Set<string>();
+  const builtOn: ValuesFileBuiltOn[] = [];
+  for (const r of parsed.refs) {
+    if (r.kind === "fact" && r.key && !builtOnKeys.has(`fact:${r.key}`)) {
+      builtOnKeys.add(`fact:${r.key}`);
+      const f = factByKey.get(r.key);
+      if (!f) continue;
+      const page =
+        f.highlights?.[0]?.page != null
+          ? f.sourceKind === "web"
+            ? "saved text"
+            : `p. ${f.highlights[0].page}`
+          : "";
+      const saved = f.updatedAt ? `saved ${f.updatedAt.slice(0, 10)}` : "";
+      builtOn.push({
+        kind: "fact",
+        label: f.input || r.key,
+        value:
+          f.answer?.trim() ||
+          (f.value != null ? formatKnowledgeNumber(f.value, { unit: f.unit ?? "" }) : "—"),
+        sourceLine: [f.citekey, page, saved].filter(Boolean).join(" · "),
+      });
+    }
+    if ((r.kind === "kn" || r.kind === "knref") && r.id && !builtOnKeys.has(`kn:${r.id}`)) {
+      builtOnKeys.add(`kn:${r.id}`);
+      const k = knById.get(r.id);
+      const v = evaluated.get(r.id);
+      builtOn.push({
+        kind: "knowledge",
+        label: k?.title || r.id,
+        value: v?.primary != null ? formatKnowledgeNumber(v.primary) : "—",
+        sourceLine: `knowledge item · ${r.id}`,
+      });
+    }
+  }
+
   const values = renderValuesFile({
     facts: allFacts
       .filter((f) => f.key)
@@ -156,6 +194,7 @@ export async function prepareKnowledgeCompile(projectId: string): Promise<Prepar
       };
     }),
     localOuts,
+    builtOn,
   });
 
   const genDir = path.join(knowledgeGenRoot(), projectId);

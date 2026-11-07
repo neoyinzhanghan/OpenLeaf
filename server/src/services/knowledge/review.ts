@@ -81,6 +81,18 @@ async function loadMainTex(projectId: string): Promise<{ text: string; mainFile:
   return { text, mainFile };
 }
 
+export type StepInputDetail = {
+  id: string;
+  kind: "fact" | "kn" | "out" | "unknown";
+  label: string;
+  status: import("./status.js").Status;
+  value: number | null;
+  unit?: string;
+  source?: string;
+  valueChanged?: boolean;
+  href?: string;
+};
+
 export async function listStepStatuses(projectId: string): Promise<
   Array<{
     id: string;
@@ -90,6 +102,7 @@ export async function listStepStatuses(projectId: string): Promise<
     hash: string;
     line?: number;
     reviewedText?: string;
+    inputs: StepInputDetail[];
   }>
 > {
   const { text, mainFile } = await loadMainTex(projectId);
@@ -101,23 +114,53 @@ export async function listStepStatuses(projectId: string): Promise<
   return parsed.steps.map((step) => {
     const h = hashStepBody(step.body);
     const rec = review.steps[step.id] as (StepReviewRecord & { text?: string }) | undefined;
-    const inputStatuses = step.refs.map((r) => {
+    const inputs: StepInputDetail[] = step.refs.map((r) => {
       if (r.kind === "fact") {
         const f = factByKey.get(r.key);
         const snap = rec?.inputs?.[`fact:${r.key}`];
         return {
           id: `fact:${r.key}`,
+          kind: "fact" as const,
+          label: f?.input || r.key,
           status: (f?.status ?? "unreviewed") as import("./status.js").Status,
+          value: f?.value ?? null,
+          unit: f?.unit || "",
+          source: f ? `${f.citekey}${f.highlights?.[0]?.page ? ` p.${f.highlights[0].page}` : ""}` : undefined,
           valueChanged: snap != null && f != null && snap.value !== f.value,
+          href:
+            f?.citekey && f.id
+              ? `/facts?paper=${encodeURIComponent(f.citekey)}&fact=${encodeURIComponent(f.id)}&status=all&type=all`
+              : undefined,
         };
       }
-      return { id: `${r.kind}:${"id" in r ? r.id : "name" in r ? r.name : "?"}`, status: "reviewed" as const };
+      if (r.kind === "kn" || r.kind === "knref") {
+        // Graph owns precise kn→kn status; here we surface the link and a conservative default.
+        return {
+          id: `kn:${r.id}`,
+          kind: "kn" as const,
+          label: r.id,
+          status: "needs-review" as const,
+          value: null,
+          href: `/knowledge?focus=${encodeURIComponent(`kn:${r.id}`)}`,
+        };
+      }
+      return {
+        id: `${r.kind}:${"name" in r ? r.name : "?"}`,
+        kind: "out" as const,
+        label: "name" in r ? String(r.name) : "?",
+        status: "reviewed" as const,
+        value: null,
+      };
     });
     const { status, why } = computeStepStatus({
       id: step.id,
       textHash: h,
       review: rec ?? null,
-      inputStatuses,
+      inputStatuses: inputs.map((i) => ({
+        id: i.id,
+        status: i.status,
+        valueChanged: i.valueChanged,
+      })),
     });
     return {
       id: step.id,
@@ -127,6 +170,7 @@ export async function listStepStatuses(projectId: string): Promise<
       hash: h,
       line: step.line,
       reviewedText: rec?.text,
+      inputs,
     };
   });
 }
@@ -136,6 +180,7 @@ export async function reviewStep(
   stepId: string,
   verdict: "reviewed" | "rejected" | "clear",
   by = "",
+  opts?: { force?: boolean },
 ): Promise<ReviewFile> {
   const { text, mainFile } = await loadMainTex(projectId);
   const parsed = parseKnowledge({ [mainFile]: text });
@@ -152,6 +197,7 @@ export async function reviewStep(
   const facts = await listAllFacts();
   const factByKey = new Map(facts.filter((f) => f.key).map((f) => [f.key!, f]));
   const inputs: NonNullable<ReviewFile["steps"][string]["inputs"]> = {};
+  const blocked: string[] = [];
   for (const r of step.refs) {
     if (r.kind === "fact") {
       const f = factByKey.get(r.key);
@@ -160,9 +206,21 @@ export async function reviewStep(
         status: f?.status,
         updatedAt: f?.updatedAt,
       };
+      if (verdict === "reviewed" && f?.status === "rejected") {
+        blocked.push(`fact:${r.key} is rejected`);
+      } else if (verdict === "reviewed" && (!f || f.status === "unreviewed" || f.status === "not_found")) {
+        blocked.push(`fact:${r.key} is unchecked`);
+      }
     } else if (r.kind === "kn" || r.kind === "knref") {
       inputs[`kn:${r.id}`] = { hash: "" };
     }
+  }
+
+  if (verdict === "reviewed" && blocked.length && !opts?.force) {
+    throw httpError(
+      409,
+      `Cannot mark this step reviewed while inputs need attention: ${blocked.join("; ")}. Confirm or replace those facts first.`,
+    );
   }
 
   file.steps[stepId] = {

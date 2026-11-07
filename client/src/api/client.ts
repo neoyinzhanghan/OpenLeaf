@@ -1066,6 +1066,8 @@ export function patchLibraryFact(
     input: string;
     answer: string;
     status: "confirmed" | "rejected" | "unreviewed";
+    rejectReason: string;
+    undoStatus: boolean;
     highlights: import("./types").FactHighlight[];
     rect: FactTagRect;
     untag: boolean;
@@ -1297,14 +1299,17 @@ export type KnowledgeInboxItem = {
   id: string;
   label: string;
   status: KnowledgeStatus;
+  why?: string[];
   citekey?: string;
   factId?: string;
+  projectId?: string;
+  stepId?: string;
   createdBy?: string;
 };
 
 export type KnowledgeInboxGroup = {
   title: string;
-  kind: "agent" | "changed" | "flagged";
+  kind: "agent" | "changed" | "flagged" | "steps" | "rejected";
   items: KnowledgeInboxItem[];
 };
 
@@ -1378,9 +1383,21 @@ export function getKnowledgeImpact(node: string): Promise<KnowledgeImpact> {
   return request(`/api/knowledge/impact?node=${encodeURIComponent(node)}`);
 }
 
-export function getKnowledgeInbox(): Promise<{ groups: KnowledgeInboxGroup[] }> {
+export function getKnowledgeInbox(): Promise<{ groups: KnowledgeInboxGroup[]; count: number }> {
   return request("/api/knowledge/inbox");
 }
+
+export type KnowledgeStepInput = {
+  id: string;
+  kind: "fact" | "kn" | "out" | "unknown";
+  label: string;
+  status: KnowledgeStatus;
+  value: number | null;
+  unit?: string;
+  source?: string;
+  valueChanged?: boolean;
+  href?: string;
+};
 
 export type KnowledgeStepStatus = {
   id: string;
@@ -1390,6 +1407,7 @@ export type KnowledgeStepStatus = {
   hash: string;
   line?: number;
   reviewedText?: string;
+  inputs?: KnowledgeStepInput[];
 };
 
 export function getKnowledgeSteps(projectId: string): Promise<{ steps: KnowledgeStepStatus[] }> {
@@ -1409,7 +1427,7 @@ export function checkKnowledgeProject(projectId: string): Promise<{
 
 export function reviewKnowledgeStep(
   projectId: string,
-  body: { stepId: string; verdict: "reviewed" | "rejected" | "clear"; by?: string },
+  body: { stepId: string; verdict: "reviewed" | "rejected" | "clear"; by?: string; force?: boolean },
 ): Promise<{ review: unknown }> {
   return request(`/api/projects/${encodeURIComponent(projectId)}/knowledge/review`, {
     method: "POST",

@@ -1,5 +1,7 @@
 /**
- * Status computation with reasons. Spec §5.5.
+ * Status computation with reasons. Spec §5.5 + overnight truth rules:
+ * upstream problems are always carried in `why`, and a paper is only
+ * up-to-date when everything it cites is checked and clean.
  */
 
 export type Status =
@@ -32,37 +34,59 @@ export function normalizeStepText(body: string): string {
     .trim();
 }
 
-export function computeStepStatus(step: StepInfo): { status: Status; why: string[] } {
+/** Plain-English reasons for bad / unchecked upstream inputs. */
+export function collectUpstreamWhy(
+  inputStatuses: Array<{ id: string; status: Status; valueChanged?: boolean }>,
+): string[] {
   const why: string[] = [];
-  if (!step.review || step.review.hash !== step.textHash) {
-    return { status: "needs-review", why: step.review ? ["step text changed since review"] : ["not reviewed yet"] };
-  }
-  if (step.review.verdict === "rejected") {
-    return { status: "rejected", why: ["rejected by reviewer"] };
-  }
-  for (const input of step.inputStatuses) {
+  for (const input of inputStatuses) {
     if (input.status === "rejected") {
       why.push(`${input.id} rejected`);
     } else if (input.status === "flagged") {
       why.push(`${input.id} flagged`);
+    } else if (input.status === "needs-review" || input.status === "unreviewed") {
+      why.push(`${input.id} unchecked`);
+    } else if (input.status === "not_found") {
+      why.push(`${input.id} not found`);
     } else if (input.valueChanged) {
       why.push(`${input.id} value changed`);
     }
   }
-  if (why.length) return { status: "flagged", why };
+  return why;
+}
+
+export function computeStepStatus(step: StepInfo): { status: Status; why: string[] } {
+  const upstreamWhy = collectUpstreamWhy(step.inputStatuses);
+
+  if (!step.review || step.review.hash !== step.textHash) {
+    const base = step.review ? ["step text changed since review"] : ["not reviewed yet"];
+    return { status: "needs-review", why: [...base, ...upstreamWhy] };
+  }
+  if (step.review.verdict === "rejected") {
+    return { status: "rejected", why: ["rejected by reviewer", ...upstreamWhy] };
+  }
+  if (upstreamWhy.length) return { status: "flagged", why: upstreamWhy };
   return { status: "reviewed", why: [] };
 }
 
 export function computeItemStatus(opts: {
-  steps: Array<{ status: Status }>;
+  steps: Array<{ status: Status; why?: string[] }>;
   hasErrors: boolean;
-}): Status {
-  if (opts.steps.some((s) => s.status === "rejected")) return "rejected";
-  if (opts.steps.some((s) => s.status === "flagged")) return "flagged";
-  if (opts.hasErrors || opts.steps.some((s) => s.status === "needs-review") || !opts.steps.length) {
-    return "needs-review";
+}): { status: Status; why: string[] } {
+  const why = [...new Set(opts.steps.flatMap((s) => s.why ?? []))];
+  if (opts.steps.some((s) => s.status === "rejected")) {
+    return { status: "rejected", why: why.length ? why : ["a step was rejected"] };
   }
-  return "reviewed";
+  if (opts.steps.some((s) => s.status === "flagged")) {
+    return { status: "flagged", why: why.length ? why : ["a step is flagged"] };
+  }
+  if (opts.hasErrors || opts.steps.some((s) => s.status === "needs-review") || !opts.steps.length) {
+    if (opts.hasErrors && !why.some((w) => /error/i.test(w))) why.push("has parse or evaluation errors");
+    if (!opts.steps.length && !why.length) why.push("no steps yet");
+    if (!why.length) why.push("steps need review");
+    return { status: "needs-review", why };
+  }
+  return { status: "reviewed", why: [] };
 }
 
 export function computeFactStatus(
@@ -71,7 +95,32 @@ export function computeFactStatus(
   return stored;
 }
 
-export function computeProjectStatus(upstream: Status[]): Status {
-  if (upstream.some((s) => s === "rejected" || s === "flagged")) return "flagged";
-  return "up-to-date";
+/** True when a cited node is fully checked and clean. */
+export function isCleanUpstream(status: Status): boolean {
+  return status === "confirmed" || status === "reviewed" || status === "up-to-date";
+}
+
+/**
+ * A paper is only up-to-date when every cited fact/knowledge item is checked
+ * and clean. Anything rejected, flagged, or still unchecked flags the paper.
+ */
+export function computeProjectStatus(upstream: Status[]): { status: Status; why: string[] } {
+  const why: string[] = [];
+  let hasHard = false;
+  let hasSoft = false;
+  for (const s of upstream) {
+    if (s === "rejected") {
+      hasHard = true;
+      why.push("depends on a rejected fact or knowledge item");
+    } else if (s === "flagged") {
+      hasHard = true;
+      why.push("depends on flagged upstream");
+    } else if (s === "needs-review" || s === "unreviewed" || s === "not_found") {
+      hasSoft = true;
+      why.push("depends on unchecked upstream");
+    }
+  }
+  const unique = [...new Set(why)];
+  if (hasHard || hasSoft) return { status: "flagged", why: unique };
+  return { status: "up-to-date", why: [] };
 }

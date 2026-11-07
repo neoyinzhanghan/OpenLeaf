@@ -1,40 +1,76 @@
 %% openleaf-knowledge.sty — knowledge macros for OpenLeaf (Spec §5.1)
 \NeedsTeXFormat{LaTeX2e}
-\ProvidesPackage{openleaf-knowledge}[2026/11/06 OpenLeaf Knowledge]
+\ProvidesPackage{openleaf-knowledge}[2026/11/07 OpenLeaf Knowledge]
 \RequirePackage{xcolor}
 \RequirePackage{mdframed}
 \RequirePackage{xspace}
 
 \makeatletter
+\newif\ifolv@incalc
+\olv@incalcfalse
 \providecommand{\olv@unknown}[1]{\textbf{\textcolor{red}{??#1}}}
+\providecommand{\olv@builtonbody}{%
+  \textit{No facts or knowledge items referenced yet.}%
+}
 
+% In prose: formatted display + marker. Inside a calculation: raw number (math-safe).
 \newcommand{\fact}[1]{%
-  \@ifundefined{olv@fact@#1}{\olv@unknown{#1}}{\csname olv@fact@#1\endcsname}%
-  \textsuperscript{\scriptsize f}\xspace}
+  \@ifundefined{olv@fact@#1}{\olv@unknown{#1}}{%
+    \ifolv@incalc
+      \csname olv@factnum@#1\endcsname
+    \else
+      \csname olv@fact@#1\endcsname
+      \textsuperscript{\scriptsize f}\xspace
+    \fi
+  }%
+}
 \newcommand{\kn}[2][]{%
   \def\olv@tmp{#1}%
-  \ifx\olv@tmp\@empty
-    \@ifundefined{olv@kn@#2@primary}{\olv@unknown{#2}}{\csname olv@kn@#2@primary\endcsname}%
+  \ifolv@incalc
+    \ifx\olv@tmp\@empty
+      \@ifundefined{olv@knnum@#2@primary}{\olv@unknown{#2}}{\csname olv@knnum@#2@primary\endcsname}%
+    \else
+      \@ifundefined{olv@knnum@#2@#1}{\olv@unknown{#2.#1}}{\csname olv@knnum@#2@#1\endcsname}%
+    \fi
   \else
-    \@ifundefined{olv@kn@#2@#1}{\olv@unknown{#2.#1}}{\csname olv@kn@#2@#1\endcsname}%
+    \ifx\olv@tmp\@empty
+      \@ifundefined{olv@kn@#2@primary}{\olv@unknown{#2}}{\csname olv@kn@#2@primary\endcsname}%
+    \else
+      \@ifundefined{olv@kn@#2@#1}{\olv@unknown{#2.#1}}{\csname olv@kn@#2@#1\endcsname}%
+    \fi
+    \textsuperscript{\scriptsize k}\xspace
   \fi
-  \textsuperscript{\scriptsize k}\xspace}
+}
 \newcommand{\knref}[1]{%
   \@ifundefined{olv@knref@#1}{\olv@unknown{#1}}{\csname olv@knref@#1\endcsname}\xspace}
 \newcommand{\out}[1]{%
-  \@ifundefined{olv@out@#1}{\olv@unknown{#1}}{\csname olv@out@#1\endcsname}\xspace}
+  \@ifundefined{olv@out@#1}{\olv@unknown{#1}}{%
+    \ifolv@incalc
+      \@ifundefined{olv@outnum@#1}{\csname olv@out@#1\endcsname}{\csname olv@outnum@#1\endcsname}%
+    \else
+      \csname olv@out@#1\endcsname
+    \fi
+  }\xspace
+}
 
 \newcounter{olvstep}
 \newenvironment{knowledge}[2][]{%
   \section*{#2}%
 }{%
   \par\vspace{0.75em}%
-  {\small\itshape Built on facts and knowledge referenced above.}%
+  {\small\textbf{Built on.}\par\olv@builtonbody}%
 }
+% Calculation body is typeset in math mode so \times, \frac, ^ work on a fresh compile.
 \newenvironment{calculation}[2][]{%
   \refstepcounter{olvstep}%
-  \par\smallskip\noindent\textbf{\theolvstep.\ Calculation.}\ #2\ $=\ $\ignorespaces
-}{\par\smallskip}
+  \par\smallskip\noindent\textbf{\theolvstep.\ Calculation.}\ #2\ ${}={}$%
+  \olv@incalctrue
+  $%
+}{%
+  $%
+  \olv@incalcfalse
+  \par\smallskip
+}
 \newenvironment{assumption}[1][]{%
   \refstepcounter{olvstep}%
   \par\smallskip\noindent\textbf{\theolvstep.\ Assumption.}\ignorespaces

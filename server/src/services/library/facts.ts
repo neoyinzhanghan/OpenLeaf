@@ -68,6 +68,10 @@ export const PaperFactSchema = z.object({
   unit: z.string().default(""),
   createdBy: FactCreatedBySchema.default({ kind: "human", name: "" }),
   sourceKind: z.enum(["pdf", "web"]).default("pdf"),
+  /** Set when a human rejects; cleared on confirm / unreviewed. */
+  rejectReason: z.string().max(2000).optional(),
+  /** Last status before the most recent status change — enables Undo. */
+  previousStatus: FactStatusSchema.optional(),
 });
 
 export type PaperFact = z.infer<typeof PaperFactSchema>;
@@ -108,6 +112,8 @@ export const PatchFactInputSchema = z.object({
   input: z.string().min(1).max(4000).optional(),
   answer: z.string().max(8000).optional(),
   status: z.enum(["confirmed", "rejected", "unreviewed"]).optional(),
+  /** Required (non-empty) when status becomes rejected — SPEC / overnight. */
+  rejectReason: z.string().max(2000).optional(),
   /** Replace highlights (human tag). Empty array = untag. Auto-confirms when non-empty. */
   highlights: z.array(FactHighlightSchema).optional(),
   /** Bounding box → highlights (human tag, auto-confirm). */
@@ -122,6 +128,8 @@ export const PatchFactInputSchema = z.object({
    * answer/value/unit/highlights in the same request.
    */
   confirmWithContent: z.boolean().optional(),
+  /** Restore previousStatus (Undo confirm/reject). */
+  undoStatus: z.boolean().optional(),
 });
 export type PatchFactInput = z.infer<typeof PatchFactInputSchema>;
 
@@ -463,17 +471,47 @@ export async function updateFact(
       (humanRetag && parsed.highlights !== undefined))
   ) {
     if (prev.status === "confirmed") next = { ...next, status: "unreviewed" };
+  } else if (parsed.undoStatus) {
+    if (!prev.previousStatus) throw httpError(400, "Nothing to undo for this fact");
+    next = {
+      ...next,
+      status: prev.previousStatus,
+      previousStatus: prev.status,
+      rejectReason: prev.previousStatus === "rejected" ? prev.rejectReason : undefined,
+    };
   } else if (parsed.status !== undefined) {
     if (prev.status === "not_found" && parsed.status !== "unreviewed") {
       throw httpError(400, "A not-found fact cannot be confirmed or rejected");
     }
-    next = { ...next, status: parsed.status };
+    if (parsed.status === "rejected") {
+      const reason = (parsed.rejectReason ?? "").trim();
+      if (!reason) throw httpError(400, "A reason is required when rejecting a fact");
+      next = {
+        ...next,
+        status: "rejected",
+        rejectReason: reason,
+        previousStatus: prev.status,
+      };
+    } else {
+      next = {
+        ...next,
+        status: parsed.status,
+        previousStatus: prev.status,
+        rejectReason: parsed.status === "confirmed" || parsed.status === "unreviewed" ? undefined : next.rejectReason,
+      };
+    }
   }
 
-  if (keepConfirmed) next = { ...next, status: "confirmed" };
+  if (keepConfirmed) next = { ...next, status: "confirmed", rejectReason: undefined };
 
   file.facts[idx] = PaperFactSchema.parse(next);
   await writeFile(citekey, file);
+  try {
+    const { invalidateKnowledgeGraph } = await import("../knowledge/graph.js");
+    invalidateKnowledgeGraph();
+  } catch {
+    /* optional */
+  }
   return withDisplay(citekey, file.facts[idx]!);
 }
 

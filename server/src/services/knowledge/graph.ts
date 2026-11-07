@@ -217,81 +217,121 @@ export async function impactOf(nodeId: string): Promise<{
 export async function knowledgeInbox(): Promise<{
   groups: Array<{
     title: string;
-    kind: "agent" | "changed" | "flagged";
+    kind: "agent" | "changed" | "flagged" | "steps" | "rejected";
     items: Array<{
       type: "fact" | "step" | "knowledge" | "project";
       id: string;
       label: string;
       status: Status;
+      why?: string[];
       citekey?: string;
       factId?: string;
+      projectId?: string;
+      stepId?: string;
       createdBy?: string;
     }>;
   }>;
+  /** Total items that need the owner's attention (matches nav badge). */
+  count: number;
 }> {
-  const facts = await listAllFacts({ status: "unreviewed", skipDisplay: true });
-  const byAgent = new Map<string, typeof facts>();
-  const other: typeof facts = [];
-  for (const f of facts) {
+  type InboxItem = Awaited<ReturnType<typeof knowledgeInbox>>["groups"][number]["items"][number];
+  const groups: Awaited<ReturnType<typeof knowledgeInbox>>["groups"] = [];
+  const seen = new Set<string>();
+  const pushGroup = (
+    title: string,
+    kind: Awaited<ReturnType<typeof knowledgeInbox>>["groups"][number]["kind"],
+    items: InboxItem[],
+  ) => {
+    const unique = items.filter((it) => {
+      const key = `${it.type}:${it.id}:${it.factId ?? ""}:${it.stepId ?? ""}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    if (unique.length) groups.push({ title, kind, items: unique });
+  };
+
+  const unreviewed = await listAllFacts({ status: "unreviewed", skipDisplay: true });
+  const rejectedFacts = await listAllFacts({ status: "rejected", skipDisplay: true });
+  const byAgent = new Map<string, typeof unreviewed>();
+  const otherFacts: typeof unreviewed = [];
+  for (const f of unreviewed) {
     if (f.createdBy?.kind === "agent" && f.createdBy.name) {
       const list = byAgent.get(f.createdBy.name) ?? [];
       list.push(f);
       byAgent.set(f.createdBy.name, list);
-    } else other.push(f);
+    } else otherFacts.push(f);
   }
-  const groups: Awaited<ReturnType<typeof knowledgeInbox>>["groups"] = [];
   for (const [name, list] of byAgent) {
-    groups.push({
-      title: `Agent: ${name}`,
-      kind: "agent",
-      items: list.map((f) => ({
+    pushGroup(
+      `From agent: ${name}`,
+      "agent",
+      list.map((f) => ({
         type: "fact" as const,
         id: f.key || f.id,
         label: f.input,
-        status: "needs-review" as const,
+        status: "unreviewed" as const,
         citekey: f.citekey,
         factId: f.id,
         createdBy: name,
       })),
-    });
+    );
   }
-  if (other.length) {
-    groups.push({
-      title: "Unreviewed facts",
-      kind: "changed",
-      items: other.map((f) => ({
-        type: "fact" as const,
-        id: f.key || f.id,
-        label: f.input,
-        status: "needs-review" as const,
-        citekey: f.citekey,
-        factId: f.id,
-      })),
-    });
-  }
+  pushGroup(
+    "Unreviewed facts",
+    "changed",
+    otherFacts.map((f) => ({
+      type: "fact" as const,
+      id: f.key || f.id,
+      label: f.input,
+      status: "unreviewed" as const,
+      citekey: f.citekey,
+      factId: f.id,
+    })),
+  );
+  pushGroup(
+    "Rejected facts",
+    "rejected",
+    rejectedFacts.map((f) => ({
+      type: "fact" as const,
+      id: f.key || f.id,
+      label: f.input,
+      status: "rejected" as const,
+      why: ["rejected by reviewer"],
+      citekey: f.citekey,
+      factId: f.id,
+    })),
+  );
+
   try {
     const { listProjects, readProjectConfig } = await import("../projectFs.js");
     const { listStepStatuses } = await import("./review.js");
-    const changedSteps: Array<{
-      type: "step";
-      id: string;
-      label: string;
-      status: Status;
-    }> = [];
+    const needReviewSteps: InboxItem[] = [];
+    const changedSteps: InboxItem[] = [];
     const projects = await listProjects();
     await Promise.all(
       projects.map(async (p) => {
         try {
           const cfg = await readProjectConfig(p.id);
           if (cfg.kind !== "knowledge") return;
+          const title = cfg.name || p.name;
           for (const s of await listStepStatuses(p.id)) {
+            if (s.status !== "needs-review" && s.status !== "flagged" && s.status !== "rejected") {
+              continue;
+            }
+            const item: InboxItem = {
+              type: "step",
+              id: `${p.id}:${s.id}`,
+              label: `${title} · ${humanStepLabel(s.id)}`,
+              status: s.status,
+              why: s.why,
+              projectId: p.id,
+              stepId: s.id,
+            };
             if (s.status === "needs-review" && s.reviewedText && s.reviewedText !== s.body) {
-              changedSteps.push({
-                type: "step",
-                id: `${p.id}:${s.id}`,
-                label: `${cfg.name || p.name} · ${s.id}`,
-                status: "needs-review",
-              });
+              changedSteps.push(item);
+            } else {
+              needReviewSteps.push(item);
             }
           }
         } catch {
@@ -299,28 +339,43 @@ export async function knowledgeInbox(): Promise<{
         }
       }),
     );
-    if (changedSteps.length) {
-      groups.push({ title: "Changed outside OpenLeaf", kind: "changed", items: changedSteps });
-    }
+    pushGroup("Steps needing review", "steps", needReviewSteps);
+    pushGroup("Changed outside OpenLeaf", "changed", changedSteps);
   } catch {
     /* ignore */
   }
 
   const graph = await buildKnowledgeGraph();
-  const flagged = graph.nodes.filter((n) => n.status === "flagged" || n.status === "rejected");
-  if (flagged.length) {
-    groups.push({
-      title: "Flagged",
-      kind: "flagged",
-      items: flagged.map((n) => ({
-        type: n.kind === "knowledge" ? "knowledge" : n.kind === "project" ? "project" : "fact",
-        id: n.id,
-        label: n.name,
-        status: n.status,
-      })),
-    });
-  }
-  return { groups };
+  const flagged = graph.nodes.filter(
+    (n) =>
+      (n.kind === "knowledge" || n.kind === "project") &&
+      (n.status === "flagged" || n.status === "rejected" || n.status === "needs-review"),
+  );
+  pushGroup(
+    "Flagged knowledge & papers",
+    "flagged",
+    flagged.map((n) => ({
+      type: n.kind === "knowledge" ? ("knowledge" as const) : ("project" as const),
+      id: n.id,
+      label: n.name,
+      status: n.status,
+      why: n.why,
+      projectId: n.kind === "project" ? n.id.replace(/^proj:/, "") : undefined,
+    })),
+  );
+
+  const count = groups.reduce((n, g) => n + g.items.length, 0);
+  return { groups, count };
+}
+
+function humanStepLabel(stepId: string): string {
+  const [kind, ...rest] = stepId.split(":");
+  const name = rest.join(":") || stepId;
+  if (kind === "calculation") return `Calculation · ${name}`;
+  if (kind === "assumption") return `Assumption · ${name}`;
+  if (kind === "judgment") return `Judgment · ${name}`;
+  if (stepId === "conclusion") return "Conclusion";
+  return stepId;
 }
 
 export async function knowledgeSearch(q: string, limit = 40): Promise<IndexNode[]> {

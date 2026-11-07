@@ -16,6 +16,7 @@ import type {
   PaperRecord,
 } from "../api/types";
 import { libraryPaperUrl } from "../latex/libraryLink";
+import { KnowledgeImpactPanel } from "./KnowledgeImpactPanel";
 import { PdfViewer, type PdfAnnotationMark, type PdfHighlight } from "./PdfViewer";
 import { SplitPane } from "./SplitPane";
 
@@ -314,6 +315,8 @@ export function LibraryFactsView({ papers, onBack, onError }: Props) {
   );
   const [mobilePane, setMobilePane] = useState<"pdf" | "queue">("queue");
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [impactNode, setImpactNode] = useState<string | null>(null);
+  const [undoFact, setUndoFact] = useState<{ citekey: string; id: string; label: string } | null>(null);
   const rowRefs = useRef<Map<string, HTMLLIElement>>(new Map());
   const paperByKey = useMemo(() => new Map(papers.map((p) => [p.citekey, p])), [papers]);
 
@@ -587,9 +590,25 @@ export function LibraryFactsView({ papers, onBack, onError }: Props) {
   const decide = async (fact: LibraryFact, next: "confirmed" | "rejected" | "unreviewed") => {
     const key = factKey(fact);
     if (pendingIds.has(key) || fact.status === next) return;
+    let rejectReason: string | undefined;
+    if (next === "rejected") {
+      const reason = window.prompt("Why are you rejecting this fact? (required)", fact.rejectReason || "");
+      if (reason == null) return;
+      if (!reason.trim()) {
+        onError?.("A reason is required when rejecting a fact.");
+        return;
+      }
+      rejectReason = reason.trim();
+    }
     setPendingIds((s) => new Set(s).add(key));
     const prevStatus = fact.status;
-    setRawFacts((list) => list.map((f) => (factKey(f) === key ? { ...f, status: next } : f)));
+    setRawFacts((list) =>
+      list.map((f) =>
+        factKey(f) === key
+          ? { ...f, status: next, rejectReason: next === "rejected" ? rejectReason : undefined }
+          : f,
+      ),
+    );
     if (status === "unreviewed" && next !== "unreviewed") {
       const idx = visibleFacts.findIndex((f) => factKey(f) === key);
       const remaining = visibleFacts.filter((f) => factKey(f) !== key);
@@ -601,7 +620,14 @@ export function LibraryFactsView({ papers, onBack, onError }: Props) {
       }
     }
     try {
-      await patchLibraryFact(fact.citekey, fact.id, { status: next });
+      await patchLibraryFact(fact.citekey, fact.id, {
+        status: next,
+        ...(rejectReason ? { rejectReason } : {}),
+      });
+      setUndoFact({ citekey: fact.citekey, id: fact.id, label: fact.input });
+      if (next === "rejected" && fact.key) {
+        setImpactNode(`fact:${fact.key}`);
+      }
     } catch (err) {
       setRawFacts((list) => list.map((f) => (factKey(f) === key ? { ...f, status: prevStatus } : f)));
       onError?.(err instanceof Error ? err.message : "Could not update fact");
@@ -611,6 +637,20 @@ export function LibraryFactsView({ papers, onBack, onError }: Props) {
         n.delete(key);
         return n;
       });
+    }
+  };
+
+  const undoLast = async () => {
+    if (!undoFact) return;
+    try {
+      const res = await patchLibraryFact(undoFact.citekey, undoFact.id, { undoStatus: true });
+      setRawFacts((list) =>
+        list.map((f) => (f.citekey === undoFact.citekey && f.id === undoFact.id ? { ...f, ...res.fact } : f)),
+      );
+      setUndoFact(null);
+      setImpactNode(null);
+    } catch (err) {
+      onError?.(err instanceof Error ? err.message : "Could not undo");
     }
   };
 
@@ -786,7 +826,7 @@ export function LibraryFactsView({ papers, onBack, onError }: Props) {
             <>
               <button
                 type="button"
-                className="btn btn-primary library-facts-confirm"
+                className="btn btn-primary library-facts-confirm library-facts-decide"
                 disabled={pendingIds.has(factKey(activeFact)) || activeFact.status === "confirmed"}
                 onClick={() => void decide(activeFact, "confirmed")}
               >
@@ -794,15 +834,23 @@ export function LibraryFactsView({ papers, onBack, onError }: Props) {
               </button>
               <button
                 type="button"
-                className="btn btn-ghost library-facts-reject"
+                className="btn btn-danger library-facts-reject library-facts-decide"
                 disabled={pendingIds.has(factKey(activeFact)) || activeFact.status === "rejected"}
                 onClick={() => void decide(activeFact, "rejected")}
               >
                 Reject
               </button>
+              {activeFact.previousStatus ? (
+                <button type="button" className="btn btn-quiet" onClick={() => void undoLast()}>
+                  Undo
+                </button>
+              ) : null}
             </>
           ) : null}
         </div>
+        {activeFact.rejectReason ? (
+          <p className="library-facts-reject-reason">Rejected: {activeFact.rejectReason}</p>
+        ) : null}
         {evidenceFact?.highlights?.[0]?.quote ? (
           <p className="library-facts-evidence-quote">
             {(() => {
@@ -933,12 +981,27 @@ export function LibraryFactsView({ papers, onBack, onError }: Props) {
       </div>
       <ul className="library-facts-queue">
         {!visibleFacts.length ? (
-          <li className="muted library-facts-empty">
-            {busy
-              ? "Loading facts…"
-              : status === "unreviewed"
-                ? "No unreviewed facts left."
-                : "No facts match these filters."}
+          <li className="library-facts-empty empty-hint-card">
+            {busy ? (
+              <p className="muted">Loading facts…</p>
+            ) : status === "unreviewed" ? (
+              <>
+                <strong>Nothing left to check here</strong>
+                <p>
+                  Every fact in this filter is confirmed or rejected. Switch to{" "}
+                  <button type="button" className="btn btn-quiet" onClick={() => patchParams({ status: "all" })}>
+                    All statuses
+                  </button>{" "}
+                  to browse the library, or open the{" "}
+                  <Link to="/review">Review inbox</Link> for steps and flagged items.
+                </p>
+              </>
+            ) : (
+              <>
+                <strong>No facts match these filters</strong>
+                <p>Clear the search or widen status / type to see more.</p>
+              </>
+            )}
           </li>
         ) : null}
         {groups
@@ -1200,6 +1263,18 @@ export function LibraryFactsView({ papers, onBack, onError }: Props) {
           />
         )}
       </div>
+      {undoFact ? (
+        <div className="library-facts-undo-bar" role="status">
+          <span>Updated “{undoFact.label}”.</span>
+          <button type="button" className="btn btn-quiet" onClick={() => void undoLast()}>
+            Undo
+          </button>
+          <button type="button" className="btn btn-ghost" onClick={() => setUndoFact(null)}>
+            Dismiss
+          </button>
+        </div>
+      ) : null}
+      <KnowledgeImpactPanel nodeId={impactNode} onClose={() => setImpactNode(null)} />
     </div>
   );
 }

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { describe, it } from "node:test";
 import {
+  collectUpstreamWhy,
   computeItemStatus,
   computeProjectStatus,
   computeStepStatus,
@@ -37,10 +38,52 @@ describe("status engine", () => {
     assert.ok(st.why.some((w) => /rejected/.test(w)));
   });
 
-  it("aggregates item and project status", () => {
-    assert.equal(computeItemStatus({ steps: [{ status: "reviewed" }], hasErrors: false }), "reviewed");
-    assert.equal(computeItemStatus({ steps: [{ status: "flagged" }], hasErrors: false }), "flagged");
-    assert.equal(computeProjectStatus(["reviewed", "flagged"]), "flagged");
-    assert.equal(computeProjectStatus(["confirmed", "reviewed"]), "up-to-date");
+  it("carries rejected-input why even when the step itself still needs review", () => {
+    const st = computeStepStatus({
+      id: "calculation:x",
+      textHash: hash("\\fact{fee}"),
+      review: null,
+      inputStatuses: [{ id: "fact:demo-fee-per-read", status: "rejected" }],
+    });
+    assert.equal(st.status, "needs-review");
+    assert.ok(st.why.some((w) => /fact:demo-fee-per-read rejected/.test(w)));
+    assert.ok(st.why.some((w) => /not reviewed yet/.test(w)));
+  });
+
+  it("aggregates item why from steps", () => {
+    const item = computeItemStatus({
+      steps: [
+        { status: "needs-review", why: ["not reviewed yet", "fact:fee rejected"] },
+        { status: "needs-review", why: ["not reviewed yet"] },
+      ],
+      hasErrors: false,
+    });
+    assert.equal(item.status, "needs-review");
+    assert.ok(item.why.some((w) => /fact:fee rejected/.test(w)));
+  });
+
+  it("flags a paper when upstream knowledge still needs review", () => {
+    const paper = computeProjectStatus(["needs-review"]);
+    assert.equal(paper.status, "flagged");
+    assert.ok(paper.why.some((w) => /unchecked/.test(w)));
+  });
+
+  it("flags a paper when upstream is rejected", () => {
+    const paper = computeProjectStatus(["reviewed", "rejected"]);
+    assert.equal(paper.status, "flagged");
+    assert.ok(paper.why.some((w) => /rejected/.test(w)));
+  });
+
+  it("is up-to-date only when every upstream is clean", () => {
+    assert.equal(computeProjectStatus(["confirmed", "reviewed"]).status, "up-to-date");
+    assert.equal(computeProjectStatus(["unreviewed"]).status, "flagged");
+  });
+
+  it("collectUpstreamWhy names unchecked inputs", () => {
+    const why = collectUpstreamWhy([
+      { id: "fact:a", status: "unreviewed" },
+      { id: "kn:b", status: "needs-review" },
+    ]);
+    assert.deepEqual(why, ["fact:a unchecked", "kn:b unchecked"]);
   });
 });

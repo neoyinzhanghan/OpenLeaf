@@ -12,12 +12,18 @@ import { getProjectsRootAbs } from "../../config.js";
 import { listKnowledgeItems } from "./items.js";
 import { parseKnowledge } from "./parse.js";
 import { readProjectConfig } from "../projectFs.js";
-import { computeFactStatus, computeItemStatus, computeProjectStatus, type Status } from "./status.js";
+import {
+  computeFactStatus,
+  computeItemStatus,
+  computeProjectStatus,
+  computeStepStatus,
+  type Status,
+} from "./status.js";
 import type { GraphEdge } from "./graph.js";
 import type { IndexNode } from "./graphIndex.js";
 
-/** Bump when derived node labels change so the Kùzu cache rebuilds. */
-const LABEL_SCHEMA = "fact-label-v2";
+/** Bump when derived node labels / status rules change so the Kùzu cache rebuilds. */
+const LABEL_SCHEMA = "fact-label-v3-truth";
 
 export type ScanPayload = {
   stamp: string;
@@ -154,6 +160,28 @@ export async function scanKnowledgeUniverse(): Promise<ScanPayload> {
     edges.push({ from: `src:${fact.citekey}`, to: id, flagged: status === "rejected" });
   }
 
+  const { hashStepBody, readReviewFile } = await import("./review.js");
+  const factStatusByKey = new Map(
+    allFacts.filter((f) => f.key).map((f) => [f.key!, computeFactStatus(f.status)]),
+  );
+
+  /** First pass: resolve steps with fact inputs; kn→kn filled in a second pass. */
+  type KnDraft = {
+    id: string;
+    itemId: string;
+    title: string;
+    collection: string;
+    inputs: string[];
+    hasErrors: boolean;
+    stepDrafts: Array<{
+      id: string;
+      textHash: string;
+      review: Parameters<typeof computeStepStatus>[0]["review"];
+      inputStatuses: Array<{ id: string; status: Status; valueChanged?: boolean }>;
+    }>;
+  };
+  const knDrafts: KnDraft[] = [];
+
   for (const { item, parsed } of knParsed) {
     const collection = item.collection || "unsorted";
     const inputSet = new Set<string>();
@@ -164,28 +192,107 @@ export async function scanKnowledgeUniverse(): Promise<ScanPayload> {
       }
     }
     const inputs = [...inputSet];
-    const status = computeItemStatus({
-      steps: (parsed?.steps ?? []).map(() => ({ status: "needs-review" as Status })),
-      hasErrors: (parsed?.errors.length ?? 0) > 0,
-    });
-    const id = `kn:${item.knowledgeId}`;
-    push({
-      id,
-      kind: "knowledge",
-      name: item.title,
-      status,
-      why: [],
+    let reviewFile: Awaited<ReturnType<typeof readReviewFile>> = { version: 1, steps: {} };
+    try {
+      reviewFile = await readReviewFile(item.id);
+    } catch {
+      /* missing review is fine */
+    }
+    const stepDrafts =
+      parsed?.steps.map((step) => {
+        const textHash = hashStepBody(step.body);
+        const rec = reviewFile.steps[step.id];
+        const inputStatuses = step.refs.map((r) => {
+          if (r.kind === "fact" && r.key) {
+            const snap = rec?.inputs?.[`fact:${r.key}`];
+            const f = allFacts.find((x) => x.key === r.key);
+            return {
+              id: `fact:${r.key}`,
+              status: (factStatusByKey.get(r.key) ?? "unreviewed") as Status,
+              valueChanged: snap != null && f != null && snap.value !== f.value,
+            };
+          }
+          if ((r.kind === "kn" || r.kind === "knref") && r.id) {
+            return { id: `kn:${r.id}`, status: "needs-review" as Status };
+          }
+          return { id: "unknown", status: "needs-review" as Status };
+        });
+        return {
+          id: step.id,
+          textHash,
+          review: rec
+            ? { hash: rec.hash, verdict: rec.verdict, inputs: rec.inputs }
+            : null,
+          inputStatuses,
+        };
+      }) ?? [];
+    knDrafts.push({
+      id: `kn:${item.knowledgeId}`,
+      itemId: item.id,
+      title: item.title,
       collection,
       inputs,
+      hasErrors: (parsed?.errors.length ?? 0) > 0,
+      stepDrafts,
+    });
+  }
+
+  const finalizeKn = (draft: KnDraft) => {
+    const stepResults = draft.stepDrafts.map((s) => computeStepStatus(s));
+    const { status, why } = computeItemStatus({
+      steps: stepResults,
+      hasErrors: draft.hasErrors,
+    });
+    return { status, why, stepResults };
+  };
+
+  // Pass 1
+  for (const draft of knDrafts) {
+    const { status, why } = finalizeKn(draft);
+    push({
+      id: draft.id,
+      kind: "knowledge",
+      name: draft.title,
+      status,
+      why,
+      collection: draft.collection,
+      inputs: draft.inputs,
       outputs: [],
       updatedAt: generatedAt,
       inTree: true,
-      pathRef: `projects/${item.id}`,
-      knowledgeId: item.knowledgeId,
-      projectId: item.id,
+      pathRef: `projects/${draft.itemId}`,
+      knowledgeId: draft.id.slice(3),
+      projectId: draft.itemId,
     });
-    for (const from of inputs) {
-      edges.push({ from, to: id, flagged: false });
+    for (const from of draft.inputs) {
+      edges.push({
+        from,
+        to: draft.id,
+        flagged: status === "flagged" || status === "rejected" || status === "needs-review",
+      });
+    }
+  }
+
+  // Pass 2: fill kn→kn input statuses from pass-1 results, recompute dependents.
+  for (const draft of knDrafts) {
+    let changed = false;
+    for (const step of draft.stepDrafts) {
+      for (const input of step.inputStatuses) {
+        if (input.id.startsWith("kn:")) {
+          const up = byId.get(input.id);
+          if (up && input.status !== up.status) {
+            input.status = up.status;
+            changed = true;
+          }
+        }
+      }
+    }
+    if (!changed) continue;
+    const { status, why } = finalizeKn(draft);
+    const node = byId.get(draft.id);
+    if (node) {
+      node.status = status;
+      node.why = why;
     }
   }
 
@@ -215,16 +322,16 @@ export async function scanKnowledgeUniverse(): Promise<ScanPayload> {
           }
           const existing = inputs.filter((id) => byId.has(id));
           const collection = cfg.collection || "papers";
-          const status = existing.length
-            ? computeProjectStatus(existing.map((id) => byId.get(id)?.status ?? "up-to-date"))
-            : ("up-to-date" as Status);
+          const projectStatus = existing.length
+            ? computeProjectStatus(existing.map((id) => byId.get(id)?.status ?? "needs-review"))
+            : ({ status: "up-to-date" as Status, why: [] as string[] });
           const id = `proj:${name}`;
           push({
             id,
             kind: "project",
             name: cfg.name || name.replace(/_/g, " "),
-            status,
-            why: status === "flagged" ? ["depends on flagged or rejected upstream"] : [],
+            status: projectStatus.status,
+            why: projectStatus.why,
             collection,
             inputs: existing,
             outputs: [],
@@ -234,7 +341,7 @@ export async function scanKnowledgeUniverse(): Promise<ScanPayload> {
             projectId: name,
           });
           for (const from of existing) {
-            edges.push({ from, to: id, flagged: status === "flagged" });
+            edges.push({ from, to: id, flagged: projectStatus.status === "flagged" });
           }
         } catch {
           /* skip */

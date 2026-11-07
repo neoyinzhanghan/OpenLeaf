@@ -254,18 +254,39 @@ export function formatKnowledgeNumber(
   return `${formatSig(v, digits)}${suffix}`;
 }
 
+/**
+ * Human-readable significant figures. Prefer thousands separators and
+ * compact million/billion labels over scientific notation (SPEC §5.4).
+ */
 function formatSig(n: number, digits: number): string {
   if (!Number.isFinite(n)) return "??";
   const abs = Math.abs(n);
-  let s: string;
-  if (abs !== 0 && (abs >= 10 ** digits || abs < 10 ** -(digits - 1))) {
-    s = n.toExponential(Math.max(0, digits - 1));
-  } else {
-    s = n.toPrecision(digits);
+  const sign = n < 0 ? "-" : "";
+
+  if (abs >= 1_000_000_000) {
+    return `${sign}${trimZeros((abs / 1_000_000_000).toPrecision(digits))} billion`;
   }
-  // thousands separators for large ints
-  if (/^-?\d+(\.0+)?$/.test(s) && Math.abs(n) >= 1000) {
-    return Math.round(n).toLocaleString("en-US");
+  if (abs >= 1_000_000) {
+    return `${sign}${trimZeros((abs / 1_000_000).toPrecision(digits))} million`;
+  }
+  if (abs >= 1000) {
+    const rounded = Number(abs.toPrecision(digits));
+    return `${sign}${Math.round(rounded).toLocaleString("en-US")}`;
+  }
+  if (abs === 0) return "0";
+  if (abs < 10 ** -(digits - 1) && abs > 0) {
+    // Very small but still readable with fixed decimals rather than 1.00e-5.
+    return `${sign}${abs.toFixed(Math.min(6, digits + 2)).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "")}`;
+  }
+  return `${sign}${trimZeros(abs.toPrecision(digits))}`;
+}
+
+function trimZeros(s: string): string {
+  if (/e/i.test(s)) {
+    // Fallback only for pathological precision; keep short.
+    const n = Number(s);
+    if (!Number.isFinite(n)) return s;
+    return trimZeros(n.toPrecision(3));
   }
   return s.replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
 }

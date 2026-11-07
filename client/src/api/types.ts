@@ -102,6 +102,8 @@ export type PaperFact = {
   unit?: string;
   createdBy?: FactCreatedBy;
   sourceKind?: "pdf" | "web";
+  rejectReason?: string;
+  previousStatus?: FactStatus;
 };
 
 export type LibraryFact = PaperFact & {

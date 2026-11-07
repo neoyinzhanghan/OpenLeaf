@@ -1230,10 +1230,13 @@ projectsRouter.post("/:id/knowledge/review", async (req, res) => {
         stepId: z.string().min(1),
         verdict: z.enum(["reviewed", "rejected", "clear"]),
         by: z.string().optional(),
+        force: z.boolean().optional(),
       })
       .parse(req.body ?? {});
     const { reviewStep } = await import("../services/knowledge/review.js");
-    const review = await reviewStep(req.params.id, body.stepId, body.verdict, body.by ?? "");
+    const review = await reviewStep(req.params.id, body.stepId, body.verdict, body.by ?? "", {
+      force: body.force,
+    });
     res.json({ review });
   } catch (err) {
     res.status(statusOf(err)).json(errorBody(err));

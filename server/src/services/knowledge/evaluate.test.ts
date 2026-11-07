@@ -47,6 +47,13 @@ describe("formatKnowledgeNumber", () => {
     assert.equal(formatKnowledgeNumber(0.88, { unit: "%" }), "88%");
     assert.match(formatKnowledgeNumber(412.5, { unit: "USD" }), /^\$/);
   });
+
+  it("uses human compact forms instead of scientific notation", () => {
+    assert.equal(formatKnowledgeNumber(100_000), "100,000");
+    assert.match(formatKnowledgeNumber(41_250_000, { unit: "USD" }), /\$41\.3 million|\$41\.2 million|\$41 million/);
+    assert.doesNotMatch(formatKnowledgeNumber(41_250_000), /e\+/i);
+    assert.doesNotMatch(formatKnowledgeNumber(100_000), /e\+/i);
+  });
 });
 
 describe("evaluateKnowledgeGraph", () => {

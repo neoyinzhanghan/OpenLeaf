@@ -3,6 +3,16 @@
  */
 import { formatKnowledgeNumber } from "./evaluate.js";
 
+export type ValuesFileBuiltOn = {
+  kind: "fact" | "knowledge";
+  /** Fact statement or knowledge title. */
+  label: string;
+  /** Display value (already formatted). */
+  value: string;
+  /** Source title, page, URL, or saved date line. */
+  sourceLine: string;
+};
+
 export type ValuesFileInput = {
   facts: Array<{ key: string; answer: string; value: number | null; unit: string }>;
   knowledge: Array<{
@@ -13,10 +23,17 @@ export type ValuesFileInput = {
     unit?: string;
   }>;
   localOuts: Record<string, number>;
+  /** Ordered "Built on" entries for this compile's main item/paper. */
+  builtOn?: ValuesFileBuiltOn[];
 };
 
-function macroName(...parts: string[]): string {
-  return parts.map((p) => p.replace(/[^a-zA-Z0-9]/g, "")).join("@");
+function texNum(n: number): string {
+  if (!Number.isFinite(n)) return "0";
+  // Avoid scientific notation in TeX macros; plain decimal is safest in math mode.
+  if (Math.abs(n) >= 1e6 || (Math.abs(n) > 0 && Math.abs(n) < 1e-4)) {
+    return n.toFixed(6).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
+  }
+  return String(n);
 }
 
 export function renderValuesFile(input: ValuesFileInput): string {
@@ -25,7 +42,7 @@ export function renderValuesFile(input: ValuesFileInput): string {
     const display =
       f.answer?.trim() ||
       (f.value != null ? formatKnowledgeNumber(f.value, { unit: f.unit }) : `??${f.key}`);
-    const num = f.value != null ? String(f.value) : "0";
+    const num = f.value != null ? texNum(f.value) : "0";
     lines.push(`\\expandafter\\def\\csname olv@fact@${f.key}\\endcsname{${escapeTex(display)}}`);
     lines.push(`\\expandafter\\def\\csname olv@factnum@${f.key}\\endcsname{${num}}`);
   }
@@ -35,10 +52,16 @@ export function renderValuesFile(input: ValuesFileInput): string {
     lines.push(
       `\\expandafter\\def\\csname olv@kn@${k.knowledgeId}@primary\\endcsname{${escapeTex(primary)}}`,
     );
+    lines.push(
+      `\\expandafter\\def\\csname olv@knnum@${k.knowledgeId}@primary\\endcsname{${k.primary != null ? texNum(k.primary) : "0"}}`,
+    );
     lines.push(`\\expandafter\\def\\csname olv@knref@${k.knowledgeId}\\endcsname{${escapeTex(k.title)}}`);
     for (const [name, value] of Object.entries(k.outputs)) {
       lines.push(
         `\\expandafter\\def\\csname olv@kn@${k.knowledgeId}@${name}\\endcsname{${escapeTex(formatKnowledgeNumber(value))}}`,
+      );
+      lines.push(
+        `\\expandafter\\def\\csname olv@knnum@${k.knowledgeId}@${name}\\endcsname{${texNum(value)}}`,
       );
     }
   }
@@ -46,9 +69,25 @@ export function renderValuesFile(input: ValuesFileInput): string {
     lines.push(
       `\\expandafter\\def\\csname olv@out@${name}\\endcsname{${escapeTex(formatKnowledgeNumber(value))}}`,
     );
+    lines.push(`\\expandafter\\def\\csname olv@outnum@${name}\\endcsname{${texNum(value)}}`);
   }
+
+  if (input.builtOn && input.builtOn.length) {
+    const body = input.builtOn
+      .map((entry, i) => {
+        const head =
+          entry.kind === "fact"
+            ? `\\textbf{Fact.} ${escapeTex(entry.label)}`
+            : `\\textbf{Knowledge.} ${escapeTex(entry.label)}`;
+        return `${head} — ${escapeTex(entry.value)}. ${escapeTex(entry.sourceLine)}${i < input.builtOn!.length - 1 ? "\\\\" : ""}`;
+      })
+      .join("\n  ");
+    lines.push(`\\def\\olv@builtonbody{%`);
+    lines.push(`  ${body}`);
+    lines.push(`}`);
+  }
+
   lines.push("\\makeatother", "");
-  void macroName;
   return lines.join("\n");
 }
 
