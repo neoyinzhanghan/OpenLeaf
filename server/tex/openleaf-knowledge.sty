@@ -2,7 +2,6 @@
 \NeedsTeXFormat{LaTeX2e}
 \ProvidesPackage{openleaf-knowledge}[2026/11/07 OpenLeaf Knowledge]
 \RequirePackage{xcolor}
-\RequirePackage{mdframed}
 \RequirePackage{xspace}
 
 \makeatletter
@@ -80,10 +79,17 @@
   \par\smallskip\noindent\textbf{\theolvstep.\ Judgment call.}\ignorespaces
 }{\par\smallskip}
 \newcommand{\set}[2]{#2}
+% Use xcolor's \fcolorbox (already required) so CI's texlive-latex-recommended
+% is enough — mdframed lives in texlive-latex-extra and broke Ubuntu npm test.
 \newcommand{\conclusion}[1]{%
-  \begin{mdframed}[backgroundcolor=black!3,linewidth=0.4pt]
-  \textbf{Conclusion.}\ #1
-  \end{mdframed}}
+  \par\smallskip
+  \noindent\fcolorbox{black!25}{black!3}{%
+    \parbox{\dimexpr\linewidth-2\fboxsep-2\fboxrule\relax}{%
+      \textbf{Conclusion.}\ #1%
+    }%
+  }%
+  \par\smallskip
+}
 
 % Load values AFTER macros are defined. openleaf-values.tex ends with \makeatother;
 % if loaded earlier it would break \@ifundefined in the definitions above.
