@@ -388,58 +388,122 @@ ${texBody}
 await writeKnowledge(
   "us-medicare-ffs-heme-smear-reads",
   "US Medicare FFS heme smear reads (2024)",
-  `\\begin{knowledge}[result=services]{US Medicare FFS heme smear reads (2024)}
+  `\\begin{knowledge}[result=services]{How many Medicare smear-interpretation visits in 2024?}
+\\begin{assumption}[what-we-count]
+We count \\emph{physician interpretation of blood and bone-marrow smears} paid by
+Original Medicare fee-for-service (FFS) Part B in calendar year 2024.
+
+\\textbf{Terms.} \\emph{FFS} means Traditional Medicare pays each claim directly
+(not Medicare Advantage plans). \\emph{Part B} is the outpatient/physician part of
+Medicare. A \\emph{CPT code} (Current Procedural Terminology) is the billing code
+hospitals and labs use for a specific service.
+
+We use two CPT codes that match DeepHeme's near-term product:
+\\begin{itemize}
+  \\item CPT 85060 --- interpretation of a peripheral blood smear (PBS: a slide of
+        circulating blood cells).
+  \\item CPT 85097 --- interpretation of a bone-marrow smear (BMA: cells from a bone
+        marrow aspirate).
+\\end{itemize}
+We add the service counts for those two codes. We do \\emph{not} include Medicare
+Advantage, Medicaid, commercial insurance, cash-pay, or non-US care.
+\\end{assumption}
 \\begin{calculation}{services}
 \\fact{medicare-85097-services-2024} + \\fact{medicare-85060-services-2024}
 \\end{calculation}
-\\conclusion{About \\out{services} Medicare Part B blood and bone-marrow smear
-interpretation services in 2024 (CPT 85060 + 85097). Excludes Medicare Advantage,
-Medicaid, and commercial.}
+\\conclusion{In 2024, Original Medicare Part B paid for about \\out{services}
+smear-interpretation services under CPT 85060 and 85097 combined. That is the
+number of billable reads in this narrow slice of US care --- not patients, not
+hospitals, and not every US smear.}
 \\end{knowledge}`,
 );
 
 await writeKnowledge(
   "us-medicare-ffs-heme-smear-spend",
   "US Medicare FFS heme smear allowed spend (2024)",
-  `\\begin{knowledge}[result=spend]{US Medicare FFS heme smear allowed spend (2024)}
+  `\\begin{knowledge}[result=spend]{How much did Medicare allow for those smear reads in 2024?}
+\\begin{assumption}[allowed-vs-paid]
+We sum Medicare's \\emph{allowed amount} for CPT 85060 and CPT 85097 in 2024.
+The allowed amount is what Medicare says the service is worth before patient
+coinsurance; it is the standard public figure for volume $\\times$ price in CMS
+(Centers for Medicare \\& Medicaid Services) data. It is not DeepHeme's price, not
+a scanner sale, and not what a commercial insurer pays.
+\\end{assumption}
 \\begin{calculation}{spend}
 \\fact{medicare-85097-total-allowed-usd-2024} + \\fact{medicare-85060-total-allowed-usd-2024}
 \\end{calculation}
-\\conclusion{Medicare Part B allowed about \\out{spend} USD in 2024 for CPT 85097 +
-85060. This is a floor on reimbursement for the physician interpretation DeepHeme
-assists --- not scanner hardware, not commercial rates, not MA/Medicaid.}
+\\conclusion{Medicare Part B allowed about \\out{spend} USD in 2024 for interpreting
+blood and bone-marrow smears (CPT 85060 + 85097). Treat this as dollars attached to
+the physician read DeepHeme aims to assist --- a spending floor for that workflow
+under Original Medicare FFS only.}
 \\end{knowledge}`,
 );
 
 await writeKnowledge(
   "deephome-us-medicare-ffs-floor",
   "DeepHeme US Medicare FFS addressable floor (2024)",
-  `\\begin{knowledge}[result=floor]{DeepHeme US Medicare FFS addressable floor (2024)}
-\\begin{judgment}
-DeepHeme's near-term clinical product sits on smear interpretation (PBS + BMA),
-so the Medicare FFS allowed spend on CPT 85060 + 85097 is a conservative
-addressable floor --- not a software ASP, and not all-payer TAM.
+  `\\begin{knowledge}[result=floor]{What US Medicare dollars sit under DeepHeme's smear product?}
+\\begin{judgment}[why-this-floor]
+\\textbf{Question.} How large is the US pot of money tied to the clinical work
+DeepHeme helps with today --- reading blood and bone-marrow smears?
+
+\\textbf{Product link.} DeepHeme's near-term clinical product is software that
+assists pathologists interpreting \\emph{peripheral blood smears} (PBS) and
+\\emph{bone-marrow aspirate} (BMA) slides. Those reads are billed in the US mainly
+as CPT 85060 (blood) and CPT 85097 (marrow).
+
+\\textbf{Why Medicare FFS first.} Original Medicare fee-for-service (FFS) Part B
+publishes clear service counts and allowed dollars for those CPT codes. That makes
+it the cleanest measured starting point. It is deliberately narrow:
+\\begin{itemize}
+  \\item It covers only Traditional Medicare FFS --- not Medicare Advantage (MA),
+        Medicaid, or commercial plans.
+  \\item It covers only the physician interpretation fee --- not scanners, lab
+        processing, hospital facility fees, or DeepHeme's software price
+        (sometimes called ASP, average selling price).
+  \\item It is therefore a \\emph{floor} on addressable clinical spend for this
+        workflow, not a total addressable market (TAM) for all digital pathology.
+\\end{itemize}
 \\end{judgment}
 \\begin{calculation}{floor}
 \\kn{us-medicare-ffs-heme-smear-spend}
 \\end{calculation}
 \\begin{assumption}[all-payer-mult]
-Commercial and non-FFS payers typically reimburse pathology/lab above Medicare;
-RAND Hospital Price Transparency (2024) cites about $1.85\\times$ Medicare for
-Pathology and Laboratory. Apply that as a rough all-payer uplift on the Medicare
-floor only as sensitivity --- not as a measured DeepHeme TAM.
+\\textbf{Sensitivity only --- not a measured TAM.} Other US payers often reimburse
+pathology and laboratory services above Medicare rates. RAND's 2024 Hospital Price
+Transparency work reports commercial prices for Pathology and Laboratory around
+$1.85\\times$ Medicare. We multiply the Medicare floor by $1.85$ to sketch what
+``all US payers'' might look like if that ratio held everywhere.
+
+This uplift is an external benchmark, not DeepHeme revenue, not contracted rates,
+and not proof of willingness to pay for software. Use it only to bound upside
+above the Medicare floor.
 \\set{all-payer-mult}{1.85}
 \\end{assumption}
 \\begin{calculation}{all-payer-sensitivity}
 \\out{floor} * \\out{all-payer-mult}
 \\end{calculation}
-\\conclusion{Medicare FFS floor \\out{floor} USD (2024). All-payer sensitivity at
-$1.85\\times$ $\\approx$ \\out{all-payer-sensitivity} USD. Incidence context:
-$\\sim$\\fact{acs-2025-blood-cancer-cases} new US blood cancers/year (2025 ACS
-aggregate). Global digital pathology context:
-$\\sim$\\fact{digital-pathology-market-2024-usd-bn}~B USD in 2024 $\\to$
-$\\sim$\\fact{digital-pathology-market-2030-usd-bn}~B by 2030 (MarketsandMarkets)
---- much broader than DeepHeme.}
+\\begin{judgment}[context-not-tam]
+\\textbf{Two context numbers that are easy to confuse with this floor.}
+
+\\emph{Disease incidence.} The American Cancer Society estimates about
+\\fact{acs-2025-blood-cancer-cases} new US leukemia + lymphoma + myeloma cases in
+2025. That is how many people are newly diagnosed with those cancers --- not how
+many smear bills Medicare paid, and not dollars.
+
+\\emph{Digital pathology market.} Industry research (MarketsandMarkets) puts the
+\\emph{global} digital pathology market
+(scanners + software + services across all specialties) at about
+\\fact{digital-pathology-market-2024-usd-bn} billion USD in 2024, growing toward
+about \\fact{digital-pathology-market-2030-usd-bn} billion by 2030. That is a much
+larger, multi-product category. DeepHeme's smear-interpretation floor is a thin
+slice inside it --- do not quote the billion-dollar figure as DeepHeme's market.
+\\end{judgment}
+\\conclusion{For 2024, Original Medicare FFS allowed about \\out{floor} USD for the
+blood and bone-marrow smear reads DeepHeme assists (CPT 85060 + 85097). That is our
+conservative US addressable \\emph{floor}. A rough all-payer sensitivity at
+$1.85\\times$ Medicare is about \\out{all-payer-sensitivity} USD. Neither figure is
+DeepHeme revenue, scanner spend, or the full digital pathology market.}
 \\end{knowledge}`,
 );
 
