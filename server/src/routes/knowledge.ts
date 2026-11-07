@@ -79,6 +79,29 @@ knowledgeRouter.get("/neighborhood", async (req, res) => {
   }
 });
 
+knowledgeRouter.get("/search", async (req, res) => {
+  try {
+    const q = typeof req.query.q === "string" ? req.query.q : "";
+    const limitRaw = typeof req.query.limit === "string" ? Number(req.query.limit) : 40;
+    const limit = Number.isFinite(limitRaw) ? limitRaw : 40;
+    const { knowledgeSearch } = await import("../services/knowledge/graph.js");
+    res.json({ results: await knowledgeSearch(q, limit) });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+knowledgeRouter.get("/index-status", async (_req, res) => {
+  try {
+    const { knowledgeIndexStatus, buildKnowledgeGraph } = await import("../services/knowledge/graph.js");
+    // Ensure sync once so status reflects a live index.
+    await buildKnowledgeGraph();
+    res.json(knowledgeIndexStatus());
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
 knowledgeRouter.get("/inbox", async (_req, res) => {
   try {
     const { knowledgeInbox } = await import("../services/knowledge/graph.js");

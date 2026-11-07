@@ -31,3 +31,9 @@ Use `fact_propose` with `quotes[]` that appear **verbatim** in the source PDF te
 ## Checking
 
 `knowledge_check` parses and evaluates an item and returns errors/statuses. `knowledge_create` scaffolds a new item; then edit its `.tex` files directly.
+
+## Storage model
+
+- **Authoritative:** project folders, `library/papers/*/facts.json`, PDFs and web snapshots.
+- **Derived index:** local Kùzu DB at `library/.cache/knowledge.kuzu` for graph search / neighborhood. Safe to delete; it rebuilds on next Knowledge load.
+- Edit LaTeX and facts as files; do not hand-edit the `.kuzu` directory.

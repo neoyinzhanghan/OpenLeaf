@@ -26,6 +26,7 @@ import {
   getKnowledgeInbox,
   getKnowledgeNeighborhood,
   listKnowledgeItems,
+  searchKnowledgeIndex,
   type KnowledgeGraph,
   type KnowledgeGraphEdge,
   type KnowledgeGraphNode,
@@ -1011,19 +1012,62 @@ export function KnowledgePage() {
     }
   };
 
+  const [indexHits, setIndexHits] = useState<KnowledgeGraphNode[]>([]);
+
+  useEffect(() => {
+    const needle = q.trim();
+    if (!needle) {
+      setIndexHits([]);
+      return;
+    }
+    let cancelled = false;
+    const t = window.setTimeout(() => {
+      void searchKnowledgeIndex(needle, 24)
+        .then((res) => {
+          if (cancelled) return;
+          setIndexHits(
+            res.results.map((r) => ({
+              id: r.id,
+              kind: r.kind as KnowledgeGraphNode["kind"],
+              name: r.name,
+              status: (r.status as KnowledgeStatus) || "unreviewed",
+              why: [],
+              collection: "unsorted",
+              note: r.note,
+              inputs: [],
+              outputs: [],
+              updatedAt: "",
+            })),
+          );
+        })
+        .catch(() => {
+          if (!cancelled) setIndexHits([]);
+        });
+    }, 180);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [q]);
+
   const searchHits = useMemo(() => {
-    if (!graph || !q.trim()) return [];
-    const needle = q.trim().toLowerCase();
-    return graph.nodes
-      .filter(
-        (n) =>
+    const byId = new Map<string, KnowledgeGraphNode>();
+    if (graph && q.trim()) {
+      const needle = q.trim().toLowerCase();
+      for (const n of graph.nodes) {
+        if (
           n.name.toLowerCase().includes(needle) ||
           n.id.toLowerCase().includes(needle) ||
           (n.note ?? "").toLowerCase().includes(needle) ||
-          n.collection.toLowerCase().includes(needle),
-      )
-      .slice(0, 12);
-  }, [graph, q]);
+          n.collection.toLowerCase().includes(needle)
+        ) {
+          byId.set(n.id, n);
+        }
+      }
+    }
+    for (const n of indexHits) if (!byId.has(n.id)) byId.set(n.id, n);
+    return [...byId.values()].slice(0, 16);
+  }, [graph, q, indexHits]);
 
   const kindCounts = useMemo(() => {
     const c: Record<KindKey, number> = { source: 0, fact: 0, knowledge: 0, project: 0 };
@@ -1321,7 +1365,16 @@ export function KnowledgePage() {
               <ul className="knowledge-search-hits">
                 {searchHits.map((n) => (
                   <li key={n.id}>
-                    <button type="button" onClick={() => focusOn(n.id, true)}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        // Ensure the node exists in the sim (index may return out-of-tree facts).
+                        void getKnowledgeNeighborhood(n.id, 2).then((patch) => {
+                          setRevealPatch(patch);
+                          window.setTimeout(() => focusOn(n.id, true), 50);
+                        });
+                      }}
+                    >
                       <span className="knowledge-kind-dot" data-kind={n.kind} />
                       {n.name}
                     </button>

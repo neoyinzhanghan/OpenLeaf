@@ -33,7 +33,8 @@ For human setup and usage, see [README.md](README.md).
 | `server/src/services/library/` | Library service layer (REST + MCP share this) |
 | `POST /api/library/mcp` | Host-only MCP (library + knowledge tools); do not wire into Share without risk-ack |
 | `docs/knowledge/` | Knowledge feature brief/spec; agents: see [AUTHORING.md](docs/knowledge/AUTHORING.md) |
-| `POST /api/knowledge/*` | Host-only knowledge graph, items, impact, inbox |
+| `POST /api/knowledge/*` | Host-only knowledge graph, items, impact, inbox, search, index-status |
+| `library/.cache/knowledge.kuzu` | Derived Kùzu graph index (gitignored with `library/`); rebuild from files |
 | `projects/<id>/review.json` | Knowledge step reviews (host UI only); git-tracked |
 | `server/tex/openleaf-knowledge.sty` | LaTeX package for `\fact` / `\kn` / calculations |
 | Library paper shares | Host `GET/POST/DELETE /api/library-share` + `POST …/import`; guests `/api/lib-share/:token` (join/notes/bundle/pdf). Invite path `/lib-share/:token` on host gateway — token is the credential |

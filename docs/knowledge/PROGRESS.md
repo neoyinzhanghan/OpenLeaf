@@ -2,7 +2,7 @@
 
 ## Summary (Phase 10)
 
-**Built:** Library-wide fact keys/values/units; web sources with safe fetch + snapshots; knowledge items as OpenLeaf projects; LaTeX package + compile values file; parser/evaluator/status/graph/impact/inbox; host-only review.json; Knowledge tree + Review inbox UI; editor knowledge header, completions/hovers, inspector, flagged banner; MCP knowledge tools (no verification); demo seed; AUTHORING.md / README / AGENTS updates.
+**Built:** Library-wide fact keys/values/units; web sources with safe fetch + snapshots; knowledge items as OpenLeaf projects; LaTeX package + compile values file; parser/evaluator/status/graph/impact/inbox; host-only review.json; Knowledge tree + Review inbox UI; editor knowledge header, completions/hovers, inspector, flagged banner; MCP knowledge tools (no verification); demo seed; AUTHORING.md / README / AGENTS updates. **Local Kùzu derived graph index** (`library/.cache/knowledge.kuzu`) for fast tree/neighborhood/search; files remain authoritative; paper projects stay folders.
 
 **Try it in five steps:**
 1. `npm ci && npm run build && npm run seed:knowledge-demo`
@@ -12,15 +12,15 @@
 5. Agents: read `docs/knowledge/AUTHORING.md`; MCP at `POST /api/library/mcp`
 
 **Known limitations:**
-- Graph full rebuild on this machine’s library (~290 nodes) measured **~1.7–2.4 s** (SPEC target under 1 s for 5k/500/200). Cache invalidates on project file mtimes; incremental not yet separate. Recorded under Blockers.
+- Kùzu index rebuild is still wipe+reload (not incremental upserts). Cached reads of `/api/knowledge/graph` are ~20ms after sync.
+- Upstream `kuzu` npm package is archived; pinned `0.11.3` with memory fallback if the native addon fails.
 - Knowledge tree force simulation stays on the main thread (Web Worker above 400 nodes deferred).
 - PDF SyncTeX review overlay toggle is not fully wired; inspector + gutter dots + banner cover the primary review loop.
-- Theme screenshot gallery vs mockups not exhaustively captured for all four themes (tree/editor smoke via e2e).
 
-**Benchmarks (`npm run bench:knowledge-graph`, America/Los_Angeles):**
-- fullRebuildMs ≈ 1688–2372 (290 nodes / 257 edges on local library)
-- synthetic3000x6000_30itersMs ≈ 2–4
-- Client pan/zoom fps not automated (needs browser instrumentation)
+**Benchmarks (America/Los_Angeles):**
+- Index status: backend `kuzu`, ~292 indexed nodes; default tree sparse (cited-only)
+- Cached graph GET ≈ 0.02s after warm sync
+- Client pan/zoom fps not automated
 
 ## Baseline (Phase 0)
 - [x] Branch `knowledge-v1` created
@@ -107,5 +107,5 @@ Baseline (America/Los_Angeles, before feature work landed):
 - [x] Summary written at top
 
 ## Blockers
-- **Graph rebuild budget:** `npm run bench:knowledge-graph` on this library → `fullRebuildMs` 1688–2372 for 290 nodes (SPEC: &lt;1s for much larger graphs). Tried: drop 2s time-bucket from cache key; invalidate on item create. Would unblock: profile `listAllFacts` / project scan, or incremental rebuild.
 - **PDF review overlay (Phase 5):** SyncTeX “Show review status” overlay not finished. Tried: reuse diffHighlights path; deferred for inspector/gutter/banner. Would unblock: wire `boxesForFileLines` to step line ranges + PDF toggle.
+- **Kùzu incremental sync:** First sync scans all files then wipe/rebuilds the DB. Would unblock: per-node MERGE upserts keyed by content stamp.

@@ -1326,9 +1326,41 @@ export function getKnowledgeGraph(): Promise<KnowledgeGraph> {
 export function getKnowledgeNeighborhood(
   node: string,
   depth = 2,
-): Promise<{ nodes: KnowledgeGraphNode[]; edges: KnowledgeGraphEdge[] }> {
+): Promise<{
+  nodes: KnowledgeGraphNode[];
+  edges: KnowledgeGraphEdge[];
+  pathRefs?: Record<string, string>;
+}> {
   return request(
     `/api/knowledge/neighborhood?node=${encodeURIComponent(node)}&depth=${encodeURIComponent(String(depth))}`,
+  );
+}
+
+export function getKnowledgeIndexStatus(): Promise<{
+  backend: "kuzu" | "memory";
+  stamp: string | null;
+  nodes: number;
+  edges: number;
+  dbPath: string;
+}> {
+  return request("/api/knowledge/index-status");
+}
+
+export function searchKnowledgeIndex(
+  q: string,
+  limit = 40,
+): Promise<{
+  results: Array<{
+    id: string;
+    kind: string;
+    name: string;
+    status: string;
+    note?: string;
+    pathRef?: string;
+  }>;
+}> {
+  return request(
+    `/api/knowledge/search?q=${encodeURIComponent(q)}&limit=${encodeURIComponent(String(limit))}`,
   );
 }
 

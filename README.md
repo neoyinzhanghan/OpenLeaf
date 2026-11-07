@@ -289,6 +289,8 @@ Try it:
 
 Spec and build notes: `docs/knowledge/`. Graph build bench: `npm run bench:knowledge-graph`.
 
+Knowledge retrieval uses an embedded **Kùzu** graph database under `library/.cache/knowledge.kuzu` as a derived index (files stay authoritative: `facts.json`, project `.tex`, PDFs). Paper projects remain ordinary folders. If the native addon fails to load, OpenLeaf falls back to an in-memory index automatically.
+
 ## Sharing a project publicly
 
 The **Share** button in the editor opens a temporary public link for *that project only*. Under the hood OpenLeaf spawns `cloudflared tunnel --url http://127.0.0.1:<port>` and gets a random `https://<words>.trycloudflare.com` address; nothing is stored, so ending the session (or restarting the server) kills the link, and the next session gets a new address and new credentials.
