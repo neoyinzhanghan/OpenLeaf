@@ -244,30 +244,34 @@ export function KnowledgeDependencyReview({ nodeId, projectId, compact, onClose 
               n.status === "not_found");
           return (
             <li key={n.id} className={attention ? "is-attention" : undefined}>
-              <span className="kn-dep-step">{i + 1}</span>
-              <span className="knowledge-kind-dot" data-kind={n.kind} />
-              <div className="kn-dep-copy">
-                <strong title={n.name}>{n.name}</strong>
-                <span className="kn-dep-meta">
-                  {kindLabel(n.kind)}
-                  {n.why?.[0] ? ` · ${n.why[0]}` : ""}
-                </span>
-                {n.note && n.kind === "fact" ? <span className="kn-dep-note">{n.note}</span> : null}
+              <div className="kn-dep-trail-top">
+                <span className="kn-dep-step">{i + 1}</span>
+                <span className="knowledge-kind-dot" data-kind={n.kind} />
+                <div className="kn-dep-copy">
+                  <strong title={n.name}>{n.name}</strong>
+                  <span className="kn-dep-meta">
+                    {kindLabel(n.kind)}
+                    {n.why?.[0] ? ` · ${n.why[0]}` : ""}
+                  </span>
+                  {n.note && n.kind === "fact" ? <span className="kn-dep-note">{n.note}</span> : null}
+                </div>
               </div>
-              {label ? (
-                <span className={`knowledge-status-chip ${statusChipClass(n.status)}`}>{label}</span>
-              ) : (
-                <span className="kn-dep-source-badge">Source</span>
-              )}
-              {href ? (
-                <button
-                  type="button"
-                  className="btn btn-quiet"
-                  onClick={() => openNodeFromGraph(href)}
-                >
-                  {n.kind === "fact" ? "See source" : n.kind === "source" ? "Open source" : "Open"}
-                </button>
-              ) : null}
+              <div className="kn-dep-trail-actions">
+                {label ? (
+                  <span className={`knowledge-status-chip ${statusChipClass(n.status)}`}>{label}</span>
+                ) : (
+                  <span className="kn-dep-source-badge">Source</span>
+                )}
+                {href ? (
+                  <button
+                    type="button"
+                    className="btn btn-quiet"
+                    onClick={() => openNodeFromGraph(href)}
+                  >
+                    {n.kind === "fact" ? "See source" : n.kind === "source" ? "Open source" : "Open"}
+                  </button>
+                ) : null}
+              </div>
             </li>
           );
         })}

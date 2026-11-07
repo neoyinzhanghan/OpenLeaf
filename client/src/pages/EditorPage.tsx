@@ -373,7 +373,7 @@ export function EditorPage() {
   const [extraLabels, setExtraLabels] = useState<string[]>([]);
   const [treeWidth, setTreeWidth] = useState(() => {
     const n = Number(localStorage.getItem("openleaf.treeWidth") ?? 240);
-    return Number.isFinite(n) ? Math.min(420, Math.max(160, n)) : 240;
+    return Number.isFinite(n) ? Math.min(560, Math.max(180, n)) : 240;
   });
   const treeWidthRef = useRef(treeWidth);
   treeWidthRef.current = treeWidth;
@@ -384,7 +384,7 @@ export function EditorPage() {
     if (!(reviewMode && knowledgeMeta?.kind === "knowledge")) return;
     setDepReviewOpen(true);
     setTreeCollapsed(false);
-    setTreeWidth((w) => Math.max(w, 300));
+    setTreeWidth((w) => Math.max(w, 360));
   }, [reviewMode, knowledgeMeta?.kind, knowledgeMeta?.knowledgeId]);
   // Deep-link: ?step=calculation:total opens the step inspector.
   const stepParam = searchParams.get("step");
@@ -1196,7 +1196,8 @@ export function EditorPage() {
       const el = workspaceRef.current;
       if (!el) return;
       const rect = el.getBoundingClientRect();
-      const w = Math.min(420, Math.max(160, e.clientX - rect.left));
+      const minW = depReviewOpen ? 300 : 180;
+      const w = Math.min(560, Math.max(minW, e.clientX - rect.left));
       setTreeWidth(w);
     };
     const onUp = () => {
@@ -1215,7 +1216,7 @@ export function EditorPage() {
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
     };
-  }, [treeDragging, treeCollapsed]);
+  }, [treeDragging, treeCollapsed, depReviewOpen]);
 
   const toggleTreeCollapsed = useCallback(() => {
     setTreeCollapsed((prev) => {
@@ -2432,7 +2433,7 @@ export function EditorPage() {
                 onClick={() => {
                   setDepReviewOpen(true);
                   setTreeCollapsed(false);
-                  setTreeWidth((w) => Math.max(w, 300));
+                  setTreeWidth((w) => Math.max(w, 360));
                   const first = knowledgeSteps.find(
                     (s) =>
                       s.status === "needs-review" ||
@@ -2464,7 +2465,7 @@ export function EditorPage() {
                   }
                   setDepReviewOpen(true);
                   setTreeCollapsed(false);
-                  setTreeWidth((w) => Math.max(w, 300));
+                  setTreeWidth((w) => Math.max(w, 360));
                   setSearchParams(
                     (prev) => {
                       const p = new URLSearchParams(prev);
@@ -3334,6 +3335,8 @@ export function EditorPage() {
                         className={depReviewOpen ? "is-active" : undefined}
                         onClick={() => {
                           setDepReviewOpen(true);
+                          setTreeCollapsed(false);
+                          setTreeWidth((w) => Math.max(w, 360));
                           setSearchParams(
                             (prev) => {
                               const p = new URLSearchParams(prev);

@@ -307,6 +307,17 @@ export function KnowledgePage() {
   const [vx, setVx] = useState(0);
   const [vy, setVy] = useState(0);
   const [anim, setAnim] = useState(false);
+  const [panelWidth, setPanelWidth] = useState(() => {
+    const n = Number(localStorage.getItem("openleaf.knowledgePanelWidth") ?? 380);
+    return Number.isFinite(n) ? Math.min(640, Math.max(280, n)) : 380;
+  });
+  const panelWidthRef = useRef(panelWidth);
+  panelWidthRef.current = panelWidth;
+  const [panelCollapsed, setPanelCollapsed] = useState(
+    () => localStorage.getItem("openleaf.knowledgePanelCollapsed") === "1",
+  );
+  const [panelDragging, setPanelDragging] = useState(false);
+  const mainRef = useRef<HTMLDivElement | null>(null);
   const [focus, setFocus] = useState<string | null>(params.get("focus"));
   const [depth, setDepth] = useState<"1" | "2" | "all">("2");
   const [kinds, setKinds] = useState<Record<KindKey, boolean>>({
@@ -665,9 +676,49 @@ export function KnowledgePage() {
         { replace: true },
       );
       if (center) centerOn(n.x ?? 0, n.y ?? 0, Math.max(cameraRef.current.zoom, 1.1));
+      // Trail / focus details need a readable column — reopen and widen if crushed.
+      setPanelCollapsed(false);
+      localStorage.setItem("openleaf.knowledgePanelCollapsed", "0");
+      setPanelWidth((w) => Math.max(w, 360));
     },
     [centerOn, setParams],
   );
+
+  useEffect(() => {
+    if (!panelDragging || panelCollapsed) return;
+    const onMove = (e: PointerEvent) => {
+      const el = mainRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const fromRight = rect.right - e.clientX;
+      const w = Math.min(640, Math.max(280, fromRight));
+      setPanelWidth(w);
+    };
+    const onUp = () => {
+      setPanelDragging(false);
+      localStorage.setItem("openleaf.knowledgePanelWidth", String(panelWidthRef.current));
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+  }, [panelDragging, panelCollapsed]);
+
+  const togglePanelCollapsed = useCallback(() => {
+    setPanelCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem("openleaf.knowledgePanelCollapsed", next ? "1" : "0");
+      return next;
+    });
+  }, []);
 
   // Draw
   useEffect(() => {
@@ -1411,7 +1462,10 @@ export function KnowledgePage() {
 
       {error ? <ErrorBanner onDismiss={() => setError(null)}>{error}</ErrorBanner> : null}
 
-      <div className="knowledge-main">
+      <div
+        className={`knowledge-main${panelCollapsed ? " is-panel-collapsed" : ""}`}
+        ref={mainRef}
+      >
         <div
           className={`knowledge-canvas-wrap${loading && !graph ? " is-loading" : ""}`}
           ref={wrapRef}
@@ -1608,8 +1662,36 @@ export function KnowledgePage() {
           <p className="knowledge-hint">Click a node · Esc clears</p>
         </div>
 
-        <aside className="knowledge-panel" aria-label="Knowledge panel">
-          {focusNode ? (
+        {!panelCollapsed ? (
+          <div
+            className={`split-handle knowledge-panel-handle${panelDragging ? " active" : ""}`}
+            onPointerDown={(e) => {
+              e.preventDefault();
+              setPanelDragging(true);
+            }}
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize knowledge panel"
+            aria-valuenow={panelWidth}
+          />
+        ) : null}
+        <aside
+          className={`knowledge-panel${panelCollapsed ? " is-collapsed" : ""}`}
+          aria-label="Knowledge panel"
+          style={panelCollapsed ? undefined : { flex: `0 0 ${panelWidth}px`, width: panelWidth }}
+        >
+          {panelCollapsed ? (
+            <button
+              type="button"
+              className="btn btn-ghost knowledge-panel-expand"
+              onClick={togglePanelCollapsed}
+              title="Show knowledge panel"
+              aria-label="Show knowledge panel"
+              aria-expanded={false}
+            >
+              Panel
+            </button>
+          ) : focusNode ? (
             <>
               <div className="knowledge-panel-head">
                 <button type="button" className="btn btn-quiet knowledge-panel-back" onClick={clearFocus}>
@@ -1619,6 +1701,18 @@ export function KnowledgePage() {
                 <span className={`knowledge-status-chip${statusNeedsAttention(focusNode.status) ? " is-needs" : ""}`}>
                   {statusLabel(focusNode.status)}
                 </span>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-icon knowledge-panel-collapse toolbar-wide-only"
+                  onClick={togglePanelCollapsed}
+                  title="Hide knowledge panel"
+                  aria-label="Hide knowledge panel"
+                  aria-expanded
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                    <path d="M15 6l-6 6 6 6" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
               </div>
               <h2>{displayLabel(focusNode, 72)}</h2>
               <p className="knowledge-panel-lede">
@@ -1735,6 +1829,18 @@ export function KnowledgePage() {
             <>
               <div className="knowledge-panel-head">
                 <h2>Knowledge</h2>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-icon knowledge-panel-collapse toolbar-wide-only"
+                  onClick={togglePanelCollapsed}
+                  title="Hide knowledge panel"
+                  aria-label="Hide knowledge panel"
+                  aria-expanded
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                    <path d="M15 6l-6 6 6 6" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
               </div>
               <p className="knowledge-panel-lede">
                 {graph
