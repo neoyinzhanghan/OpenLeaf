@@ -69,6 +69,8 @@ export function KnowledgeDependencyReview({ nodeId, projectId, compact, onClose 
   const [nodes, setNodes] = useState<KnowledgeGraphNode[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [guided, setGuided] = useState(false);
+  const [guidedIdx, setGuidedIdx] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -102,6 +104,29 @@ export function KnowledgeDependencyReview({ nodeId, projectId, compact, onClose 
       } knowledge items · ${needs.length} need attention`
     : null;
 
+  const guidedCards = needs.length ? needs : trail.filter((n) => n.kind === "fact" || n.kind === "knowledge");
+  const guidedCard = guidedCards[Math.min(guidedIdx, Math.max(0, guidedCards.length - 1))] ?? null;
+  const trusted = !loading && needs.length === 0 && trail.length > 0;
+
+  useEffect(() => {
+    if (!guided) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.key === "j" || e.key === "ArrowRight") {
+        e.preventDefault();
+        setGuidedIdx((i) => Math.min(guidedCards.length - 1, i + 1));
+      } else if (e.key === "k" || e.key === "ArrowLeft") {
+        e.preventDefault();
+        setGuidedIdx((i) => Math.max(0, i - 1));
+      } else if (e.key === "Escape") {
+        setGuided(false);
+        setGuidedIdx(0);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [guided, guidedCards.length]);
+
   return (
     <aside className={`kn-dep-review${compact ? " is-compact" : ""}`} aria-label="Knowledge dependency review">
       <header className="kn-dep-review-head">
@@ -123,7 +148,90 @@ export function KnowledgeDependencyReview({ nodeId, projectId, compact, onClose 
 
       {error ? <div className="error-banner">{error}</div> : null}
 
-      <ol className="kn-dep-trail">
+      {trusted ? (
+        <p className="kn-dep-trusted" role="status">
+          This item is now trusted — every dependency above is checked and clean.
+        </p>
+      ) : null}
+
+      {!loading && guidedCards.length > 0 ? (
+        <div className="kn-dep-guided-bar">
+          {guided ? (
+            <>
+              <div className="kn-dep-progress" aria-hidden>
+                <span style={{ width: `${((guidedIdx + 1) / guidedCards.length) * 100}%` }} />
+              </div>
+              <p className="kn-dep-guided-meta">
+                Card {guidedIdx + 1} of {guidedCards.length}
+                {guidedCard ? ` · ${kindLabel(guidedCard.kind)}` : ""}
+              </p>
+              {guidedCard ? (
+                <div className="kn-dep-guided-card">
+                  <strong title={guidedCard.name}>{guidedCard.name}</strong>
+                  <span className="muted">
+                    {statusLabel(guidedCard.kind, guidedCard.status) || kindLabel(guidedCard.kind)}
+                    {guidedCard.why?.[0] ? ` — ${guidedCard.why[0]}` : ""}
+                  </span>
+                  <div className="kn-dep-foot-actions">
+                    {openNodeHref(guidedCard) ? (
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={() => openNodeFromGraph(openNodeHref(guidedCard)!)}
+                      >
+                        {guidedCard.kind === "fact" ? "See source" : "Open"}
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="btn btn-quiet"
+                      disabled={guidedIdx <= 0}
+                      onClick={() => setGuidedIdx((i) => Math.max(0, i - 1))}
+                    >
+                      Back
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-quiet"
+                      onClick={() => {
+                        if (guidedIdx >= guidedCards.length - 1) {
+                          setGuided(false);
+                          setGuidedIdx(0);
+                        } else setGuidedIdx((i) => i + 1);
+                      }}
+                    >
+                      {guidedIdx >= guidedCards.length - 1 ? "Done" : "Next"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      onClick={() => {
+                        setGuided(false);
+                        setGuidedIdx(0);
+                      }}
+                    >
+                      Exit
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => {
+                setGuided(true);
+                setGuidedIdx(0);
+              }}
+            >
+              Start guided review
+            </button>
+          )}
+        </div>
+      ) : null}
+
+      <ol className={`kn-dep-trail${guided ? " is-dimmed" : ""}`}>
         {trail.map((n, i) => {
           const href = openNodeHref(n);
           const label = statusLabel(n.kind, n.status);

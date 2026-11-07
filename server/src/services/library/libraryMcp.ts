@@ -395,6 +395,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
       return createKnowledgeItem({
         title: String(args.title),
         collection: typeof args.collection === "string" ? args.collection : undefined,
+        knowledgeId: typeof args.knowledgeId === "string" ? args.knowledgeId : undefined,
       });
     }
     case "knowledge_check": {

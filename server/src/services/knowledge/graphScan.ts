@@ -215,6 +215,13 @@ export async function scanKnowledgeUniverse(): Promise<ScanPayload> {
           if ((r.kind === "kn" || r.kind === "knref") && r.id) {
             return { id: `kn:${r.id}`, status: "needs-review" as Status };
           }
+          // \out{…} is an internal result name, not an upstream dependency.
+          if (r.kind === "out") {
+            return {
+              id: `out:${"name" in r ? r.name : "out"}`,
+              status: "reviewed" as Status,
+            };
+          }
           return { id: "unknown", status: "needs-review" as Status };
         });
         return {

@@ -86,4 +86,17 @@ describe("status engine", () => {
     ]);
     assert.deepEqual(why, ["fact:a unchecked", "kn:b unchecked"]);
   });
+
+  it("does not flag a reviewed step whose only extra input is a clean \\out", () => {
+    const text = "Headline is \\out{headline}.";
+    const h = hash(text);
+    const st = computeStepStatus({
+      id: "conclusion",
+      textHash: h,
+      review: { hash: h, verdict: "reviewed" },
+      inputStatuses: [{ id: "out:headline", status: "reviewed" }],
+    });
+    assert.equal(st.status, "reviewed");
+    assert.deepEqual(st.why, []);
+  });
 });

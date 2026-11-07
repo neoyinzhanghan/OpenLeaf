@@ -8,6 +8,8 @@ const repo = process.cwd();
 export type Instance = {
   baseURL: string;
   projects: string;
+  /** Absolute path to captured server stdout/stderr for this instance. */
+  logFile: string;
   stop: () => Promise<void>;
 };
 
@@ -65,11 +67,24 @@ export async function startInstance(): Promise<Instance> {
   });
   const baseURL = `http://127.0.0.1:${port}`;
   let log = "";
-  child.stdout?.on("data", (chunk: Buffer) => {
-    log += chunk.toString();
-  });
-  child.stderr?.on("data", (chunk: Buffer) => {
-    log += chunk.toString();
+  const logFile = path.join(sandbox, "server.log");
+  const appendLog = (chunk: Buffer) => {
+    const text = chunk.toString();
+    log += text;
+    try {
+      fs.appendFileSync(logFile, text);
+    } catch {
+      /* ignore */
+    }
+  };
+  child.stdout?.on("data", appendLog);
+  child.stderr?.on("data", appendLog);
+  child.on("exit", (code, signal) => {
+    try {
+      fs.appendFileSync(logFile, `\n[exit code=${code} signal=${signal}]\n`);
+    } catch {
+      /* ignore */
+    }
   });
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
@@ -87,6 +102,7 @@ export async function startInstance(): Promise<Instance> {
   return {
     baseURL,
     projects,
+    logFile,
     stop: () =>
       new Promise((resolve) => {
         let done = false;

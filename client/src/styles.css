@@ -10728,6 +10728,57 @@ button.lib-badge:hover {
   color: var(--ink-faint);
 }
 
+.kn-dep-trusted {
+  margin: 0 0 0.65rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--kind-knowledge) 14%, var(--bg));
+  color: var(--ink);
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.kn-dep-guided-bar {
+  margin-bottom: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.kn-dep-progress {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.kn-dep-progress > span {
+  display: block;
+  height: 100%;
+  background: var(--kind-knowledge);
+  transition: width 0.2s ease;
+}
+
+.kn-dep-guided-meta {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--ink-faint);
+}
+
+.kn-dep-guided-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-elevated, var(--panel));
+}
+
+.kn-dep-trail.is-dimmed {
+  opacity: 0.55;
+}
+
 .library-facts-provenance {
   margin: 0.15rem 0 0;
   font-size: 0.78rem;

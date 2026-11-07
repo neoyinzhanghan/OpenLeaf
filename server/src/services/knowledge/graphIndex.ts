@@ -52,6 +52,17 @@ let conn: KuzuConnection | null = null;
 let readyStamp: string | null = null;
 let memoryFallback: IndexPayload | null = null;
 let syncing: Promise<void> | null = null;
+/** Serialize all open/close/write against the native Kùzu addon — concurrent use segfaults (exit 139). */
+let kuzuGate: Promise<void> = Promise.resolve();
+
+function withKuzuGate<T>(fn: () => Promise<T>): Promise<T> {
+  const run = kuzuGate.then(fn, fn);
+  kuzuGate = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
 
 function cacheDir(): string {
   return path.join(libraryRoot(), ".cache");
@@ -65,7 +76,14 @@ function stampPath(): string {
   return path.join(cacheDir(), "knowledge.kuzu.stamp");
 }
 
+function kuzuEnabled(): boolean {
+  // Opt-in: concurrent native open/close during Review polling segfaulted the
+  // API (exit 139). Memory payload is complete for tree/neighborhood/search.
+  return process.env.OPENLEAF_KNOWLEDGE_KUZU === "1";
+}
+
 async function loadKuzu(): Promise<KuzuModule | null> {
+  if (!kuzuEnabled()) return null;
   if (kuzuMod) return kuzuMod;
   try {
     const mod = (await import("kuzu")) as unknown as KuzuModule & { default?: KuzuModule };
@@ -161,12 +179,15 @@ async function readStamp(): Promise<string | null> {
 export function invalidateKnowledgeIndex(): void {
   readyStamp = null;
   memoryFallback = null;
-  void closeDb();
   try {
     fs.rmSync(stampPath(), { force: true });
   } catch {
     /* ignore */
   }
+  // Close on the gate so in-flight kuzu writes finish before unlink/close.
+  void withKuzuGate(async () => {
+    await closeDb();
+  });
 }
 
 export async function syncKnowledgeIndex(
@@ -184,64 +205,59 @@ export async function syncKnowledgeIndex(
   syncing = (async () => {
     const payload = await build();
     memoryFallback = payload;
+    readyStamp = stamp;
 
     const mod = await loadKuzu();
-    if (!mod) {
-      readyStamp = stamp;
-      return;
-    }
+    if (!mod) return;
 
-    try {
-      const onDisk = await readStamp();
-      if (onDisk === stamp && fs.existsSync(dbPath())) {
-        // Re-open existing DB if process restarted with matching stamp.
-        if (!conn) {
-          db = new mod.Database(dbPath());
-          conn = new mod.Connection(db);
+    await withKuzuGate(async () => {
+      try {
+        const onDisk = await readStamp();
+        if (onDisk === stamp && fs.existsSync(dbPath())) {
+          if (!conn) {
+            db = new mod.Database(dbPath());
+            conn = new mod.Connection(db);
+          }
+          return;
         }
-        readyStamp = stamp;
-        return;
-      }
 
-      const c = await wipeAndOpen(mod);
-      // Batch inserts — prepared CREATE per node.
-      for (const n of payload.nodes) {
-        const why = esc(JSON.stringify(n.why ?? []));
-        const q = `
-          CREATE (:KnNode {
-            id: '${esc(n.id)}',
-            kind: '${esc(n.kind)}',
-            name: '${esc(n.name)}',
-            status: '${esc(n.status)}',
-            why: '${why}',
-            collection: '${esc(n.collection || "unsorted")}',
-            note: '${esc(n.note || "")}',
-            inTree: ${n.inTree ? "true" : "false"},
-            pathRef: '${esc(n.pathRef)}',
-            citekey: '${esc(n.citekey || "")}',
-            knowledgeId: '${esc(n.knowledgeId || "")}',
-            projectId: '${esc(n.projectId || "")}',
-            factKey: '${esc(n.factKey || "")}',
-            value: ${numOrNull(n.value ?? null)},
-            unit: '${esc(n.unit || "")}',
-            updatedAt: '${esc(n.updatedAt || "")}'
-          });
-        `;
-        await c.query(q);
+        const c = await wipeAndOpen(mod);
+        for (const n of payload.nodes) {
+          const why = esc(JSON.stringify(n.why ?? []));
+          const q = `
+            CREATE (:KnNode {
+              id: '${esc(n.id)}',
+              kind: '${esc(n.kind)}',
+              name: '${esc(n.name)}',
+              status: '${esc(n.status)}',
+              why: '${why}',
+              collection: '${esc(n.collection || "unsorted")}',
+              note: '${esc(n.note || "")}',
+              inTree: ${n.inTree ? "true" : "false"},
+              pathRef: '${esc(n.pathRef)}',
+              citekey: '${esc(n.citekey || "")}',
+              knowledgeId: '${esc(n.knowledgeId || "")}',
+              projectId: '${esc(n.projectId || "")}',
+              factKey: '${esc(n.factKey || "")}',
+              value: ${numOrNull(n.value ?? null)},
+              unit: '${esc(n.unit || "")}',
+              updatedAt: '${esc(n.updatedAt || "")}'
+            });
+          `;
+          await c.query(q);
+        }
+        for (const e of payload.edges) {
+          await c.query(`
+            MATCH (a:KnNode {id: '${esc(e.from)}'}), (b:KnNode {id: '${esc(e.to)}'})
+            CREATE (a)-[:BUILT_ON {flagged: ${e.flagged ? "true" : "false"}}]->(b);
+          `);
+        }
+        await writeStamp(stamp);
+      } catch (err) {
+        console.warn("[knowledge-index] kuzu sync failed, using memory:", err);
+        await closeDb();
       }
-      for (const e of payload.edges) {
-        await c.query(`
-          MATCH (a:KnNode {id: '${esc(e.from)}'}), (b:KnNode {id: '${esc(e.to)}'})
-          CREATE (a)-[:BUILT_ON {flagged: ${e.flagged ? "true" : "false"}}]->(b);
-        `);
-      }
-      await writeStamp(stamp);
-      readyStamp = stamp;
-    } catch (err) {
-      console.warn("[knowledge-index] kuzu sync failed, using memory:", err);
-      await closeDb();
-      readyStamp = stamp;
-    }
+    });
   })();
 
   try {
@@ -312,39 +328,8 @@ function attachIo(nodes: IndexNode[], edges: GraphEdge[]): GraphNode[] {
 /** Full indexed graph: in-tree nodes are primary; others are atmosphere (client draws faint). */
 export async function queryTreeGraph(): Promise<KnowledgeGraph | null> {
   if (!memoryFallback) return null;
-  if (conn && readyStamp === memoryFallback.stamp) {
-    try {
-      const nodeRows = await queryAll(
-        conn,
-        `MATCH (n:KnNode) RETURN n.id AS id, n.kind AS kind, n.name AS name,
-          n.status AS status, n.why AS why, n.collection AS collection, n.note AS note,
-          n.inTree AS inTree, n.pathRef AS pathRef, n.citekey AS citekey, n.knowledgeId AS knowledgeId,
-          n.projectId AS projectId, n.factKey AS factKey, n.value AS value, n.unit AS unit, n.updatedAt AS updatedAt;`,
-      );
-      const edgeRows = await queryAll(
-        conn,
-        `MATCH (a:KnNode)-[r:BUILT_ON]->(b:KnNode)
-         RETURN a.id AS from, b.id AS to, r.flagged AS flagged;`,
-      );
-      const indexNodes = nodeRows.map(rowToNode);
-      const edges: GraphEdge[] = edgeRows.map((r) => ({
-        from: String(r.from),
-        to: String(r.to),
-        flagged: Boolean(r.flagged),
-      }));
-      const nodes = attachIo(indexNodes, edges);
-      const collections = [...new Set(nodes.map((n) => n.collection))].sort();
-      return {
-        nodes,
-        edges,
-        collections,
-        generatedAt: memoryFallback.generatedAt,
-      };
-    } catch (err) {
-      console.warn("[knowledge-index] tree query failed, memory fallback:", err);
-    }
-  }
-
+  // Always serve from the in-memory payload. Concurrent native kuzu reads during
+  // rebuild have segfaulted the API process (exit 139) under Review-page polling.
   const indexNodes = memoryFallback.nodes;
   const edges = memoryFallback.edges;
   const nodes = attachIo(indexNodes, edges);
@@ -363,86 +348,7 @@ export async function queryNeighborhood(
   if (!memoryFallback) return null;
   const maxDepth = Math.max(0, Math.min(8, Math.floor(depth)));
 
-  if (conn && readyStamp === memoryFallback.stamp) {
-    try {
-      // Variable-length path in Cypher
-      const hop = Math.max(1, maxDepth);
-      const nodeRows = await queryAll(
-        conn,
-        `MATCH (seed:KnNode {id: '${esc(nodeId)}'})
-         MATCH (seed)-[:BUILT_ON*0..${hop}]-(n:KnNode)
-         RETURN DISTINCT n.id AS id, n.kind AS kind, n.name AS name,
-           n.status AS status, n.why AS why, n.collection AS collection, n.note AS note,
-           n.inTree AS inTree, n.pathRef AS pathRef, n.citekey AS citekey, n.knowledgeId AS knowledgeId,
-           n.projectId AS projectId, n.factKey AS factKey, n.value AS value, n.unit AS unit, n.updatedAt AS updatedAt;`,
-      );
-      // Also pull every fact on sources touched (sibling hydrate from index)
-      const citekeys = new Set<string>();
-      for (const r of nodeRows) {
-        if (String(r.kind) === "source" && r.citekey) citekeys.add(String(r.citekey));
-        if (String(r.id).startsWith("src:")) citekeys.add(String(r.id).slice(4));
-      }
-      if (nodeId.startsWith("src:")) citekeys.add(nodeId.slice(4));
-
-      const extra: IndexNode[] = [];
-      for (const ck of citekeys) {
-        const more = await queryAll(
-          conn,
-          `MATCH (n:KnNode) WHERE n.kind = 'fact' AND n.citekey = '${esc(ck)}'
-           RETURN n.id AS id, n.kind AS kind, n.name AS name,
-             n.status AS status, n.why AS why, n.collection AS collection, n.note AS note,
-             n.inTree AS inTree, n.pathRef AS pathRef, n.citekey AS citekey, n.knowledgeId AS knowledgeId,
-             n.projectId AS projectId, n.factKey AS factKey, n.value AS value, n.unit AS unit, n.updatedAt AS updatedAt;`,
-        );
-        for (const r of more) extra.push(rowToNode(r));
-        const src = await queryAll(
-          conn,
-          `MATCH (n:KnNode {id: 'src:${esc(ck)}'})
-           RETURN n.id AS id, n.kind AS kind, n.name AS name,
-             n.status AS status, n.why AS why, n.collection AS collection, n.note AS note,
-             n.inTree AS inTree, n.pathRef AS pathRef, n.citekey AS citekey, n.knowledgeId AS knowledgeId,
-             n.projectId AS projectId, n.factKey AS factKey, n.value AS value, n.unit AS unit, n.updatedAt AS updatedAt;`,
-        );
-        for (const r of src) extra.push(rowToNode(r));
-      }
-
-      const byId = new Map<string, IndexNode>();
-      for (const r of nodeRows) byId.set(String(r.id), rowToNode(r));
-      for (const n of extra) byId.set(n.id, n);
-      const ids = [...byId.keys()];
-      if (!ids.length) return { nodes: [], edges: [], pathRefs: {} };
-
-      const idList = ids.map((id) => `'${esc(id)}'`).join(", ");
-      const edgeRows = await queryAll(
-        conn,
-        `MATCH (a:KnNode)-[r:BUILT_ON]->(b:KnNode)
-         WHERE a.id IN [${idList}] AND b.id IN [${idList}]
-         RETURN a.id AS from, b.id AS to, r.flagged AS flagged;`,
-      );
-      const edges: GraphEdge[] = edgeRows.map((r) => ({
-        from: String(r.from),
-        to: String(r.to),
-        flagged: Boolean(r.flagged),
-      }));
-      // Ensure source→fact edges for hydrated siblings even if not in BUILT_ON yet
-      for (const n of byId.values()) {
-        if (n.kind === "fact" && n.citekey) {
-          const src = `src:${n.citekey}`;
-          if (byId.has(src) && !edges.some((e) => e.from === src && e.to === n.id)) {
-            edges.push({ from: src, to: n.id, flagged: n.status === "rejected" });
-          }
-        }
-      }
-      const nodes = attachIo([...byId.values()], edges);
-      const pathRefs: Record<string, string> = {};
-      for (const n of byId.values()) if (n.pathRef) pathRefs[n.id] = n.pathRef;
-      return { nodes, edges, pathRefs };
-    } catch (err) {
-      console.warn("[knowledge-index] neighborhood query failed:", err);
-    }
-  }
-
-  // Memory BFS fallback
+  // Memory BFS only — see queryTreeGraph note on kuzu segfaults under concurrent rebuild.
   const adj = new Map<string, string[]>();
   for (const e of memoryFallback.edges) {
     const a = adj.get(e.from) ?? [];
@@ -484,26 +390,6 @@ export async function queryNeighborhood(
 export async function searchIndex(q: string, limit = 40): Promise<IndexNode[]> {
   const needle = q.trim().toLowerCase();
   if (!needle || !memoryFallback) return [];
-  if (conn && readyStamp === memoryFallback.stamp) {
-    try {
-      const rows = await queryAll(
-        conn,
-        `MATCH (n:KnNode)
-         WHERE toLower(n.name) CONTAINS '${esc(needle)}'
-            OR toLower(n.note) CONTAINS '${esc(needle)}'
-            OR toLower(n.factKey) CONTAINS '${esc(needle)}'
-            OR toLower(n.knowledgeId) CONTAINS '${esc(needle)}'
-         RETURN n.id AS id, n.kind AS kind, n.name AS name,
-           n.status AS status, n.why AS why, n.collection AS collection, n.note AS note,
-           n.inTree AS inTree, n.pathRef AS pathRef, n.citekey AS citekey, n.knowledgeId AS knowledgeId,
-           n.projectId AS projectId, n.factKey AS factKey, n.value AS value, n.unit AS unit, n.updatedAt AS updatedAt
-         LIMIT ${Math.max(1, Math.min(200, limit))};`,
-      );
-      return rows.map(rowToNode);
-    } catch {
-      /* fall through */
-    }
-  }
   return memoryFallback.nodes
     .filter((n) => {
       const hay = `${n.name}\n${n.note || ""}\n${n.factKey || ""}\n${n.knowledgeId || ""}`.toLowerCase();

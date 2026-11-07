@@ -34,6 +34,8 @@ One line per decision: **question** — choice — why. Newest at the bottom.
 - **Authored papers vs knowledge** — Graph `project` nodes only for OpenLeaf projects with explicit `"kind": "paper"` (Inference Powered Prediction, WSIP Paper, Reframing AIT FAccT, Label-free correction for label shift, DeepHeme MSK NatMed). Other folders are knowledge or notes, not papers. Papers render as amber rounded squares; knowledge as violet ringed discs. — Owner taxonomy; keeps benches/talks out of the paper layer.
 
 ## Decided overnight (knowledge-review-ux)
+- **Kùzu knowledge index opt-in** — Default to in-memory graph payload; set `OPENLEAF_KNOWLEDGE_KUZU=1` to enable native DB writes. — Concurrent kuzu open/close under Review-page polling segfaulted the API (exit 139); memory already holds the full tree.
+- **`\out{…}` is not upstream** — Graph scan treats calculation outputs as reviewed internal names, not `unknown unchecked`. — Conclusion steps were falsely flagging every trusted item.
 - **Paper up-to-date rule** — A paper is `flagged` whenever any cited fact/knowledge is rejected, flagged, needs-review, or unreviewed (stricter than SPEC §5.5). — Overnight brief: a number built on unchecked work must never look fine.
 - **Upstream why always carried** — `computeStepStatus` keeps rejected/unchecked input reasons even when the step itself is still `needs-review`. — Owner must see the real cause, not an empty why.
 - **Reject requires a reason** — Host reject of a fact needs non-empty `rejectReason`; `previousStatus` enables Undo. — SPEC 7.3 + overnight #4.

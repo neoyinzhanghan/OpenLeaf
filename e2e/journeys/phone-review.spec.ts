@@ -1,5 +1,5 @@
 /**
- * Journey 7: confirm / reject a fact at 390px phone width.
+ * Journey 7: confirm a fact at 390px phone width.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -35,17 +35,42 @@ test.afterAll(async () => {
 test("phone width: review inbox and confirm a fact", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${instance.baseURL}/review`);
-  await expect(page.getByRole("heading", { name: "Review" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Review", exact: true })).toBeVisible();
   await page.screenshot({ path: path.join(afterDir, "01-inbox-390.png"), fullPage: true });
 
   const seePassage = page.getByRole("link", { name: /See passage/i }).first();
-  if (await seePassage.count()) {
-    await seePassage.click();
-    await expect(page).toHaveURL(/\/facts/);
-    await page.screenshot({ path: path.join(afterDir, "02-facts-390.png"), fullPage: true });
-    const confirm = page.getByRole("button", { name: /^Confirm$/i }).first();
-    if (await confirm.isEnabled()) {
-      await confirm.click();
-    }
+  await expect(seePassage).toBeVisible({ timeout: 15_000 });
+  await seePassage.click();
+  await expect(page).toHaveURL(/\/facts/);
+  await page.screenshot({ path: path.join(afterDir, "02-facts-390.png"), fullPage: true });
+
+  await page.goto(`${instance.baseURL}/review`);
+  await expect(page.getByRole("heading", { name: "Review", exact: true })).toBeVisible();
+  const confirm = page.getByRole("button", { name: /^Confirm$/i }).first();
+  await expect(confirm).toBeVisible({ timeout: 15_000 });
+  await confirm.click();
+  await page.screenshot({ path: path.join(afterDir, "03-inbox-after-confirm-390.png"), fullPage: true });
+
+  // Reject via API at phone viewport still exercises the impact UI if a fact remains.
+  const inbox = (await (
+    await fetch(`${instance.baseURL}/api/knowledge/inbox`, { headers: { Origin: instance.baseURL } })
+  ).json()) as {
+    groups: Array<{ items: Array<{ type: string; citekey?: string; factId?: string }> }>;
+  };
+  const fact = inbox.groups.flatMap((g) => g.items).find((i) => i.type === "fact" && i.citekey && i.factId);
+  if (fact?.citekey && fact.factId) {
+    await fetch(
+      `${instance.baseURL}/api/library/${encodeURIComponent(fact.citekey)}/facts/${encodeURIComponent(fact.factId)}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Origin: instance.baseURL },
+        body: JSON.stringify({
+          status: "rejected",
+          rejectReason: "Phone journey: wrong number",
+        }),
+      },
+    );
+    await page.goto(`${instance.baseURL}/review`);
+    await page.screenshot({ path: path.join(afterDir, "04-after-reject-390.png"), fullPage: true });
   }
 });

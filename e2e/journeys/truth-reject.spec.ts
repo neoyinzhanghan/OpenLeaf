@@ -113,7 +113,7 @@ test("rejecting a fee fact flags knowledge and paper with why", async ({ page })
   expect(flat.some((i) => (i as { type?: string }).type === "step")).toBeTruthy();
 
   await page.goto(`${instance.baseURL}/review`);
-  await expect(page.getByRole("heading", { name: "Review" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Review", exact: true })).toBeVisible();
   await page.screenshot({ path: path.join(afterDir, "01-inbox-after-reject.png"), fullPage: true });
 
   await page.goto(

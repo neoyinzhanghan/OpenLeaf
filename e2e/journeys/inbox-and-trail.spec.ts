@@ -49,7 +49,7 @@ test("cold open: inbox count matches and trail stays in the sidebar", async ({ p
   expect(body.count).toBeGreaterThan(0);
 
   await page.goto(`${instance.baseURL}/review`);
-  await expect(page.getByRole("heading", { name: "Review" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Review", exact: true })).toBeVisible();
   const badge = page.locator(".nav-badge").first();
   if (await badge.count()) {
     await expect(badge).toHaveText(String(body.count));
