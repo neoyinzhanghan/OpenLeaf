@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Knowledge item in LaTeX</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;family=Source+Serif+4:ital,wght@0,400;0,600;1,400&amp;display=swap">
+<style>
+body{margin:0;background:#0B0F12}
+a{color:#6FD6C2}a:hover{color:#9BE5D6}
+button{font-family:inherit;cursor:pointer}
+</style>
+</helmet>
+<div style="min-height: 1000px; background: #0B0F12; color: #E8ECEE; font-family: Inter, system-ui, sans-serif; font-size: 13px; display: flex; flex-direction: column">
+
+<header style="display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 0 20px; min-height: 56px; border-bottom: 1px solid #1C2329">
+<div style="display: flex; align-items: center; gap: 10px">
+<svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="13" height="18" fill="none" stroke="#4CC9B0" stroke-width="2"></rect><path d="M2 14 C7 14 8 8 11 8 C13 8 13 12 15 12 C17 12 18 7 22 7" fill="none" stroke="#4CC9B0" stroke-width="2"></path></svg>
+<span style="font-weight: 600; font-size: 15px; letter-spacing: -0.01em">OpenLeaf</span>
+</div>
+<nav aria-label="Breadcrumb" style="display: flex; align-items: center; gap: 8px; color: #8E999F">
+<a href="#" style="color: #8E999F; text-decoration: none">Knowledge</a>
+<span aria-hidden="true">/</span>
+<a href="#" style="color: #8E999F; text-decoration: none">Market research</a>
+<span aria-hidden="true">/</span>
+<span style="color: #E8ECEE">US market size for DeepHeme</span>
+</nav>
+<div style="flex: 1"></div>
+<span style="display: inline-flex; align-items: center; gap: 8px; color: #E9A55B; font-size: 12px"><span style="width: 6px; height: 6px; border-radius: 50%; background: #E9A55B"></span>2 of 4 steps need review</span>
+<a href="Tree.dc.html" style="color: #C9D1D5; text-decoration: none; border: 1px solid #263038; border-radius: 8px; padding: 7px 12px">View in tree</a>
+<button type="button" style="background: #E8ECEE; color: #0B0F12; border: none; border-radius: 8px; padding: 8px 14px; font-weight: 600; font-size: 13px">Recompile</button>
+</header>
+
+<div style="display: flex; flex-wrap: wrap; flex: 1; min-height: 0">
+
+<section aria-label="Source" style="flex: 1 1 500px; min-width: 0; display: flex; flex-direction: column; border-right: 1px solid #1C2329">
+<div style="display: flex; align-items: center; gap: 4px; padding: 0 12px; height: 40px; border-bottom: 1px solid #1C2329">
+<span style="padding: 6px 10px; border-radius: 6px; background: #151B20; color: #E8ECEE; font-family: 'JetBrains Mono', monospace; font-size: 12px">us-market-size.tex</span>
+<span style="padding: 6px 10px; color: #6E7A80; font-family: 'JetBrains Mono', monospace; font-size: 12px">facts.bib</span>
+</div>
+<div style="padding: 18px 0; font-family: 'JetBrains Mono', monospace; font-size: 12.5px; line-height: 22px; color: #D3DADD; white-space: pre; overflow-x: auto">
+<div style="display: flex"><span style="width: 44px; text-align: right; padding-right: 16px; color: #45525A">1</span><span style="color: #6E7A80; font-style: italic">% knowledge/market-research/us-market-size.tex</span></div>
+<div style="display: flex"><span style="width: 44px; text-align: right; padding-right: 16px; color: #45525A">2</span><span><span style="color: #4CC9B0">\begin</span>{<span style="color: #B4A1F0">knowledge</span>}{US market size for DeepHeme}</span></div>
+<div style="display: flex"><span style="width: 44px; text-align: right; padding-right: 16px; color: #45525A">3</span><span> </span></div>
+<div style="display: flex"><span style="width: 44px; text-align: right; padding-right: 16px; color: #45525A">4</span><span><span style="color: #4CC9B0">\conclusion</span>{The US spends <span style="color: #4CC9B0">\out</span>{<span style="color: #E8C891">total</span>} a year on reading</span></div>
+<div style="display: flex"><span style="width: 44px; text-align: right; padding-right: 16px; color: #45525A">5</span><span>  bone marrow aspirates; DeepHeme could serve <span style="color: #4CC9B0">\out</span>{<span style="color: #E8C891">share</span>} of it.}</span></div>
+<div style="display: flex"><span style="width: 44px; text-align: right; padding-right: 16px; color: #45525A">6</span><span> </span></div>
+<div style="display: flex"><span style="width: 44px; text-align: right; padding-right: 16px; color: #45525A">7</span><span><span style="color: #4CC9B0">\begin</span>{<span style="color: #B4A1F0">calculation</span>}{<span style="color: #E8C891">total</span>}</span></div>
+<div style="display: flex"><span style="width: 44px; text-align: right; padding-right: 16px; color: #45525A">8</span><span>  <span style="color: #4CC9B0">\kn</span>{<span style="color: #B4A1F0">us-aspirates-per-year</span>} <span style="color: #4CC9B0">\times</span> <span style="color: #4CC9B0">\fact</span>{<span style="color: #8FD8F0">fee-per-read</span>}</span></div>
+<div style="display: flex"><span style="width: 44px; text-align: right; padding-right: 16px; color: #45525A">9</span><span><span style="color: #4CC9B0">\end</span>{<span style="color: #B4A1F0">calculation</span>}</span></div>
+<div style="display: flex"><span style="width: 44px; text-align: right; padding-right: 16px; color: #45525A">10</span><span> </span></div>
+<div style="display: flex"><span style="width: 44px; text-align: right; padding-right: 16px; color: #45525A">11</span><span><span style="color: #4CC9B0">\begin</span>{<span style="color: #B4A1F0">assumption</span>}</span></div>
+<div style="display: flex"><span style="width: 44px; text-align: right; padding-right: 16px; color: #45525A">12</span><span>  For the next three years, only labs with a digital slide</span></div>
+<div style="display: flex; background: #142A27; box-shadow: inset 2px 0 0 #4CC9B0"><span style="width: 44px; text-align: right; padding-right: 16px; color: #8E999F">13</span><span>  scanner can use DeepHeme. Use <span style="color: #4CC9B0">\fact</span>{<span style="color: #8FD8F0; text-decoration: underline; text-underline-offset: 3px">labs-with-scanner</span>} as</span></div>
+<div style="display: flex"><span style="width: 44px; text-align: right; padding-right: 16px; color: #45525A">14</span><span>  the share of aspirates it can reach.</span></div>
+<div style="display: flex"><span style="width: 44px; text-align: right; padding-right: 16px; color: #45525A">15</span><span><span style="color: #4CC9B0">\end</span>{<span style="color: #B4A1F0">assumption</span>}</span></div>
+<div style="display: flex"><span style="width: 44px; text-align: right; padding-right: 16px; color: #45525A">16</span><span> </span></div>
+<div style="display: flex"><span style="width: 44px; text-align: right; padding-right: 16px; color: #45525A">17</span><span><span style="color: #4CC9B0">\begin</span>{<span style="color: #B4A1F0">judgment</span>}</span></div>
+<div style="display: flex"><span style="width: 44px; text-align: right; padding-right: 16px; color: #45525A">18</span><span>  Count an aspirate where it is read, not where it is drawn,</span></div>
+<div style="display: flex"><span style="width: 44px; text-align: right; padding-right: 16px; color: #45525A">19</span><span>  so cases sent out to another lab are not counted twice.</span></div>
+<div style="display: flex"><span style="width: 44px; text-align: right; padding-right: 16px; color: #45525A">20</span><span><span style="color: #4CC9B0">\end</span>{<span style="color: #B4A1F0">judgment</span>}</span></div>
+<div style="display: flex"><span style="width: 44px; text-align: right; padding-right: 16px; color: #45525A">21</span><span> </span></div>
+<div style="display: flex"><span style="width: 44px; text-align: right; padding-right: 16px; color: #45525A">22</span><span><span style="color: #4CC9B0">\begin</span>{<span style="color: #B4A1F0">calculation</span>}{<span style="color: #E8C891">share</span>}</span></div>
+<div style="display: flex"><span style="width: 44px; text-align: right; padding-right: 16px; color: #45525A">23</span><span>  <span style="color: #4CC9B0">\out</span>{<span style="color: #E8C891">total</span>} <span style="color: #4CC9B0">\times</span> <span style="color: #4CC9B0">\fact</span>{<span style="color: #8FD8F0">labs-with-scanner</span>}</span></div>
+<div style="display: flex"><span style="width: 44px; text-align: right; padding-right: 16px; color: #45525A">24</span><span><span style="color: #4CC9B0">\end</span>{<span style="color: #B4A1F0">calculation</span>}</span></div>
+<div style="display: flex"><span style="width: 44px; text-align: right; padding-right: 16px; color: #45525A">25</span><span> </span></div>
+<div style="display: flex"><span style="width: 44px; text-align: right; padding-right: 16px; color: #45525A">26</span><span><span style="color: #4CC9B0">\end</span>{<span style="color: #B4A1F0">knowledge</span>}</span></div>
+</div>
+<div style="margin-top: auto; border-top: 1px solid #1C2329; padding: 12px 20px; display: flex; flex-wrap: wrap; gap: 16px; color: #8E999F; font-size: 12px">
+<span><span style="color: #4CC9B0; font-family: 'JetBrains Mono', monospace">\fact</span> a checked fact</span>
+<span><span style="color: #4CC9B0; font-family: 'JetBrains Mono', monospace">\kn</span> other knowledge</span>
+<span><span style="color: #4CC9B0; font-family: 'JetBrains Mono', monospace">\out</span> a result OpenLeaf computes</span>
+</div>
+</section>
+
+<section aria-label="Compiled PDF" style="flex: 1 1 520px; min-width: 0; background: #12171B; display: flex; flex-direction: column">
+<div style="display: flex; align-items: center; gap: 12px; padding: 0 16px; height: 40px; border-bottom: 1px solid #1C2329; color: #8E999F">
+<span style="color: #E8ECEE">PDF</span>
+<span>1 page</span>
+<div style="flex: 1"></div>
+<label style="display: inline-flex; align-items: center; gap: 8px"><input type="checkbox" checked style="accent-color: #4CC9B0">Show review status</label>
+</div>
+<div style="padding: 28px 24px; display: flex; justify-content: center">
+<div style="position: relative; width: 100%; max-width: 540px; background: #F7F5F0; color: #1C2124; border-radius: 3px; box-shadow: 0 20px 50px rgba(0,0,0,0.45); padding: 48px 52px; font-family: 'Source Serif 4', Georgia, serif; font-size: 14px; line-height: 1.6; box-sizing: border-box">
+<p style="margin: 0 0 6px; font-family: Inter, sans-serif; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: #6A747A">Knowledge · Market research</p>
+<h1 style="margin: 0 0 20px; font-size: 24px; font-weight: 600; line-height: 1.25; letter-spacing: -0.01em">US market size for DeepHeme</h1>
+<div style="background: #ECEAE3; border-radius: 4px; padding: 14px 16px; margin-bottom: 22px">
+<p style="margin: 0"><i>Conclusion.</i> The US spends <b>[$ total]</b> a year on reading bone marrow aspirates; DeepHeme could serve <b>[$ share]</b> of it.</p>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 16px">
+<div style="position: relative">
+<p style="margin: 0"><span style="font-variant: small-caps; letter-spacing: 0.04em; font-weight: 600">1 · Calculation.</span> Total = US aspirates per year <span style="color: #0E7C6B">[aspirates / yr]<sup style="font-family: Inter, sans-serif; font-size: 9px">K1</sup></span> × payment per read <span style="color: #0E7C6B">[$ per read]<sup style="font-family: Inter, sans-serif; font-size: 9px">F2</sup></span> = <b>[$ total]</b>.</p>
+</div>
+<div style="position: relative; background: #FBF1E2; outline: 1px solid #EBC995; border-radius: 3px; padding: 6px 8px; margin: 0 -8px">
+<p style="margin: 0"><span style="font-variant: small-caps; letter-spacing: 0.04em; font-weight: 600">2 · Assumption.</span> For the next three years, only labs with a digital slide scanner can use DeepHeme. Use the share of labs with a scanner, <span style="color: #0E7C6B; background: #CDEEE6; border-radius: 2px">[% of labs]<sup style="font-family: Inter, sans-serif; font-size: 9px">F3</sup></span>, as the share of aspirates it can reach.</p>
+</div>
+<div style="position: relative; background: #FBF1E2; outline: 1px solid #EBC995; border-radius: 3px; padding: 6px 8px; margin: 0 -8px">
+<p style="margin: 0"><span style="font-variant: small-caps; letter-spacing: 0.04em; font-weight: 600">3 · Judgment call.</span> Count an aspirate where it is read, not where it is drawn, so cases sent out to another lab are not counted twice.</p>
+</div>
+<div style="position: relative">
+<p style="margin: 0"><span style="font-variant: small-caps; letter-spacing: 0.04em; font-weight: 600">4 · Calculation.</span> Share = <b>[$ total]</b> × <span style="color: #0E7C6B">[% of labs]<sup style="font-family: Inter, sans-serif; font-size: 9px">F3</sup></span> = <b>[$ share]</b>.</p>
+</div>
+</div>
+
+<div style="margin-top: 28px; padding-top: 14px; border-top: 1px solid #D8D4CA; font-size: 12px; line-height: 1.6; color: #3E474C">
+<p style="margin: 0 0 4px; font-family: Inter, sans-serif; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: #6A747A">Built on</p>
+<p style="margin: 0">K1 US bone marrow aspirates per year (knowledge).</p>
+<p style="margin: 0">F2 Payment for reading one aspirate. Fee schedule, web page, saved 6 Nov 2026.</p>
+<p style="margin: 0">F3 Share of US labs with a digital slide scanner. Industry survey, p. [x].</p>
+</div>
+</div>
+</div>
+<p style="margin: 0 24px 24px; text-align: center; color: #6E7A80; font-size: 12px">Review highlights are drawn over the PDF, like Highlight additions. The downloaded PDF stays clean.</p>
+</section>
+
+<aside aria-label="Selected fact" style="flex: 0 1 320px; min-width: 280px; display: flex; flex-direction: column; gap: 22px; padding: 20px; border-left: 1px solid #1C2329">
+<div style="display: flex; flex-direction: column; gap: 6px">
+<p style="margin: 0; color: #8E999F; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase">Selected · line 13</p>
+<p style="margin: 0; font-size: 15px; font-weight: 600; line-height: 1.35">Share of US labs with a digital slide scanner</p>
+<p style="margin: 0; font-family: 'JetBrains Mono', monospace; color: #8FD8F0; font-size: 12px">\fact{labs-with-scanner}</p>
+</div>
+<div style="display: flex; align-items: baseline; justify-content: space-between; border-top: 1px solid #1C2329; border-bottom: 1px solid #1C2329; padding: 14px 0">
+<span style="font-family: 'JetBrains Mono', monospace; font-size: 18px">[% of labs]</span>
+<span style="display: inline-flex; align-items: center; gap: 6px; color: #C9D1D5; font-size: 12px"><span style="width: 6px; height: 6px; border-radius: 50%; border: 1px solid #8E999F"></span>Unreviewed</span>
+</div>
+<div style="display: flex; flex-direction: column; gap: 10px">
+<p style="margin: 0; color: #8E999F; font-size: 12px">Industry survey · PDF · page [x]</p>
+<div style="background: #F7F5F0; border-radius: 4px; padding: 16px; display: flex; flex-direction: column; gap: 8px">
+<div style="height: 6px; width: 82%; background: #DAD6CC; border-radius: 3px"></div>
+<div style="height: 6px; width: 94%; background: #DAD6CC; border-radius: 3px"></div>
+<p style="margin: 2px 0; background: #F3DE79; color: #1C2124; border-radius: 2px; padding: 5px 7px; font-family: 'Source Serif 4', Georgia, serif; font-size: 12px; line-height: 1.45">“… [% of labs] of responding laboratories reported at least one whole slide scanner …”</p>
+<div style="height: 6px; width: 76%; background: #DAD6CC; border-radius: 3px"></div>
+<div style="height: 6px; width: 88%; background: #DAD6CC; border-radius: 3px"></div>
+</div>
+<div style="display: flex; gap: 8px">
+<button type="button" style="flex: 1; background: #4CC9B0; color: #0B0F12; border: none; border-radius: 8px; padding: 10px; font-weight: 600; font-size: 13px">Confirm</button>
+<button type="button" style="flex: 1; background: transparent; color: #F2A0A0; border: 1px solid #3C2629; border-radius: 8px; padding: 10px; font-size: 13px">Reject</button>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<p style="margin: 0; color: #8E999F; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase">Also used by</p>
+<a href="#" style="display: flex; justify-content: space-between; text-decoration: none; color: #E8ECEE; padding: 10px 12px; border: 1px solid #1C2329; border-radius: 8px"><span>Labs that can adopt DeepHeme</span><span style="color: #B4A1F0; font-size: 11px">knowledge</span></a>
+<a href="#" style="display: flex; justify-content: space-between; text-decoration: none; color: #E8ECEE; padding: 10px 12px; border: 1px solid #1C2329; border-radius: 8px"><span>Cost case for a hospital</span><span style="color: #B4A1F0; font-size: 11px">knowledge</span></a>
+</div>
+</aside>
+
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1000}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

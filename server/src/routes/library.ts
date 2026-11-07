@@ -1,6 +1,6 @@
 import { Router } from "express";
 import fs from "node:fs";
-import { ZodError } from "zod";
+import { z, ZodError } from "zod";
 import {
   addPaper,
   bulkPatchPapers,
@@ -29,6 +29,8 @@ import {
 import {
   CreateFactInputSchema,
   createFact,
+  previewFactKeyRename,
+  renameFactKey,
   deleteFact,
   FactStatusSchema,
   FactTypeSchema,
@@ -488,6 +490,29 @@ libraryRouter.patch("/:citekey/facts/:id", async (req, res) => {
     const patch = PatchFactInputSchema.parse(req.body ?? {});
     const fact = await updateFact(req.params.citekey, req.params.id, patch);
     res.json({ fact });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+libraryRouter.post("/:citekey/facts/:id/rename-key", async (req, res) => {
+  try {
+    const body = z
+      .object({
+        key: z.string().min(2).max(64),
+        preview: z.boolean().optional(),
+        rewriteReferences: z.boolean().optional(),
+      })
+      .parse(req.body ?? {});
+    if (body.preview) {
+      const preview = await previewFactKeyRename(req.params.citekey, req.params.id, body.key);
+      res.json(preview);
+      return;
+    }
+    const result = await renameFactKey(req.params.citekey, req.params.id, body.key, {
+      rewriteReferences: body.rewriteReferences,
+    });
+    res.json(result);
   } catch (err) {
     sendError(res, err);
   }

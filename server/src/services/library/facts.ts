@@ -4,6 +4,7 @@
  */
 import fs from "node:fs";
 import fsPromises from "node:fs/promises";
+import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { getPaper, listAllRecords } from "./index.js";
@@ -20,12 +21,21 @@ import {
   type PdfTextCapability,
 } from "./pdfText.js";
 import { retrieveFactFromPdf } from "./factRetrieve.js";
+import { FACT_KEY_RE, isValidFactKey, uniquifyFactKey } from "./factKey.js";
+import { invalidateFactKeyIndex, takenFactKeys } from "./factKeyIndex.js";
+import { parseFactValue } from "./factValue.js";
 
 export const FactTypeSchema = z.enum(["statement", "value", "question", "tag"]);
 export type FactType = z.infer<typeof FactTypeSchema>;
 
 export const FactStatusSchema = z.enum(["unreviewed", "confirmed", "rejected", "not_found"]);
 export type FactStatus = z.infer<typeof FactStatusSchema>;
+
+export const FactCreatedBySchema = z.object({
+  kind: z.enum(["human", "agent"]),
+  name: z.string().default(""),
+});
+export type FactCreatedBy = z.infer<typeof FactCreatedBySchema>;
 
 export const FactHighlightSchema = z.object({
   page: z.number().int().positive(),
@@ -51,6 +61,13 @@ export const PaperFactSchema = z.object({
   status: FactStatusSchema,
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
+  /** Stable library-wide key for `\fact{key}`. Lazily assigned on read. */
+  key: z.string().regex(FACT_KEY_RE).optional(),
+  /** Numeric value used in calculations; null when not numeric. */
+  value: z.number().nullable().optional(),
+  unit: z.string().default(""),
+  createdBy: FactCreatedBySchema.default({ kind: "human", name: "" }),
+  sourceKind: z.enum(["pdf", "web"]).default("pdf"),
 });
 
 export type PaperFact = z.infer<typeof PaperFactSchema>;
@@ -79,6 +96,11 @@ export const CreateFactInputSchema = z.object({
   highlights: z.array(FactHighlightSchema).optional(),
   /** Bounding box on a page; server maps intersecting text → highlights. */
   rect: FactRectSchema.optional(),
+  key: z.string().regex(FACT_KEY_RE).optional(),
+  value: z.number().nullable().optional(),
+  unit: z.string().max(64).optional(),
+  createdBy: FactCreatedBySchema.optional(),
+  sourceKind: z.enum(["pdf", "web"]).optional(),
 });
 export type CreateFactInput = z.infer<typeof CreateFactInputSchema>;
 
@@ -92,6 +114,14 @@ export const PatchFactInputSchema = z.object({
   rect: FactRectSchema.optional(),
   /** Clear highlights only; keep status/answer. */
   untag: z.boolean().optional(),
+  key: z.string().regex(FACT_KEY_RE).optional(),
+  value: z.number().nullable().optional(),
+  unit: z.string().max(64).optional(),
+  /**
+   * Host Confirm that intentionally keeps the fact confirmed after editing
+   * answer/value/unit/highlights in the same request.
+   */
+  confirmWithContent: z.boolean().optional(),
 });
 export type PatchFactInput = z.infer<typeof PatchFactInputSchema>;
 
@@ -111,13 +141,71 @@ function newId(): string {
   return `fact_${randomBytes(8).toString("hex")}`;
 }
 
+const bakWritten = new Set<string>();
+
+async function ensureBakOnce(citekey: string, file: string): Promise<void> {
+  if (bakWritten.has(citekey) || !fs.existsSync(file)) return;
+  const bak = `${file}.bak`;
+  if (fs.existsSync(bak)) {
+    bakWritten.add(citekey);
+    return;
+  }
+  await fsPromises.copyFile(file, bak);
+  bakWritten.add(citekey);
+}
+
+async function migrateFactsInPlace(citekey: string, data: FactsFile): Promise<FactsFile> {
+  const taken = await takenFactKeys();
+  // Exclude this file's own keys from collision checks while assigning missing ones.
+  for (const f of data.facts) {
+    if (f.key && isValidFactKey(f.key)) taken.delete(f.key);
+  }
+  let dirty = false;
+  const nextFacts = data.facts.map((f) => {
+    let fact = f;
+    if (!fact.key || !isValidFactKey(fact.key)) {
+      const key = uniquifyFactKey(undefined, fact.input || fact.id, taken);
+      taken.add(key);
+      fact = { ...fact, key };
+      dirty = true;
+    } else {
+      taken.add(fact.key);
+    }
+    if (fact.value === undefined) {
+      const parsed = parseFactValue(fact.answer ?? "", fact.unit ?? "");
+      fact = {
+        ...fact,
+        value: parsed.value,
+        unit: fact.unit || parsed.unit || "",
+      };
+      dirty = true;
+    }
+    if (!fact.createdBy) {
+      fact = { ...fact, createdBy: { kind: "human", name: "" } };
+      dirty = true;
+    }
+    if (!fact.sourceKind) {
+      fact = { ...fact, sourceKind: "pdf" };
+      dirty = true;
+    }
+    return PaperFactSchema.parse(fact);
+  });
+  const migrated: FactsFile = { version: 1, facts: nextFacts };
+  if (dirty) {
+    await writeFile(citekey, migrated);
+    invalidateFactKeyIndex();
+  }
+  return migrated;
+}
+
 async function readFile(citekey: string): Promise<FactsFile> {
   const file = factsPath(citekey);
   if (!fs.existsSync(file)) return { version: 1, facts: [] };
   try {
     const raw = JSON.parse(await fsPromises.readFile(file, "utf8")) as unknown;
     const parsed = FactsFileSchema.safeParse(raw);
-    return parsed.success ? parsed.data : { version: 1, facts: [] };
+    if (!parsed.success) return { version: 1, facts: [] };
+    return migrateFactsInPlace(citekey, parsed.data);
   } catch {
     return { version: 1, facts: [] };
   }
@@ -126,7 +214,10 @@ async function readFile(citekey: string): Promise<FactsFile> {
 async function writeFile(citekey: string, data: FactsFile): Promise<void> {
   ensureLibraryRoot();
   await fsPromises.mkdir(paperDir(citekey), { recursive: true });
-  await fsPromises.writeFile(factsPath(citekey), `${JSON.stringify(data, null, 2)}\n`, "utf8");
+  const file = factsPath(citekey);
+  await ensureBakOnce(citekey, file);
+  await fsPromises.writeFile(file, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+  invalidateFactKeyIndex();
 }
 
 async function withDisplay(citekey: string, fact: PaperFact): Promise<PaperFactView> {
@@ -238,6 +329,14 @@ export async function createFact(
     status = matched.status;
   }
 
+  const taken = await takenFactKeys();
+  const key = uniquifyFactKey(parsed.key, parsed.input.trim(), taken);
+  const unit = parsed.unit ?? "";
+  const value =
+    parsed.value !== undefined
+      ? parsed.value
+      : parseFactValue(answer, unit).value;
+  const inferredUnit = parsed.unit ?? parseFactValue(answer, unit).unit;
   const fact = PaperFactSchema.parse({
     id: newId(),
     citekey,
@@ -248,6 +347,11 @@ export async function createFact(
     status,
     createdAt: now,
     updatedAt: now,
+    key,
+    value,
+    unit: inferredUnit,
+    createdBy: parsed.createdBy ?? { kind: "human", name: "" },
+    sourceKind: parsed.sourceKind ?? "pdf",
   });
   const file = await readFile(citekey);
   file.facts.push(fact);
@@ -271,10 +375,23 @@ export async function updateFact(
   let next: PaperFact = { ...prev, updatedAt: new Date().toISOString() };
   const humanRetag = Boolean(parsed.rect) || parsed.highlights !== undefined;
   const explicitUntag = parsed.untag === true;
+  const keepConfirmed = parsed.confirmWithContent === true && parsed.status === "confirmed";
 
   // Field writes first (may combine with a tag/untag in the same patch).
   if (parsed.input !== undefined) next = { ...next, input: parsed.input.trim() };
   if (parsed.answer !== undefined) next = { ...next, answer: parsed.answer };
+  if (parsed.unit !== undefined) next = { ...next, unit: parsed.unit };
+  if (parsed.value !== undefined) next = { ...next, value: parsed.value };
+  else if (parsed.answer !== undefined && parsed.answer !== prev.answer) {
+    const parsedVal = parseFactValue(parsed.answer, next.unit ?? "");
+    next = { ...next, value: parsedVal.value, unit: next.unit || parsedVal.unit };
+  }
+  if (parsed.key !== undefined && parsed.key !== prev.key) {
+    const taken = await takenFactKeys();
+    if (prev.key) taken.delete(prev.key);
+    if (taken.has(parsed.key)) throw httpError(409, `Fact key already in use: ${parsed.key}`);
+    next = { ...next, key: parsed.key };
+  }
 
   if (explicitUntag) {
     next = { ...next, highlights: [] };
@@ -307,21 +424,32 @@ export async function updateFact(
         pages: cache.pages,
       });
       const matched = applyMatchedHighlights(retrieved.quotes, cache.pages, retrieved.answer);
+      const parsedVal = parseFactValue(retrieved.answer, next.unit ?? "");
       next = {
         ...next,
         answer: retrieved.answer,
         highlights: matched.highlights,
         status: matched.status,
+        value: parsedVal.value,
+        unit: next.unit || parsedVal.unit,
       };
     }
-  } else if (parsed.answer !== undefined && parsed.answer !== prev.answer) {
-    next = { ...next, status: "unreviewed" };
+  } else if (
+    !keepConfirmed &&
+    ((parsed.answer !== undefined && parsed.answer !== prev.answer) ||
+      (parsed.value !== undefined && parsed.value !== prev.value) ||
+      (parsed.unit !== undefined && parsed.unit !== prev.unit) ||
+      (humanRetag && parsed.highlights !== undefined))
+  ) {
+    if (prev.status === "confirmed") next = { ...next, status: "unreviewed" };
   } else if (parsed.status !== undefined) {
     if (prev.status === "not_found" && parsed.status !== "unreviewed") {
       throw httpError(400, "A not-found fact cannot be confirmed or rejected");
     }
     next = { ...next, status: parsed.status };
   }
+
+  if (keepConfirmed) next = { ...next, status: "confirmed" };
 
   file.facts[idx] = PaperFactSchema.parse(next);
   await writeFile(citekey, file);
@@ -379,7 +507,7 @@ export async function listAllFacts(opts?: {
       if (opts?.type && fact.type !== opts.type) continue;
       if (opts?.status && fact.status !== opts.status) continue;
       if (q) {
-        const hay = `${fact.input}\n${fact.answer}\n${fact.highlights.map((h) => h.quote).join("\n")}`.toLowerCase();
+        const hay = `${fact.input}\n${fact.answer}\n${fact.key ?? ""}\n${fact.highlights.map((h) => h.quote).join("\n")}`.toLowerCase();
         if (!hay.includes(q)) continue;
       }
       const view = await withDisplay(paper.citekey, fact);
@@ -388,4 +516,119 @@ export async function listAllFacts(opts?: {
   }
   out.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   return out;
+}
+
+export type FactKeyRewriteHit = {
+  projectId: string;
+  relativePath: string;
+  lineCount: number;
+};
+
+function factMacroPattern(key: string): RegExp {
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\\\fact\\{${escaped}\\}`, "g");
+}
+
+async function walkTexFiles(
+  dir: string,
+  relative: string,
+  out: { relativePath: string; abs: string }[],
+): Promise<void> {
+  let entries: fs.Dirent[];
+  try {
+    entries = await fsPromises.readdir(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const ent of entries) {
+    if (ent.name === ".git" || ent.name === ".openleaf" || ent.name === "node_modules") continue;
+    const rel = relative ? `${relative}/${ent.name}` : ent.name;
+    const abs = path.join(dir, ent.name);
+    if (ent.isDirectory()) await walkTexFiles(abs, rel, out);
+    else if (ent.isFile() && ent.name.toLowerCase().endsWith(".tex")) out.push({ relativePath: rel, abs });
+  }
+}
+
+async function findFactKeyReferences(oldKey: string): Promise<FactKeyRewriteHit[]> {
+  const { getProjectsRootAbs } = await import("../../config.js");
+  const root = getProjectsRootAbs();
+  const hits: FactKeyRewriteHit[] = [];
+  if (!fs.existsSync(root)) return hits;
+  const re = factMacroPattern(oldKey);
+  const projects = await fsPromises.readdir(root, { withFileTypes: true });
+  for (const proj of projects) {
+    if (!proj.isDirectory() || proj.name.startsWith(".")) continue;
+    const files: { relativePath: string; abs: string }[] = [];
+    await walkTexFiles(path.join(root, proj.name), "", files);
+    for (const file of files) {
+      let text: string;
+      try {
+        text = await fsPromises.readFile(file.abs, "utf8");
+      } catch {
+        continue;
+      }
+      const matches = text.match(re);
+      if (!matches?.length) continue;
+      hits.push({ projectId: proj.name, relativePath: file.relativePath, lineCount: matches.length });
+    }
+  }
+  return hits;
+}
+
+/** Preview `\fact{old}` rewrite targets before renaming a key. */
+export async function previewFactKeyRename(
+  citekey: string,
+  id: string,
+  newKey: string,
+): Promise<{ oldKey: string; newKey: string; hits: FactKeyRewriteHit[] }> {
+  if (!isValidFactKey(newKey)) throw httpError(400, "Invalid fact key");
+  const file = await readFile(citekey);
+  const fact = file.facts.find((f) => f.id === id);
+  if (!fact) throw httpError(404, `Fact not found: ${id}`);
+  const oldKey = fact.key;
+  if (!oldKey) throw httpError(400, "Fact has no key yet");
+  if (oldKey === newKey) return { oldKey, newKey, hits: [] };
+  const taken = await takenFactKeys();
+  taken.delete(oldKey);
+  if (taken.has(newKey)) throw httpError(409, `Fact key already in use: ${newKey}`);
+  const hits = await findFactKeyReferences(oldKey);
+  return { oldKey, newKey, hits };
+}
+
+/** Rename a fact key and optionally rewrite `\fact{old}` → `\fact{new}` across projects. */
+export async function renameFactKey(
+  citekey: string,
+  id: string,
+  newKey: string,
+  opts?: { rewriteReferences?: boolean },
+): Promise<{ fact: PaperFactView; rewritten: FactKeyRewriteHit[] }> {
+  const preview = await previewFactKeyRename(citekey, id, newKey);
+  const file = await readFile(citekey);
+  const idx = file.facts.findIndex((f) => f.id === id);
+  if (idx < 0) throw httpError(404, `Fact not found: ${id}`);
+  const prev = file.facts[idx]!;
+  file.facts[idx] = PaperFactSchema.parse({
+    ...prev,
+    key: newKey,
+    updatedAt: new Date().toISOString(),
+  });
+  await writeFile(citekey, file);
+
+  const rewritten: FactKeyRewriteHit[] = [];
+  if (opts?.rewriteReferences !== false && preview.hits.length) {
+    const { getProjectsRootAbs } = await import("../../config.js");
+    const root = getProjectsRootAbs();
+    const re = factMacroPattern(preview.oldKey);
+    const replacement = `\\fact{${newKey}}`;
+    for (const hit of preview.hits) {
+      const abs = path.join(root, hit.projectId, hit.relativePath);
+      const text = await fsPromises.readFile(abs, "utf8");
+      const next = text.replace(re, replacement);
+      if (next !== text) {
+        await fsPromises.writeFile(abs, next, "utf8");
+        rewritten.push(hit);
+      }
+    }
+  }
+  return { fact: await withDisplay(citekey, file.facts[idx]!), rewritten };
 }

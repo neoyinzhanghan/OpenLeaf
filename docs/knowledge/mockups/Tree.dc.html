@@ -1,0 +1,669 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Knowledge tree</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap">
+<style>
+body{margin:0;background:#0B0F12}
+a{color:#6FD6C2}a:hover{color:#9BE5D6}
+button{font-family:inherit;cursor:pointer}
+@keyframes olPulse{0%{box-shadow:0 0 0 0 rgba(240,160,75,0.85)}70%{box-shadow:0 0 0 10px rgba(240,160,75,0)}100%{box-shadow:0 0 0 0 rgba(240,160,75,0)}}
+@keyframes olDash{from{background-position:0 0}to{background-position:12px 0}}
+</style>
+</helmet>
+<div style="min-height: 1100px; background: #0B0F12; color: #E8ECEE; font-family: Inter, system-ui, sans-serif; font-size: 13px; display: flex; flex-direction: column">
+
+<header style="display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 0 20px; min-height: 56px; border-bottom: 1px solid #1C2329">
+<div style="display: flex; align-items: center; gap: 10px">
+<svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="13" height="18" fill="none" stroke="#4CC9B0" stroke-width="2"></rect><path d="M2 14 C7 14 8 8 11 8 C13 8 13 12 15 12 C17 12 18 7 22 7" fill="none" stroke="#4CC9B0" stroke-width="2"></path></svg>
+<span style="font-weight: 600; font-size: 15px; letter-spacing: -0.01em">OpenLeaf</span>
+</div>
+<nav style="display: flex; flex-wrap: wrap; gap: 2px; margin-left: 12px">
+<a href="#" style="color: #8E999F; text-decoration: none; padding: 8px 12px; border-radius: 8px">Projects</a>
+<a href="#" style="color: #8E999F; text-decoration: none; padding: 8px 12px; border-radius: 8px">Library</a>
+<a href="#" style="color: #8E999F; text-decoration: none; padding: 8px 12px; border-radius: 8px">Facts</a>
+<a href="#" style="color: #E8ECEE; text-decoration: none; padding: 8px 12px; border-radius: 8px; background: #151B20">Knowledge</a>
+</nav>
+</header>
+
+<div style="display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 24px; padding: 20px 24px 14px">
+<div style="display: flex; flex-direction: column; gap: 4px">
+<h1 style="margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.01em">Knowledge tree</h1>
+<p style="margin: 0; color: #8E999F">{{summary}}</p>
+</div>
+<div style="flex: 1"></div>
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: #6E7A80; font-size: 12px">
+<span>Recently visited</span>
+<sc-for list="{{trail}}" as="t" hint-placeholder-count="3">
+<button type="button" onClick="{{t.pick}}" style="background: #11161A; border: 1px solid #1C2329; color: #C9D1D5; border-radius: 999px; padding: 4px 10px; font-size: 12px">{{t.name}}</button>
+</sc-for>
+</div>
+</div>
+
+<div style="display: flex; flex-wrap: wrap; gap: 16px; padding: 0 24px 24px; align-items: flex-start">
+
+<div onMouseDown="{{bgDown}}" onMouseMove="{{move}}" onMouseUp="{{up}}" onMouseLeave="{{up}}" onWheel="{{wheel}}" style="flex: 999 1 640px; min-width: 0; height: 700px; position: relative; overflow: hidden; border: 1px solid #161D22; border-radius: 16px; background: radial-gradient(ellipse at 50% 45%, #121A1F 0%, #0B0F12 72%); cursor: {{cursor}}; user-select: none">
+
+<div style="position: absolute; left: 0; top: 0; width: 1px; height: 1px; transform-origin: 0 0; transform: translate({{vx}}px, {{vy}}px) scale({{zoom}}); transition: {{tr}}">
+
+<sc-for list="{{halos}}" as="h" hint-placeholder-count="5">
+<div style="position: absolute; left: {{h.left}}px; top: {{h.top}}px; width: {{h.d}}px; height: {{h.d}}px; border-radius: 50%; background: radial-gradient(circle, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.012) 55%, rgba(255,255,255,0) 71%); border: {{h.bw}}px dashed rgba(255,255,255,0.07); box-sizing: border-box; opacity: {{h.op}}; pointer-events: none; transition: opacity 0.3s"></div>
+</sc-for>
+
+<sc-for list="{{edges}}" as="e" hint-placeholder-count="40">
+<div style="position: absolute; left: {{e.left}}px; top: {{e.top}}px; width: {{e.len}}px; height: {{e.h}}px; transform-origin: 0 50%; transform: rotate({{e.ang}}deg); background: {{e.bg}}; animation: {{e.anim}}; opacity: {{e.op}}; border-radius: 2px; pointer-events: none; transition: opacity 0.3s"></div>
+</sc-for>
+
+<sc-for list="{{nodes}}" as="n" hint-placeholder-count="40">
+<button type="button" aria-label="{{n.label}}" onMouseDown="{{n.down}}" onClick="{{n.click}}" onMouseEnter="{{n.enter}}" onMouseLeave="{{n.leave}}" style="position: absolute; left: {{n.left}}px; top: {{n.top}}px; width: {{n.d}}px; height: {{n.d}}px; padding: 0; margin: 0; border-radius: 50%; box-sizing: border-box; background: {{n.bg}}; border: {{n.border}}; box-shadow: {{n.shadow}}; animation: {{n.anim}}; opacity: {{n.op}}; outline: {{n.outline}}; outline-offset: 3px; display: flex; align-items: center; justify-content: center; color: #DCE2E5; font-size: {{n.fs}}px; font-weight: 600; transition: opacity 0.3s">{{n.text}}</button>
+</sc-for>
+
+<sc-for list="{{labels}}" as="l" hint-placeholder-count="20">
+<div style="position: absolute; left: {{l.left}}px; top: {{l.top}}px; font-size: {{l.fs}}px; font-weight: {{l.fw}}; color: {{l.color}}; opacity: {{l.op}}; white-space: nowrap; pointer-events: none; text-shadow: 0 0 4px #0B0F12, 0 0 2px #0B0F12; transition: opacity 0.3s">{{l.text}}</div>
+</sc-for>
+
+<sc-for list="{{halos}}" as="h" hint-placeholder-count="5">
+<button type="button" aria-label="{{h.aria}}" onMouseDown="{{stop}}" onClick="{{h.toggle}}" style="position: absolute; left: {{h.lx}}px; top: {{h.ly}}px; transform: translateX(-50%); background: transparent; border: none; padding: 2px 6px; color: #6E7A80; font-size: {{h.fs}}px; letter-spacing: 0.14em; white-space: nowrap; opacity: {{h.op}}">{{h.name}} · {{h.count}}</button>
+</sc-for>
+</div>
+
+<div onMouseDown="{{stop}}" style="position: absolute; left: 14px; top: 14px; display: flex; flex-wrap: wrap; gap: 6px; cursor: default">
+<div style="display: flex; align-items: center; background: rgba(14,19,23,0.9); border: 1px solid #1E262C; border-radius: 10px; padding: 3px">
+<button type="button" aria-label="Zoom out" onClick="{{zoomOut}}" style="background: transparent; color: #C9D1D5; border: none; border-radius: 7px; width: 30px; height: 28px; font-size: 15px">−</button>
+<span style="color: #8E999F; font-size: 12px; width: 44px; text-align: center">{{zoomPct}}</span>
+<button type="button" aria-label="Zoom in" onClick="{{zoomIn}}" style="background: transparent; color: #C9D1D5; border: none; border-radius: 7px; width: 30px; height: 28px; font-size: 15px">+</button>
+</div>
+<button type="button" onClick="{{fitAll}}" style="background: rgba(14,19,23,0.9); color: #C9D1D5; border: 1px solid #1E262C; border-radius: 10px; padding: 0 12px; height: 36px; font-size: 12px">Fit all</button>
+<button type="button" onClick="{{fitFocus}}" style="background: rgba(14,19,23,0.9); color: #C9D1D5; border: 1px solid #1E262C; border-radius: 10px; padding: 0 12px; height: 36px; font-size: 12px">Fit branch</button>
+</div>
+
+<div style="position: absolute; right: 14px; top: 14px; display: flex; flex-direction: column; gap: 7px; background: rgba(14,19,23,0.9); border: 1px solid #1E262C; border-radius: 12px; padding: 12px 14px; font-size: 12px; color: #C9D1D5; pointer-events: none">
+<span style="display: flex; align-items: center; gap: 8px"><span style="width: 10px; height: 10px; border-radius: 50%; background: #4CC9B0"></span>Fact</span>
+<span style="display: flex; align-items: center; gap: 8px"><span style="width: 12px; height: 12px; border-radius: 50%; background: #A48BF5"></span>Knowledge</span>
+<span style="display: flex; align-items: center; gap: 8px"><span style="width: 12px; height: 12px; border-radius: 50%; background: #6FA6F2"></span>Project</span>
+<span style="display: flex; align-items: center; gap: 8px"><span style="width: 8px; height: 8px; border-radius: 50%; background: #8496A3; margin: 0 2px"></span>Source</span>
+<span style="height: 1px; background: #1E262C; margin: 2px 0"></span>
+<span style="display: flex; align-items: center; gap: 8px"><span style="width: 10px; height: 10px; border-radius: 50%; border: 2px solid #A9B4B9; box-sizing: border-box"></span>Hollow: not checked yet</span>
+<span style="display: flex; align-items: center; gap: 8px"><span style="width: 10px; height: 10px; border-radius: 50%; border: 2px solid #F0A04B; background: #A48BF5; box-sizing: border-box"></span>Amber ring: flagged</span>
+<span style="display: flex; align-items: center; gap: 8px"><span style="width: 10px; height: 10px; border-radius: 50%; background: #EF7A7A"></span>Red: rejected by you</span>
+<span style="display: flex; align-items: center; gap: 8px"><span style="width: 18px; height: 2px; background: repeating-linear-gradient(90deg, #F0A04B 0px, #F0A04B 5px, rgba(240,160,75,0) 5px, rgba(240,160,75,0) 8px)"></span>Change spreading</span>
+</div>
+
+<div onMouseDown="{{mmDown}}" role="img" aria-label="Minimap of the whole tree" style="position: absolute; left: 14px; bottom: 14px; width: 184px; height: 120px; overflow: hidden; background: rgba(14,19,23,0.92); border: 1px solid #1E262C; border-radius: 10px; cursor: pointer">
+<sc-for list="{{mdots}}" as="m" hint-placeholder-count="30">
+<div style="position: absolute; left: {{m.left}}px; top: {{m.top}}px; width: 3px; height: 3px; border-radius: 50%; background: {{m.c}}; opacity: {{m.op}}"></div>
+</sc-for>
+<div style="position: absolute; left: {{vw.left}}px; top: {{vw.top}}px; width: {{vw.w}}px; height: {{vw.h}}px; border: 1px solid rgba(232,236,238,0.55); border-radius: 3px; box-sizing: border-box; background: rgba(232,236,238,0.04)"></div>
+</div>
+
+<p style="position: absolute; right: 16px; bottom: 12px; margin: 0; color: #56636A; font-size: 11.5px; pointer-events: none">Scroll to zoom · drag to pan · drag a dot to move it · click to focus</p>
+
+<sc-if value="{{hasTip}}" hint-placeholder-val="{{ false }}">
+<div style="position: absolute; left: {{tip.left}}px; top: {{tip.top}}px; width: 240px; background: rgba(17,22,26,0.97); border: 1px solid #263038; border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; pointer-events: none; box-shadow: 0 12px 30px rgba(0,0,0,0.45)">
+<span style="display: flex; align-items: center; gap: 8px; font-size: 11px; color: #8E999F"><span style="width: 8px; height: 8px; border-radius: 50%; background: {{tip.kc}}"></span>{{tip.kind}} · {{tip.col}}</span>
+<span style="font-weight: 600; font-size: 13.5px; line-height: 1.35">{{tip.name}}</span>
+<span style="color: {{tip.sc}}; font-size: 12px">{{tip.status}}</span>
+<span style="color: #8E999F; font-size: 12px">{{tip.note}}</span>
+<span style="color: #8E999F; font-size: 12px">{{tip.counts}}</span>
+</div>
+</sc-if>
+</div>
+
+<aside style="flex: 1 1 320px; max-width: 360px; min-width: 280px; display: flex; flex-direction: column; gap: 14px">
+
+<section style="border: 1px solid #161D22; border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 10px">
+<label for="tq" style="color: #6E7A80; font-size: 10.5px; letter-spacing: 0.16em">FIND</label>
+<input id="tq" type="search" value="{{q}}" onChange="{{onSearch}}" placeholder="A source, fact, idea or project" style="background: #0E1317; border: 1px solid #222B31; border-radius: 9px; padding: 9px 12px; color: #E8ECEE; font-family: inherit; font-size: 13px">
+<sc-for list="{{results}}" as="r" hint-placeholder-count="0">
+<button type="button" onClick="{{r.pick}}" style="display: flex; align-items: center; gap: 10px; text-align: left; background: transparent; border: none; border-radius: 8px; padding: 7px 8px; color: #DCE2E5; font-size: 13px"><span style="width: 8px; height: 8px; border-radius: 50%; background: {{r.c}}; flex: none"></span><span style="flex: 1">{{r.name}}</span><span style="color: #6E7A80; font-size: 11px">{{r.kind}}</span></button>
+</sc-for>
+<sc-if value="{{noResults}}" hint-placeholder-val="{{ false }}">
+<span style="color: #6E7A80; font-size: 12px">Nothing matches yet.</span>
+</sc-if>
+</section>
+
+<section style="border: 1px solid #161D22; border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 12px">
+<p style="margin: 0; color: #6E7A80; font-size: 10.5px; letter-spacing: 0.16em">FOCUS</p>
+<sc-if value="{{hasFocus}}" hint-placeholder-val="{{ true }}">
+<div style="display: flex; flex-direction: column; gap: 6px">
+<span style="display: flex; align-items: center; gap: 8px; color: #8E999F; font-size: 11.5px"><span style="width: 8px; height: 8px; border-radius: 50%; background: {{f.kc}}"></span>{{f.kind}} · {{f.col}}</span>
+<span style="font-size: 15px; font-weight: 600; line-height: 1.35">{{f.name}}</span>
+<span style="color: {{f.sc}}; font-size: 12.5px">{{f.status}}</span>
+<span style="color: #8E999F; font-size: 12.5px">{{f.counts}}</span>
+</div>
+<div style="display: flex; align-items: center; gap: 10px">
+<span style="color: #8E999F; font-size: 12px">Show</span>
+<div role="group" aria-label="How far to follow the branch" style="display: flex; background: #0E1317; border: 1px solid #1C2329; border-radius: 9px; padding: 3px">
+<sc-for list="{{depths}}" as="d" hint-placeholder-count="3">
+<button type="button" onClick="{{d.pick}}" style="background: {{d.bg}}; color: {{d.color}}; border: none; border-radius: 6px; padding: 6px 10px; font-size: 12px">{{d.label}}</button>
+</sc-for>
+</div>
+</div>
+<div style="display: flex; flex-wrap: wrap; gap: 6px">
+<a href="{{openHref}}" style="background: #E8ECEE; color: #0B0F12; text-decoration: none; border-radius: 8px; padding: 7px 12px; font-weight: 600; font-size: 12.5px">Open</a>
+<button type="button" onClick="{{startPath}}" style="background: transparent; color: #C9D1D5; border: 1px solid #263038; border-radius: 8px; padding: 7px 12px; font-size: 12.5px">How does it connect to…</button>
+<button type="button" onClick="{{clearFocus}}" style="background: transparent; color: #8E999F; border: 1px solid #1C2329; border-radius: 8px; padding: 7px 12px; font-size: 12.5px">Clear</button>
+</div>
+<sc-if value="{{pathMode}}" hint-placeholder-val="{{ false }}">
+<span style="color: #F2F5F6; font-size: 12.5px; background: #1A2228; border-radius: 8px; padding: 8px 10px">Click another item to trace the connection.</span>
+</sc-if>
+<sc-if value="{{hasPath}}" hint-placeholder-val="{{ false }}">
+<div style="display: flex; flex-direction: column; gap: 6px; background: #1A2228; border-radius: 8px; padding: 10px">
+<span style="color: #8E999F; font-size: 11.5px">Connection</span>
+<span style="color: #F2F5F6; font-size: 12.5px; line-height: 1.5">{{pathText}}</span>
+<button type="button" onClick="{{clearPath}}" style="align-self: flex-start; background: transparent; color: #8E999F; border: 1px solid #263038; border-radius: 7px; padding: 5px 10px; font-size: 12px">Clear path</button>
+</div>
+</sc-if>
+</sc-if>
+<sc-if value="{{noFocus}}" hint-placeholder-val="{{ false }}">
+<span style="color: #8E999F; font-size: 12.5px; line-height: 1.5">Click anything in the tree to light up what it is built on and what uses it.</span>
+</sc-if>
+</section>
+
+<section style="border: 1px solid #161D22; border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 10px">
+<p style="margin: 0; color: #6E7A80; font-size: 10.5px; letter-spacing: 0.16em">SHOW</p>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px">
+<sc-for list="{{kinds}}" as="k" hint-placeholder-count="4">
+<button type="button" aria-pressed="{{k.pressed}}" onClick="{{k.pick}}" style="display: flex; align-items: center; gap: 8px; background: #0E1317; border: 1px solid {{k.border}}; border-radius: 9px; padding: 8px 10px; color: #DCE2E5; font-size: 12.5px; opacity: {{k.op}}"><span style="width: 9px; height: 9px; border-radius: 50%; background: {{k.c}}"></span><span style="flex: 1; text-align: left">{{k.label}}</span><span style="color: #6E7A80; font-size: 11.5px">{{k.count}}</span></button>
+</sc-for>
+</div>
+<button type="button" aria-pressed="{{attnPressed}}" onClick="{{toggleAttention}}" style="display: flex; align-items: center; gap: 8px; background: {{attnBg}}; border: 1px solid {{attnBorder}}; border-radius: 9px; padding: 9px 10px; color: {{attnColor}}; font-size: 12.5px"><span style="width: 9px; height: 9px; border-radius: 50%; border: 2px solid #F0A04B; box-sizing: border-box"></span><span style="flex: 1; text-align: left">Needs attention only</span><span style="font-size: 11.5px">{{attnCount}}</span></button>
+<div style="display: flex; align-items: center; gap: 10px">
+<span style="color: #8E999F; font-size: 12px">Labels</span>
+<div role="group" aria-label="Labels" style="display: flex; background: #0E1317; border: 1px solid #1C2329; border-radius: 9px; padding: 3px">
+<sc-for list="{{labelModes}}" as="lm" hint-placeholder-count="3">
+<button type="button" onClick="{{lm.pick}}" style="background: {{lm.bg}}; color: {{lm.color}}; border: none; border-radius: 6px; padding: 6px 10px; font-size: 12px">{{lm.label}}</button>
+</sc-for>
+</div>
+</div>
+</section>
+
+<section style="border: 1px solid #161D22; border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 6px">
+<p style="margin: 0 0 4px; color: #6E7A80; font-size: 10.5px; letter-spacing: 0.16em">COLLECTIONS</p>
+<sc-for list="{{cols}}" as="c" hint-placeholder-count="5">
+<div style="display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid #141A1E">
+<button type="button" onClick="{{c.zoom}}" style="flex: 1; text-align: left; background: transparent; border: none; padding: 2px 0; color: #DCE2E5; font-size: 12.5px">{{c.name}} <span style="color: #6E7A80">{{c.count}}</span> <span style="color: #F0A04B">{{c.flagText}}</span></button>
+<button type="button" onClick="{{c.toggle}}" style="background: transparent; color: #8E999F; border: 1px solid #1C2329; border-radius: 7px; padding: 4px 9px; font-size: 11.5px">{{c.act}}</button>
+</div>
+</sc-for>
+</section>
+
+</aside>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1100}}'>
+class Component extends DCLogic {
+  init() {
+    if (this.g) return;
+    var COL = { mkt: 'DeepHeme market research', wsip: 'WSI package benchmark', ait: 'Interpretability paper', ls: 'Label shift and counting', pc: 'Plasma cell patches' };
+    var CEN = { mkt: [0, 0], wsip: [560, -230], ait: [-560, -210], ls: [470, 310], pc: [-470, 320] };
+    var raw = [
+      ['s_stats','source','Cancer statistics report','mkt','ok','PDF'],
+      ['s_census','source','Hospital lab census','mkt','ok','Web page, saved Nov 6'],
+      ['s_fee','source','Fee schedule','mkt','ok','Web page, saved Nov 6'],
+      ['s_survey','source','Industry survey','mkt','ok','PDF'],
+      ['s_vendor','source','Vendor report','mkt','ok','PDF'],
+      ['s_dh','source','DeepHeme paper','mkt','ok','Sci. Transl. Med.'],
+      ['f_cases','fact','Blood cancer cases per year','mkt','ok','From: Cancer statistics report, p. [x]'],
+      ['f_asppp','fact','Aspirates per patient','mkt','ok','From: Hospital lab census'],
+      ['f_inhouse','fact','Labs reading aspirates in-house','mkt','ok','From: Hospital lab census'],
+      ['f_fee','fact','Payment per aspirate read','mkt','ok','From: Fee schedule'],
+      ['f_scanner','fact','Labs with a slide scanner','mkt','rej','From: Industry survey, p. [x]'],
+      ['f_price','fact','Scanner price','mkt','new','From: Vendor report'],
+      ['f_tech','fact','Technologist time per slide','mkt','new','From: Vendor report'],
+      ['f_cells','fact','Cell types DeepHeme classifies','mkt','ok','From: DeepHeme paper'],
+      ['f_time','fact','Time to read a slide','mkt','ok','From: DeepHeme paper'],
+      ['k_asp','knowledge','US aspirates per year','mkt','ok',''],
+      ['k_market','knowledge','US market size for DeepHeme','mkt','new',''],
+      ['k_adopt','knowledge','Labs that can adopt DeepHeme','mkt','ok',''],
+      ['k_auto','knowledge','What DeepHeme automates','mkt','ok',''],
+      ['k_cost','knowledge','Cost case for a hospital','mkt','ok',''],
+      ['p_grant','project','Grant application','mkt','ok',''],
+      ['p_pitch','project','DeepHeme pitch deck','mkt','ok',''],
+      ['s_aftab','source','NATMIL paper (2024)','wsip','ok','Library PDF'],
+      ['s_yang','source','MambaMIL paper (2024)','wsip','ok','Library PDF'],
+      ['s_dong','source','AHDMIL paper (2025)','wsip','ok','Library PDF'],
+      ['s_tang','source','Feature re-embedding paper (2024)','wsip','ok','Library PDF'],
+      ['s_lin','source','Interventional MIL paper (2023)','wsip','ok','Library PDF'],
+      ['f_w1','fact','ABMIL-gated AUROC, NSCLC','wsip','ok','From: NATMIL paper, p. 6'],
+      ['f_w2','fact','CLAM-MB AUROC, NSCLC','wsip','ok','From: NATMIL paper, p. 6'],
+      ['f_w3','fact','CLAM-SB AUROC, NSCLC','wsip','ok','From: NATMIL paper, p. 6'],
+      ['f_w4','fact','TransMIL AUROC, NSCLC','wsip','new','From: NATMIL paper, p. 6'],
+      ['f_w5','fact','DTFT-MIL AUROC, NSCLC','wsip','new','From: NATMIL paper, p. 6'],
+      ['f_w6','fact','NATMIL AUROC, NSCLC','wsip','ok','From: NATMIL paper, p. 6'],
+      ['f_w7','fact','MambaMIL AUROC, NSCLC','wsip','ok','From: MambaMIL paper'],
+      ['f_w8','fact','AHDMIL AUROC, NSCLC','wsip','new','From: AHDMIL paper, p. 10'],
+      ['f_w9','fact','IBMIL AUROC, NSCLC','wsip','ok','From: Interventional MIL paper'],
+      ['f_w10','fact','R2T-MIL AUROC, NSCLC','wsip','ok','From: Feature re-embedding paper'],
+      ['f_w11','fact','ABMIL AUROC, CAMELYON16','wsip','ok','From: MambaMIL paper'],
+      ['f_w12','fact','TransMIL AUROC, CAMELYON16','wsip','new','From: MambaMIL paper'],
+      ['f_w13','fact','MambaMIL AUROC, CAMELYON16','wsip','ok','From: MambaMIL paper'],
+      ['k_nsclc','knowledge','MIL baselines on TCGA-NSCLC','wsip','new',''],
+      ['k_c16','knowledge','MIL baselines on CAMELYON16','wsip','ok',''],
+      ['k_wsip','knowledge','Where wsip matches published results','wsip','new',''],
+      ['p_wsip','project','WSI package paper','wsip','ok',''],
+      ['s_a1','source','Interpretability survey','ait','ok','Library PDF'],
+      ['s_a2','source','Human–AI teaming study','ait','ok','Library PDF'],
+      ['s_a3','source','Our synthetic experiment','ait','ok','Project data'],
+      ['f_a1','fact','No single definition of interpretability','ait','ok','From: Interpretability survey'],
+      ['f_a2','fact','Teams beat the model alone','ait','ok','From: Human–AI teaming study'],
+      ['f_a3','fact','Explanations raised over-trust','ait','new','From: Human–AI teaming study'],
+      ['f_a4','fact','Team accuracy vs model opacity','ait','ok','From: Our synthetic experiment'],
+      ['f_a5','fact','A misread model hurts the team','ait','ok','From: Our synthetic experiment'],
+      ['k_a1','knowledge','The trade-off is the wrong question','ait','ok',''],
+      ['k_a2','knowledge','When transparency helps the team','ait','ok',''],
+      ['k_a3','knowledge','A better model can hurt the team','ait','new',''],
+      ['p_ait','project','Interpretability paper (FAccT)','ait','ok',''],
+      ['s_l1','source','MSK validation cohort','ls','ok','Project data'],
+      ['s_l2','source','External site cohort','ls','ok','Project data'],
+      ['s_l3','source','Label-shift methods review','ls','ok','Library PDF'],
+      ['f_l1','fact','Cell mix differs across sites','ls','ok','From: External site cohort'],
+      ['f_l2','fact','Calibration on a new scanner','ls','new','From: External site cohort'],
+      ['f_l3','fact','Standard fixes need a stable confusion matrix','ls','ok','From: Label-shift methods review'],
+      ['f_l4','fact','Hard-call counts are biased','ls','ok','From: MSK validation cohort'],
+      ['k_l1','knowledge','Label shift in bone marrow counts','ls','ok',''],
+      ['k_l2','knowledge','IAM gives unbiased hard-call counts','ls','ok',''],
+      ['k_l3','knowledge','Checking a correction without labels','ls','new',''],
+      ['p_nm','project','DeepHeme Nature Medicine paper','ls','ok',''],
+      ['s_p1','source','Aspirate slide set','pc','ok','Project data'],
+      ['s_p2','source','Myeloma pathology review','pc','ok','Library PDF'],
+      ['f_p1','fact','Plasma cells can cluster in patches','pc','ok','From: Myeloma pathology review'],
+      ['f_p2','fact','Patch size on aspirate slides','pc','new','From: Aspirate slide set'],
+      ['f_p3','fact','Cell-level counts miss focal patches','pc','ok','From: Aspirate slide set'],
+      ['k_p1','knowledge','Why patchy infiltration is missed','pc','ok',''],
+      ['k_p2','knowledge','A spatial model for patches','pc','new','']
+    ];
+    var E = 's_stats>f_cases s_census>f_asppp s_census>f_inhouse s_fee>f_fee s_survey>f_scanner s_vendor>f_price s_vendor>f_tech s_dh>f_cells s_dh>f_time ' +
+      'f_cases>k_asp f_asppp>k_asp f_inhouse>k_asp k_asp>k_market f_fee>k_market f_scanner>k_market f_scanner>k_adopt f_price>k_adopt f_cells>k_auto f_time>k_auto ' +
+      'k_adopt>k_cost k_auto>k_cost f_price>k_cost f_tech>k_cost k_market>p_grant k_auto>p_grant k_market>p_pitch k_cost>p_pitch ' +
+      's_aftab>f_w1 s_aftab>f_w2 s_aftab>f_w3 s_aftab>f_w4 s_aftab>f_w5 s_aftab>f_w6 s_yang>f_w7 s_dong>f_w8 s_lin>f_w9 s_tang>f_w10 s_yang>f_w11 s_yang>f_w12 s_yang>f_w13 ' +
+      'f_w1>k_nsclc f_w2>k_nsclc f_w3>k_nsclc f_w4>k_nsclc f_w5>k_nsclc f_w6>k_nsclc f_w7>k_nsclc f_w8>k_nsclc f_w9>k_nsclc f_w10>k_nsclc f_w11>k_c16 f_w12>k_c16 f_w13>k_c16 ' +
+      'k_nsclc>k_wsip k_c16>k_wsip k_wsip>p_wsip k_nsclc>p_wsip ' +
+      's_a1>f_a1 s_a2>f_a2 s_a2>f_a3 s_a3>f_a4 s_a3>f_a5 f_a2>k_a2 f_a4>k_a2 f_a1>k_a1 k_a2>k_a1 f_a5>k_a3 f_a3>k_a3 k_a1>p_ait k_a2>p_ait k_a3>p_ait ' +
+      's_l2>f_l1 s_l2>f_l2 s_l3>f_l3 s_l1>f_l4 f_l1>k_l1 f_l2>k_l1 f_l3>k_l1 f_l4>k_l2 k_l1>k_l2 k_l1>k_l3 k_l2>k_l3 k_l2>p_nm k_l3>p_nm k_auto>p_nm ' +
+      's_p2>f_p1 s_p1>f_p2 s_p1>f_p3 f_p1>k_p1 f_p3>k_p1 k_p1>k_p2 f_p2>k_p2 k_auto>k_p2 k_l2>k_p2';
+    var seed = 11;
+    var rnd = function () { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+    var nodes = raw.map(function (r) {
+      var c = CEN[r[3]];
+      return { id: r[0], kind: r[1], name: r[2], col: r[3], base: r[4], note: r[5], x: c[0] + (rnd() - 0.5) * 260, y: c[1] + (rnd() - 0.5) * 260, vx: 0, vy: 0, fixed: false, inp: [], out: [] };
+    });
+    var byId = {};
+    nodes.forEach(function (n) { byId[n.id] = n; });
+    var edges = [];
+    E.split(' ').forEach(function (s) {
+      if (!s) return;
+      var p = s.split('>'); var a = byId[p[0]], b = byId[p[1]];
+      if (!a || !b) return;
+      edges.push({ a: a, b: b });
+      a.out.push(b.id); b.inp.push(a.id);
+    });
+    nodes.forEach(function (n) { n.status = n.base; });
+    var stack = nodes.filter(function (n) { return n.base === 'rej'; }).map(function (n) { return n.id; });
+    var seen = {};
+    while (stack.length) {
+      var id = stack.pop();
+      byId[id].out.forEach(function (o) { if (!seen[o]) { seen[o] = true; byId[o].status = 'flag'; stack.push(o); } });
+    }
+    edges.forEach(function (e) {
+      e.flag = (e.a.status === 'rej' || e.a.status === 'flag') && e.b.status === 'flag';
+      e.len = e.a.kind === 'source' ? 34 : e.b.kind === 'project' ? 84 : e.a.kind === 'knowledge' ? 72 : 58;
+      e.k = e.a.col === e.b.col ? 0.05 : 0.004;
+    });
+    nodes.forEach(function (n) {
+      n.r = n.kind === 'source' ? 5 : n.kind === 'fact' ? 6.5 : n.kind === 'project' ? 13 : 8.5 + Math.min(6, n.out.length * 1.5);
+    });
+    this.g = { nodes: nodes, edges: edges, byId: byId, COL: COL, CEN: CEN };
+    this.ui = { zoom: 1, vx: 0, vy: 0, anim: false, focus: 'k_market', depth: 'all', kinds: { source: true, fact: true, knowledge: true, project: true }, attention: false, labels: 'auto', collapsed: {}, q: '', hover: null, pathMode: false, pathTo: null, trail: ['k_market', 'p_nm', 'k_nsclc'] };
+    this.W = 1036; this.H = 700;
+    for (var i = 0; i < 140; i++) this.step(1 - i / 220);
+    this.fitTo(nodes, false);
+    var self = this;
+    this.h = {
+      stop: function (e) { e.stopPropagation(); },
+      bgDown: function (e) { if (e.button !== 0) return; self.pan = { sx: e.clientX, sy: e.clientY, vx: self.ui.vx, vy: self.ui.vy }; self.ui.anim = false; self.bump(); },
+      move: function (e) {
+        var rect = e.currentTarget.getBoundingClientRect();
+        self.W = rect.width; self.H = rect.height;
+        var u = self.ui;
+        if (self.drag) {
+          var d = self.drag, n = self.g.byId[d.id];
+          if (Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) > 4) d.moved = true;
+          if (d.moved) { n.x = (e.clientX - rect.left - u.vx) / u.zoom; n.y = (e.clientY - rect.top - u.vy) / u.zoom; n.vx = 0; n.vy = 0; n.fixed = true; self.reheat(40); self.bump(); }
+          return;
+        }
+        if (self.pan) { u.vx = self.pan.vx + (e.clientX - self.pan.sx); u.vy = self.pan.vy + (e.clientY - self.pan.sy); self.bump(); }
+      },
+      up: function () {
+        if (self.drag) { var d = self.drag; self.drag = null; var n = self.g.byId[d.id]; n.fixed = false; if (d.moved) { self.suppress = true; self.reheat(70); } }
+        if (self.pan) { self.pan = null; self.bump(); }
+      },
+      wheel: function (e) {
+        var rect = e.currentTarget.getBoundingClientRect(); var u = self.ui;
+        var mx = e.clientX - rect.left, my = e.clientY - rect.top;
+        var wx = (mx - u.vx) / u.zoom, wy = (my - u.vy) / u.zoom;
+        var nz = Math.max(0.3, Math.min(3, u.zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1)));
+        u.zoom = nz; u.vx = mx - wx * nz; u.vy = my - wy * nz; u.anim = false; self.bump();
+      },
+      zoomIn: function () { self.zoomBy(1.25); },
+      zoomOut: function () { self.zoomBy(0.8); },
+      fitAll: function () { self.fitTo(self.visibleNodes(), true); },
+      fitFocus: function () {
+        var u = self.ui; if (!u.focus) { self.fitTo(self.visibleNodes(), true); return; }
+        var b = self.branch(u.focus, u.depth); self.fitTo(self.visibleNodes().filter(function (n) { return b[n.id]; }), true);
+      },
+      clearFocus: function () { var u = self.ui; u.focus = null; u.pathTo = null; u.pathMode = false; self.bump(); },
+      startPath: function () { self.ui.pathMode = true; self.ui.pathTo = null; self.bump(); },
+      clearPath: function () { self.ui.pathTo = null; self.ui.pathMode = false; self.bump(); },
+      toggleAttention: function () { self.ui.attention = !self.ui.attention; self.bump(); },
+      onSearch: function (e) { self.ui.q = e.target.value; self.bump(); },
+      mmDown: function (e) {
+        e.stopPropagation();
+        var mm = self.mm; if (!mm) return;
+        var rect = e.currentTarget.getBoundingClientRect();
+        var wx = mm.mnx + (e.clientX - rect.left - mm.P) / mm.m, wy = mm.mny + (e.clientY - rect.top - mm.P) / mm.m;
+        self.centerOn(wx, wy, self.ui.zoom);
+      }
+    };
+  }
+  step(alpha) {
+    var ns = this.g.nodes, n = ns.length, CEN = this.g.CEN, i, j;
+    for (i = 0; i < n; i++) { ns[i].fx = 0; ns[i].fy = 0; }
+    for (i = 0; i < n; i++) {
+      var a = ns[i];
+      for (j = i + 1; j < n; j++) {
+        var b = ns[j];
+        var dx = a.x - b.x, dy = a.y - b.y, d2 = dx * dx + dy * dy;
+        if (d2 > 90000) continue;
+        if (d2 < 1) { dx = (i % 2 ? 1 : -1); dy = 0.5; d2 = 1.25; }
+        var d = Math.sqrt(d2), f = (a.col === b.col ? 900 : 2400) / d2;
+        var fx = dx / d * f, fy = dy / d * f;
+        a.fx += fx; a.fy += fy; b.fx -= fx; b.fy -= fy;
+      }
+    }
+    this.g.edges.forEach(function (e) {
+      var dx = e.b.x - e.a.x, dy = e.b.y - e.a.y, d = Math.sqrt(dx * dx + dy * dy) || 1;
+      var k = e.k * (d - e.len) / d;
+      e.a.fx += dx * k; e.a.fy += dy * k; e.b.fx -= dx * k; e.b.fy -= dy * k;
+    });
+    for (i = 0; i < n; i++) {
+      var p = ns[i], c = CEN[p.col];
+      p.fx += (c[0] - p.x) * 0.012; p.fy += (c[1] - p.y) * 0.012;
+      if (p.fixed) { p.vx = 0; p.vy = 0; continue; }
+      p.vx = (p.vx + p.fx * alpha) * 0.6; p.vy = (p.vy + p.fy * alpha) * 0.6;
+      p.x += Math.max(-14, Math.min(14, p.vx)); p.y += Math.max(-14, Math.min(14, p.vy));
+    }
+  }
+  componentDidMount() { this.init(); this.dead = false; this.reheat(200); }
+  componentWillUnmount() { this.dead = true; if (this.raf && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(this.raf); this.raf = null; }
+  reheat(frames) {
+    this.heat = Math.max(this.heat || 0, frames);
+    var self = this;
+    if (!this.raf && !this.dead && typeof requestAnimationFrame === 'function') this.raf = requestAnimationFrame(function () { self.tick(); });
+  }
+  tick() {
+    this.raf = null; if (this.dead) return;
+    this.step(0.35 * Math.min(1, this.heat / 80));
+    this.heat--; this.bump();
+    var self = this;
+    if (this.heat > 0) this.raf = requestAnimationFrame(function () { self.tick(); });
+  }
+  bump() { this.setState({ t: ((this.state && this.state.t) || 0) + 1 }); }
+  visibleNodes() {
+    var u = this.ui;
+    return this.g.nodes.filter(function (n) { return !u.collapsed[n.col] && u.kinds[n.kind]; });
+  }
+  branch(id, depth) {
+    var g = this.g, out = {}; out[id] = true;
+    var maxD = depth === 'all' ? 99 : depth;
+    ['inp', 'out'].forEach(function (dir) {
+      var frontier = [id];
+      for (var d = 0; d < maxD && frontier.length; d++) {
+        var next = [];
+        frontier.forEach(function (x) { g.byId[x][dir].forEach(function (o) { if (!out[o]) { out[o] = true; next.push(o); } }); });
+        frontier = next;
+      }
+    });
+    return out;
+  }
+  centerOn(x, y, z) {
+    var u = this.ui, self = this;
+    u.anim = true; u.zoom = z; u.vx = this.W / 2 - x * z; u.vy = this.H / 2 - y * z; this.bump();
+    clearTimeout(this.animT); this.animT = setTimeout(function () { u.anim = false; self.bump(); }, 650);
+  }
+  fitTo(list, animate) {
+    if (!list || !list.length) return;
+    var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    list.forEach(function (n) { x0 = Math.min(x0, n.x - n.r); y0 = Math.min(y0, n.y - n.r); x1 = Math.max(x1, n.x + n.r); y1 = Math.max(y1, n.y + n.r); });
+    var z = Math.max(0.35, Math.min(2.2, Math.min(this.W / (x1 - x0 + 220), this.H / (y1 - y0 + 180))));
+    var cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    if (animate) { this.centerOn(cx, cy, z); return; }
+    this.ui.zoom = z; this.ui.vx = this.W / 2 - cx * z; this.ui.vy = this.H / 2 - cy * z;
+  }
+  zoomBy(f) {
+    var u = this.ui, cx = this.W / 2, cy = this.H / 2;
+    var wx = (cx - u.vx) / u.zoom, wy = (cy - u.vy) / u.zoom;
+    var nz = Math.max(0.3, Math.min(3, u.zoom * f));
+    var self = this;
+    u.anim = true; u.zoom = nz; u.vx = cx - wx * nz; u.vy = cy - wy * nz; this.bump();
+    clearTimeout(this.animT); this.animT = setTimeout(function () { u.anim = false; self.bump(); }, 650);
+  }
+  focusOn(id, center) {
+    var u = this.ui, n = this.g.byId[id];
+    if (!n) return;
+    if (u.collapsed[n.col]) u.collapsed[n.col] = false;
+    if (!u.kinds[n.kind]) u.kinds[n.kind] = true;
+    u.focus = id; u.pathTo = null; u.pathMode = false;
+    u.trail = [id].concat(u.trail.filter(function (t) { return t !== id; })).slice(0, 8);
+    if (center) this.centerOn(n.x, n.y, Math.max(u.zoom, 1.1)); else this.bump();
+  }
+  nodeDown(id, e) {
+    e.stopPropagation();
+    if (e.button !== 0) return;
+    this.suppress = false;
+    this.drag = { id: id, sx: e.clientX, sy: e.clientY, moved: false };
+  }
+  nodeClick(id) {
+    if (this.suppress) { this.suppress = false; return; }
+    var u = this.ui;
+    if (u.pathMode && u.focus && id !== u.focus) { u.pathTo = id; u.pathMode = false; this.bump(); return; }
+    this.focusOn(id, false);
+  }
+  toggleCol(c) {
+    this.ui.collapsed[c] = !this.ui.collapsed[c];
+    this.ui.hover = null;
+    this.reheat(60); this.bump();
+  }
+  renderVals() {
+    this.init();
+    var self = this, g = this.g, u = this.ui, z = u.zoom, W = this.W || 1036, H = this.H || 700;
+    var KC = { source: '#8496A3', fact: '#4CC9B0', knowledge: '#A48BF5', project: '#6FA6F2' };
+    var KL = { source: 'Source', fact: 'Fact', knowledge: 'Knowledge', project: 'Project' };
+    var statusLabel = function (n) {
+      if (n.status === 'rej') return 'Rejected by you';
+      if (n.status === 'flag') return 'Flagged: an input changed';
+      if (n.status === 'new') return 'Not checked yet';
+      return n.kind === 'source' ? 'Saved' : n.kind === 'fact' ? 'Confirmed' : n.kind === 'project' ? 'Up to date' : 'Reviewed';
+    };
+    var statusColor = function (n) { return n.status === 'rej' ? '#EF7A7A' : n.status === 'flag' ? '#F0A04B' : n.status === 'new' ? '#A9B4B9' : '#4CC9B0'; };
+    var rep = {};
+    g.nodes.forEach(function (n) { rep[n.id] = u.collapsed[n.col] ? 'c:' + n.col : (u.kinds[n.kind] ? n.id : null); });
+    var pos = {}, vis = [];
+    g.nodes.forEach(function (n) { if (rep[n.id] === n.id) { pos[n.id] = n; vis.push(n); } });
+    var bubbles = [];
+    Object.keys(g.COL).forEach(function (c) {
+      if (!u.collapsed[c]) return;
+      var m = g.nodes.filter(function (n) { return n.col === c; });
+      var sx = 0, sy = 0; m.forEach(function (n) { sx += n.x; sy += n.y; });
+      var b = { id: 'c:' + c, col: c, x: sx / m.length, y: sy / m.length, r: 20 + Math.sqrt(m.length) * 3, count: m.length };
+      pos[b.id] = b; bubbles.push(b);
+    });
+    var nameOf = function (id) { return id.indexOf('c:') === 0 ? g.COL[id.slice(2)] : g.byId[id].name; };
+    var vedges = [], ek = {};
+    g.edges.forEach(function (e) {
+      var a = rep[e.a.id], b = rep[e.b.id];
+      if (!a || !b || a === b) return;
+      var key = a + '>' + b;
+      if (ek[key]) { if (e.flag) ek[key].flag = true; return; }
+      var o = { a: a, b: b, flag: e.flag }; ek[key] = o; vedges.push(o);
+    });
+    var focus = (u.focus && rep[u.focus] === u.focus) ? g.byId[u.focus] : null;
+    var lit = focus ? this.branch(focus.id, u.depth) : null;
+    var pathSet = null, pathEdge = null, pathText = '';
+    if (focus && u.pathTo && pos[u.pathTo]) {
+      var adj = {};
+      vedges.forEach(function (e) { (adj[e.a] = adj[e.a] || []).push(e.b); (adj[e.b] = adj[e.b] || []).push(e.a); });
+      var prev = {}; prev[focus.id] = '#'; var queue = [focus.id];
+      while (queue.length) {
+        var cur = queue.shift(); if (cur === u.pathTo) break;
+        (adj[cur] || []).forEach(function (o) { if (!(o in prev)) { prev[o] = cur; queue.push(o); } });
+      }
+      if (u.pathTo in prev) {
+        pathSet = {}; pathEdge = {}; var names = []; var c2 = u.pathTo;
+        while (c2 !== '#') { pathSet[c2] = true; names.unshift(nameOf(c2)); var pv = prev[c2]; if (pv !== '#') { pathEdge[pv + '>' + c2] = true; pathEdge[c2 + '>' + pv] = true; } c2 = pv; }
+        pathText = names.join('  →  ');
+      } else { pathText = 'These two are not connected.'; }
+    }
+    var q = (u.q || '').trim().toLowerCase();
+    var isMatch = function (n) { return q.length >= 2 && n.name.toLowerCase().indexOf(q) >= 0; };
+    var onOf = {};
+    vis.forEach(function (n) {
+      var on = pathSet ? !!pathSet[n.id] : lit ? !!lit[n.id] : true;
+      if (u.attention && n.status === 'ok' && !(focus && focus.id === n.id)) on = false;
+      onOf[n.id] = on;
+    });
+    bubbles.forEach(function (b) { onOf[b.id] = !lit && !pathSet; });
+    var nodes = [];
+    vis.forEach(function (n) {
+      var on = onOf[n.id], c = KC[n.kind], st = n.status, isF = focus && focus.id === n.id, match = isMatch(n);
+      nodes.push({
+        label: n.name + ', ' + KL[n.kind] + ', ' + statusLabel(n),
+        left: (n.x - n.r).toFixed(1), top: (n.y - n.r).toFixed(1), d: (2 * n.r).toFixed(1),
+        bg: st === 'rej' ? '#EF7A7A' : st === 'new' ? '#0B0F12' : c,
+        border: '2px solid ' + (st === 'rej' ? '#EF7A7A' : st === 'flag' ? '#F0A04B' : c),
+        shadow: on && st !== 'flag' ? '0 0 14px ' + c + '66' : 'none',
+        anim: st === 'flag' && on ? 'olPulse 1.8s ease-out infinite' : 'none',
+        op: on ? 1 : 0.14,
+        outline: isF ? '2px solid #F2F5F6' : match ? '2px dashed #F2F5F6' : (pathSet && pathSet[n.id]) ? '2px solid #F2F5F6' : 'none',
+        text: '', fs: 10,
+        down: function (e) { self.nodeDown(n.id, e); },
+        click: function () { self.nodeClick(n.id); },
+        enter: function () { if (!self.drag && !self.pan) { u.hover = n.id; self.bump(); } },
+        leave: function () { if (u.hover === n.id) { u.hover = null; self.bump(); } }
+      });
+    });
+    bubbles.forEach(function (b) {
+      nodes.push({
+        label: 'Expand ' + g.COL[b.col] + ', ' + b.count + ' items',
+        left: (b.x - b.r).toFixed(1), top: (b.y - b.r).toFixed(1), d: (2 * b.r).toFixed(1),
+        bg: '#18212A', border: '1.5px solid #4A5864', shadow: '0 0 22px rgba(120,140,160,0.25)', anim: 'none',
+        op: onOf[b.id] ? 1 : 0.4, outline: 'none', text: String(b.count), fs: 13,
+        down: function (e) { e.stopPropagation(); }, click: function () { self.toggleCol(b.col); },
+        enter: function () {}, leave: function () {}
+      });
+    });
+    var edges = [];
+    vedges.forEach(function (e) {
+      var A = pos[e.a], B = pos[e.b];
+      var dx = B.x - A.x, dy = B.y - A.y, d = Math.sqrt(dx * dx + dy * dy);
+      if (d < 1) return;
+      var ux = dx / d, uy = dy / d, len = d - A.r - B.r - 4;
+      if (len <= 2) return;
+      var inPath = !!(pathEdge && pathEdge[e.a + '>' + e.b]);
+      var on = pathSet ? inPath : (onOf[e.a] && onOf[e.b]);
+      var h = (inPath ? 2.6 : on ? 1.7 : 1.1) / Math.max(z, 0.45);
+      var bg;
+      if (inPath) bg = '#F2F5F6';
+      else if (e.flag && on) bg = 'repeating-linear-gradient(90deg, #F0A04B 0px, #F0A04B 7px, rgba(240,160,75,0) 7px, rgba(240,160,75,0) 12px)';
+      else if (on && lit) bg = 'linear-gradient(90deg, rgba(76,201,176,0.2), rgba(76,201,176,0.95))';
+      else if (on) bg = 'linear-gradient(90deg, rgba(150,170,180,0.12), rgba(150,170,180,0.6))';
+      else bg = 'rgba(120,135,145,0.55)';
+      var x1 = A.x + ux * (A.r + 2), y1 = A.y + uy * (A.r + 2);
+      edges.push({ left: x1.toFixed(1), top: (y1 - h / 2).toFixed(2), len: len.toFixed(1), h: h.toFixed(2), ang: (Math.atan2(dy, dx) * 180 / Math.PI).toFixed(2), bg: bg, anim: e.flag && on && !inPath ? 'olDash 0.9s linear infinite' : 'none', op: on ? 1 : 0.12 });
+    });
+    var halos = [];
+    Object.keys(g.COL).forEach(function (c) {
+      if (u.collapsed[c]) return;
+      var m = vis.filter(function (n) { return n.col === c; });
+      if (!m.length) return;
+      var sx = 0, sy = 0; m.forEach(function (n) { sx += n.x; sy += n.y; });
+      var cx = sx / m.length, cy = sy / m.length, R = 0;
+      m.forEach(function (n) { var dd = Math.sqrt((n.x - cx) * (n.x - cx) + (n.y - cy) * (n.y - cy)) + n.r; if (dd > R) R = dd; });
+      R += 34;
+      var anyOn = m.some(function (n) { return onOf[n.id]; });
+      halos.push({ left: (cx - R).toFixed(1), top: (cy - R).toFixed(1), d: (2 * R).toFixed(1), bw: (1 / z).toFixed(2), op: anyOn ? 1 : 0.45, lx: cx.toFixed(1), ly: (cy - R - 24 / z).toFixed(1), fs: (10.5 / z).toFixed(2), name: g.COL[c].toUpperCase(), count: g.nodes.filter(function (n) { return n.col === c; }).length, aria: 'Collapse ' + g.COL[c], toggle: function () { self.toggleCol(c); } });
+    });
+    var labels = [];
+    vis.forEach(function (n) {
+      var on = onOf[n.id], isF = focus && focus.id === n.id;
+      var show = u.labels === 'all' || n.id === u.hover || isMatch(n) || (pathSet && pathSet[n.id]) || isF ||
+        (u.labels === 'auto' && ((on && lit && (n.kind !== 'source' || z > 1.0)) || n.kind === 'project' || (n.kind === 'knowledge' && z > 0.95) || z > 1.6));
+      if (!show) return;
+      var fs = (isF || n.kind === 'project' ? 12.5 : 11.5) / z;
+      labels.push({ text: n.name, left: (n.x + n.r + 6 / z).toFixed(1), top: (n.y - fs * 0.68).toFixed(1), fs: fs.toFixed(2), fw: isF || n.kind === 'project' ? 600 : 400, color: n.status === 'rej' ? '#F4B3B3' : n.status === 'flag' ? '#F5C891' : '#DCE2E5', op: on ? 1 : 0.4 });
+    });
+    bubbles.forEach(function (b) {
+      var fs = 11.5 / z;
+      labels.push({ text: g.COL[b.col], left: (b.x + b.r + 6 / z).toFixed(1), top: (b.y - fs * 0.68).toFixed(1), fs: fs.toFixed(2), fw: 600, color: '#C9D1D5', op: 1 });
+    });
+    var tip = { left: 0, top: 0, name: '', kind: '', kc: '#000', status: '', sc: '#000', col: '', counts: '', note: '' }, hasTip = false;
+    if (u.hover && rep[u.hover] === u.hover && !this.drag) {
+      var hn = g.byId[u.hover];
+      var sx2 = u.vx + (hn.x + hn.r) * z + 14, sy2 = u.vy + hn.y * z - 20;
+      tip = { left: Math.min(sx2, W - 256).toFixed(0), top: Math.max(10, Math.min(sy2, H - 150)).toFixed(0), name: hn.name, kind: KL[hn.kind], kc: KC[hn.kind], status: statusLabel(hn), sc: statusColor(hn), col: g.COL[hn.col], note: hn.note || (hn.kind === 'knowledge' ? 'LaTeX file in the knowledge folder' : hn.kind === 'project' ? 'OpenLeaf project' : ''), counts: 'Built on ' + hn.inp.length + ' · used by ' + hn.out.length };
+      hasTip = true;
+    }
+    var mnx = Infinity, mny = Infinity, mxx = -Infinity, mxy = -Infinity;
+    g.nodes.forEach(function (n) { mnx = Math.min(mnx, n.x); mny = Math.min(mny, n.y); mxx = Math.max(mxx, n.x); mxy = Math.max(mxy, n.y); });
+    var P = 10, mmS = Math.min((184 - 2 * P) / ((mxx - mnx) || 1), (120 - 2 * P) / ((mxy - mny) || 1));
+    this.mm = { mnx: mnx, mny: mny, m: mmS, P: P };
+    var mdots = vis.map(function (n) { return { left: (P + (n.x - mnx) * mmS - 1.5).toFixed(1), top: (P + (n.y - mny) * mmS - 1.5).toFixed(1), c: KC[n.kind], op: onOf[n.id] ? 0.95 : 0.3 }; });
+    bubbles.forEach(function (b) { mdots.push({ left: (P + (b.x - mnx) * mmS - 1.5).toFixed(1), top: (P + (b.y - mny) * mmS - 1.5).toFixed(1), c: '#C9D1D5', op: 1 }); });
+    var vw = { left: (P + (-u.vx / z - mnx) * mmS).toFixed(1), top: (P + (-u.vy / z - mny) * mmS).toFixed(1), w: (W / z * mmS).toFixed(1), h: (H / z * mmS).toFixed(1) };
+    var f = { name: '', kind: '', kc: '#000', col: '', status: '', sc: '#000', counts: '' };
+    if (focus) f = { name: focus.name, kind: KL[focus.kind], kc: KC[focus.kind], col: g.COL[focus.col], status: statusLabel(focus), sc: statusColor(focus), counts: 'Built on ' + focus.inp.length + ' · used by ' + focus.out.length };
+    var depths = [[1, '1 step'], [2, '2 steps'], ['all', 'All']].map(function (p) { var sel = u.depth === p[0]; return { label: p[1], bg: sel ? '#24303A' : 'transparent', color: sel ? '#F2F5F6' : '#8E999F', pick: function () { u.depth = p[0]; self.bump(); } }; });
+    var kinds = ['fact', 'knowledge', 'project', 'source'].map(function (k) {
+      return { label: KL[k] + 's', c: KC[k], count: g.nodes.filter(function (n) { return n.kind === k; }).length, pressed: u.kinds[k] ? 'true' : 'false', op: u.kinds[k] ? 1 : 0.45, border: u.kinds[k] ? '#2A3640' : '#161D22', pick: function () { u.kinds[k] = !u.kinds[k]; self.bump(); } };
+    });
+    var attnCount = g.nodes.filter(function (n) { return n.status !== 'ok'; }).length;
+    var labelModes = [['auto', 'Auto'], ['all', 'All'], ['off', 'Off']].map(function (p) { var sel = u.labels === p[0]; return { label: p[1], bg: sel ? '#24303A' : 'transparent', color: sel ? '#F2F5F6' : '#8E999F', pick: function () { u.labels = p[0]; self.bump(); } }; });
+    var cols = Object.keys(g.COL).map(function (c) {
+      var m = g.nodes.filter(function (n) { return n.col === c; });
+      var fl = m.filter(function (n) { return n.status === 'flag' || n.status === 'rej'; }).length;
+      return { name: g.COL[c], count: m.length, flagText: fl ? '· ' + fl + ' flagged' : '', act: u.collapsed[c] ? 'Expand' : 'Collapse', toggle: function () { self.toggleCol(c); }, zoom: function () { if (u.collapsed[c]) { var b = pos['c:' + c]; self.centerOn(b.x, b.y, Math.max(z, 1)); } else { self.fitTo(m.filter(function (n) { return u.kinds[n.kind]; }), true); } } };
+    });
+    var results = q.length >= 2 ? g.nodes.filter(isMatch).slice(0, 6).map(function (n) { return { name: n.name, c: KC[n.kind], kind: KL[n.kind], pick: function () { self.focusOn(n.id, true); } }; }) : [];
+    var trail = u.trail.filter(function (t) { return !focus || t !== focus.id; }).slice(0, 4).map(function (t) { return { name: g.byId[t].name, pick: function () { self.focusOn(t, true); } }; });
+    var flaggedCount = g.nodes.filter(function (n) { return n.status === 'flag' || n.status === 'rej'; }).length;
+    return {
+      summary: g.nodes.length + ' items across ' + Object.keys(g.COL).length + ' collections · ' + flaggedCount + ' flagged or rejected',
+      trail: trail,
+      vx: u.vx.toFixed(1), vy: u.vy.toFixed(1), zoom: z.toFixed(4), tr: u.anim ? 'transform 0.6s cubic-bezier(0.2, 0.7, 0.2, 1)' : 'none',
+      cursor: this.pan ? 'grabbing' : 'grab', zoomPct: Math.round(z * 100) + '%',
+      halos: halos, edges: edges, nodes: nodes, labels: labels,
+      hasTip: hasTip, tip: tip, mdots: mdots, vw: vw,
+      q: u.q, results: results, noResults: q.length >= 2 && results.length === 0,
+      hasFocus: !!focus, noFocus: !focus, f: f, depths: depths,
+      openHref: focus && focus.id === 'k_market' ? 'Main.dc.html' : '#',
+      pathMode: !!(focus && u.pathMode), hasPath: !!(focus && u.pathTo), pathText: pathText,
+      kinds: kinds, attnCount: attnCount, attnPressed: u.attention ? 'true' : 'false',
+      attnBg: u.attention ? '#241C12' : '#0E1317', attnBorder: u.attention ? '#5A4220' : '#2A3640', attnColor: u.attention ? '#F5C891' : '#DCE2E5',
+      labelModes: labelModes, cols: cols,
+      bgDown: this.h.bgDown, move: this.h.move, up: this.h.up, wheel: this.h.wheel, stop: this.h.stop,
+      zoomIn: this.h.zoomIn, zoomOut: this.h.zoomOut, fitAll: this.h.fitAll, fitFocus: this.h.fitFocus,
+      clearFocus: this.h.clearFocus, startPath: this.h.startPath, clearPath: this.h.clearPath,
+      toggleAttention: this.h.toggleAttention, onSearch: this.h.onSearch, mmDown: this.h.mmDown
+    };
+  }
+}
+</script>
+</body>
+</html>

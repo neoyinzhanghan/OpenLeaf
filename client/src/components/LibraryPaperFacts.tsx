@@ -609,6 +609,19 @@ export function LibraryPaperFacts({
                     <span className={`library-fact-status is-${f.status}`}>{STATUS_LABEL[f.status]}</span>
                     {untagged ? <span className="library-fact-status is-untagged">Untagged</span> : null}
                     {page != null ? <span className="library-annotation-page">p.{page}</span> : null}
+                    {f.key ? (
+                      <span
+                        className="library-facts-key-chip"
+                        title={`Copy \\fact{${f.key}}`}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          void navigator.clipboard.writeText(`\\fact{${f.key}}`);
+                        }}
+                      >
+                        {`\\fact{${f.key}}`}
+                      </span>
+                    ) : null}
                     <span className="library-annotation-body">
                       <strong className="library-facts-subject">{shortSubject(f)}</strong>
                       {f.highlights[0]?.quote ? (

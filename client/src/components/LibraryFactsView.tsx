@@ -640,8 +640,27 @@ export function LibraryFactsView({ papers, onBack, onError }: Props) {
               <span className="library-facts-subject">{factSubject(f)}</span>
             </div>
             <div className="library-facts-card-meta muted">
+              {f.key ? (
+                <button
+                  type="button"
+                  className="library-facts-key-chip"
+                  title={`Copy \\fact{${f.key}}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void navigator.clipboard.writeText(`\\fact{${f.key}}`);
+                  }}
+                >
+                  {`\\fact{${f.key}}`}
+                </button>
+              ) : null}
               {!group || narrow ? <span className="library-facts-citekey">{f.citekey}</span> : null}
               {page != null ? <span>p.{page}</span> : <span>no highlight</span>}
+              {f.value != null ? (
+                <span className="library-facts-value">
+                  = {f.value}
+                  {f.unit ? ` ${f.unit}` : ""}
+                </span>
+              ) : null}
               <span className={`library-fact-status is-${f.status}`}>{STATUS_LABEL[f.status]}</span>
             </div>
             {quote ? (
@@ -708,11 +727,28 @@ export function LibraryFactsView({ papers, onBack, onError }: Props) {
           <span className="library-facts-card-answer library-facts-inline-answer">
             {answerDisplay(activeFact)}
           </span>
+          {activeFact.key ? (
+            <button
+              type="button"
+              className="btn btn-ghost library-facts-copy-fact"
+              title="Copy LaTeX reference"
+              onClick={() => void navigator.clipboard.writeText(`\\fact{${activeFact.key}}`)}
+            >
+              {`Copy \\fact{${activeFact.key}}`}
+            </button>
+          ) : null}
         </div>
         <p className="muted">
           {activePaper.title.slice(0, 120)}
           {activePaper.title.length > 120 ? "…" : ""} ·{" "}
           <span className="library-facts-citekey">{activePaper.citekey}</span>
+          {activeFact.value != null ? (
+            <>
+              {" "}
+              · value {activeFact.value}
+              {activeFact.unit ? ` ${activeFact.unit}` : ""}
+            </>
+          ) : null}
           {evidenceFact?.highlights?.[0]?.page != null ? (
             <> · p.{evidenceFact.highlights[0].page}</>
           ) : null}

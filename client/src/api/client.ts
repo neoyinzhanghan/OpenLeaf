@@ -1039,12 +1039,49 @@ export function patchLibraryFact(
     highlights: import("./types").FactHighlight[];
     rect: FactTagRect;
     untag: boolean;
+    key: string;
+    value: number | null;
+    unit: string;
+    confirmWithContent: boolean;
   }>,
 ): Promise<{ fact: import("./types").PaperFact }> {
   return request(`/api/library/${encodeURIComponent(citekey)}/facts/${encodeURIComponent(id)}`, {
     method: "PATCH",
     body: JSON.stringify(body),
   });
+}
+
+export function previewRenameLibraryFactKey(
+  citekey: string,
+  id: string,
+  key: string,
+): Promise<{
+  oldKey: string;
+  newKey: string;
+  hits: Array<{ projectId: string; relativePath: string; lineCount: number }>;
+}> {
+  return request(
+    `/api/library/${encodeURIComponent(citekey)}/facts/${encodeURIComponent(id)}/rename-key`,
+    { method: "POST", body: JSON.stringify({ key, preview: true }) },
+  );
+}
+
+export function renameLibraryFactKey(
+  citekey: string,
+  id: string,
+  key: string,
+  opts?: { rewriteReferences?: boolean },
+): Promise<{
+  fact: import("./types").PaperFact;
+  rewritten: Array<{ projectId: string; relativePath: string; lineCount: number }>;
+}> {
+  return request(
+    `/api/library/${encodeURIComponent(citekey)}/facts/${encodeURIComponent(id)}/rename-key`,
+    {
+      method: "POST",
+      body: JSON.stringify({ key, rewriteReferences: opts?.rewriteReferences }),
+    },
+  );
 }
 
 export function deleteLibraryFact(citekey: string, id: string): Promise<void> {

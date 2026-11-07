@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Review inbox</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;600&amp;display=swap">
+<style>
+body{margin:0;background:#0E1215}
+a{color:#5FD3BE}a:hover{color:#8BE3D3}
+button{font-family:inherit;cursor:pointer}
+</style>
+</helmet>
+<div style="min-height: 980px; background: #0E1215; color: #E7EAEB; font-family: Inter, system-ui, sans-serif; font-size: 14px; display: flex; flex-direction: column">
+
+<header style="display: flex; flex-wrap: wrap; align-items: center; gap: 24px; padding: 14px 24px; border-bottom: 1px solid #232C33; background: #12171B">
+<div style="display: flex; align-items: center; gap: 10px">
+<svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="13" height="18" fill="none" stroke="#3DBFA8" stroke-width="2"></rect><path d="M2 14 C7 14 8 8 11 8 C13 8 13 12 15 12 C17 12 18 7 22 7" fill="none" stroke="#3DBFA8" stroke-width="2"></path></svg>
+<span style="font-weight: 700; font-size: 17px">OpenLeaf</span>
+<span style="color: #9AA5AA">review</span>
+</div>
+<div style="flex: 1"></div>
+<nav style="display: flex; flex-wrap: wrap; gap: 6px">
+<a href="#" style="color: #C9D0D3; text-decoration: none; padding: 8px 12px; border-radius: 8px">Projects</a>
+<a href="#" style="color: #C9D0D3; text-decoration: none; padding: 8px 12px; border-radius: 8px">Library</a>
+<a href="#" style="color: #C9D0D3; text-decoration: none; padding: 8px 12px; border-radius: 8px">Facts</a>
+<a href="#" style="color: #C9D0D3; text-decoration: none; padding: 8px 12px; border-radius: 8px">Knowledge</a>
+<a href="#" style="color: #E7EAEB; text-decoration: none; padding: 8px 12px; border-radius: 8px; background: #1F3A36">Review 10</a>
+</nav>
+</header>
+
+<main style="padding: 32px 40px; display: flex; flex-direction: column; gap: 24px; max-width: 1120px">
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<h1 style="margin: 0; font-size: 26px; font-weight: 700">Waiting for you</h1>
+<p style="margin: 0; color: #C9D0D3; font-size: 15px">Agents can add and change anything. Only you can confirm it.</p>
+</div>
+
+<div style="border: 1px solid #232C33; border-radius: 14px; background: #12171B; display: flex; flex-direction: column">
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 16px 20px; border-bottom: 1px solid #232C33">
+<span style="font-weight: 600">Cursor agent · “Market research for DeepHeme”</span>
+<span style="color: #9AA5AA; font-size: 13px">25 minutes ago</span>
+<span style="flex: 1"></span>
+<span style="color: #C9D0D3; font-size: 13px">2 sources · 6 facts · 1 new knowledge draft · 1 edit</span>
+</div>
+
+<div style="padding: 16px 20px; display: flex; flex-direction: column; gap: 10px; border-bottom: 1px solid #232C33">
+<p style="margin: 0; font-size: 12px; color: #9AA5AA; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase">New sources saved</p>
+<div style="display: flex; flex-wrap: wrap; gap: 8px">
+<span style="background: #151B1F; border: 1px solid #232C33; border-radius: 8px; padding: 8px 12px">Fee schedule · <span style="color: #9AA5AA">web page, copy saved</span></span>
+<span style="background: #151B1F; border: 1px solid #232C33; border-radius: 8px; padding: 8px 12px">Industry survey · <span style="color: #9AA5AA">PDF</span></span>
+</div>
+</div>
+
+<div style="padding: 16px 20px; display: flex; flex-direction: column; gap: 10px; border-bottom: 1px solid #232C33">
+<p style="margin: 0; font-size: 12px; color: #9AA5AA; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase">New facts · 6</p>
+
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; background: #151B1F; border: 1px solid #232C33; border-radius: 10px; padding: 12px 14px">
+<span style="font-family: 'JetBrains Mono', monospace; min-width: 120px">[cases / yr]</span>
+<span style="flex: 1 1 320px">New blood cancer cases in the US per year<br><span style="color: #9AA5AA; font-size: 12px">Cancer statistics report · p. [x]</span></span>
+<a href="#" style="font-size: 13px">See passage</a>
+<button type="button" style="background: #3DBFA8; color: #0E1215; border: none; border-radius: 8px; padding: 8px 14px; font-weight: 600">Confirm</button>
+<button type="button" style="background: transparent; color: #F08A8A; border: 1px solid #5A2B2E; border-radius: 8px; padding: 8px 14px">Reject</button>
+</div>
+
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; background: #151B1F; border: 1px solid #232C33; border-radius: 10px; padding: 12px 14px">
+<span style="font-family: 'JetBrains Mono', monospace; min-width: 120px">[$ per read]</span>
+<span style="flex: 1 1 320px">Payment for reading one aspirate<br><span style="color: #9AA5AA; font-size: 12px">Fee schedule · web page</span></span>
+<a href="#" style="font-size: 13px">See passage</a>
+<button type="button" style="background: #3DBFA8; color: #0E1215; border: none; border-radius: 8px; padding: 8px 14px; font-weight: 600">Confirm</button>
+<button type="button" style="background: transparent; color: #F08A8A; border: 1px solid #5A2B2E; border-radius: 8px; padding: 8px 14px">Reject</button>
+</div>
+
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; background: #151B1F; border: 1px solid #232C33; border-radius: 10px; padding: 12px 14px">
+<span style="font-family: 'JetBrains Mono', monospace; min-width: 120px">[% of labs]</span>
+<span style="flex: 1 1 320px">Share of US labs with a digital slide scanner<br><span style="color: #9AA5AA; font-size: 12px">Industry survey · p. [x]</span></span>
+<a href="#" style="font-size: 13px">See passage</a>
+<button type="button" style="background: #3DBFA8; color: #0E1215; border: none; border-radius: 8px; padding: 8px 14px; font-weight: 600">Confirm</button>
+<button type="button" style="background: transparent; color: #F08A8A; border: 1px solid #5A2B2E; border-radius: 8px; padding: 8px 14px">Reject</button>
+</div>
+
+<a href="#" style="font-size: 13px">Show 3 more facts</a>
+</div>
+
+<div style="padding: 16px 20px; display: flex; flex-direction: column; gap: 10px">
+<p style="margin: 0; font-size: 12px; color: #9AA5AA; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase">Knowledge</p>
+
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; background: #151B1F; border: 1px solid #232C33; border-radius: 10px; padding: 12px 14px">
+<span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #B9A6F2; min-width: 120px">NEW DRAFT</span>
+<span style="flex: 1 1 320px">US market size for DeepHeme<br><span style="color: #9AA5AA; font-size: 12px">4 steps · built on 3 facts and 1 knowledge item</span></span>
+<button type="button" style="background: transparent; color: #E7EAEB; border: 1px solid #2B353D; border-radius: 8px; padding: 8px 14px">Open and review</button>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 10px; background: #151B1F; border: 1px solid #5A4128; border-radius: 10px; padding: 12px 14px">
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px">
+<span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #F0A65A; min-width: 120px">EDITED</span>
+<span style="flex: 1 1 320px">US bone marrow aspirates per year<br><span style="color: #9AA5AA; font-size: 12px">You had reviewed this. An agent changed step 1, so it needs review again.</span></span>
+<button type="button" style="background: #3DBFA8; color: #0E1215; border: none; border-radius: 8px; padding: 8px 14px; font-weight: 600">Accept change</button>
+<button type="button" style="background: transparent; color: #E7EAEB; border: 1px solid #2B353D; border-radius: 8px; padding: 8px 14px">Undo change</button>
+</div>
+<div style="display: flex; flex-direction: column; gap: 4px; font-family: 'JetBrains Mono', monospace; font-size: 13px; line-height: 1.6">
+<span style="background: #2A1719; color: #F3B1B1; border-radius: 6px; padding: 4px 10px">− Aspirates / yr = cases / yr × 1 aspirate per case</span>
+<span style="background: #16281F; color: #A6E3C2; border-radius: 6px; padding: 4px 10px">+ Aspirates / yr = cases / yr × average aspirates per patient per year</span>
+</div>
+</div>
+</div>
+</div>
+
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":980}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

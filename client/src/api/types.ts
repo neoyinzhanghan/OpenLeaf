@@ -83,6 +83,8 @@ export type FactDisplayRect = {
   orient?: "h" | "v";
 };
 
+export type FactCreatedBy = { kind: "human" | "agent"; name: string };
+
 export type PaperFact = {
   id: string;
   citekey: string;
@@ -94,6 +96,12 @@ export type PaperFact = {
   createdAt: string;
   updatedAt: string;
   displayRects: FactDisplayRect[];
+  /** Stable library-wide key for `\fact{key}`. */
+  key?: string;
+  value?: number | null;
+  unit?: string;
+  createdBy?: FactCreatedBy;
+  sourceKind?: "pdf" | "web";
 };
 
 export type LibraryFact = PaperFact & {

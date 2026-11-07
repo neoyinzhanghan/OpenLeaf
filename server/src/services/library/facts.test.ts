@@ -345,4 +345,79 @@ describe("library facts", () => {
       false,
     );
   });
+
+  it("assigns unique keys and parses numeric values on create", async () => {
+    const a = await createFact(
+      citekey,
+      { type: "value", input: "AUROC of ResGAT on TCGA", answer: "0.880 ± 0.057" },
+      { retrieve: async () => ({ answer: "0.880 ± 0.057", quotes: ["AUROC 0.91"] }) },
+    );
+    assert.ok(a.key);
+    assert.match(a.key!, /^[a-z][a-z0-9-]{1,63}$/);
+    assert.equal(a.value, 0.88);
+    const b = await createFact(
+      citekey,
+      { type: "value", input: "AUROC of ResGAT on TCGA", answer: "88%" },
+      { retrieve: async () => ({ answer: "88%", quotes: ["AUROC 0.91"] }) },
+    );
+    assert.notEqual(a.key, b.key);
+    assert.equal(b.value, 0.88);
+    assert.equal(b.unit, "%");
+  });
+
+  it("lazily migrates an old facts.json without keys", async () => {
+    const dir = path.join(libraryRoot, "papers", citekey);
+    const file = path.join(dir, "facts.json");
+    fs.writeFileSync(
+      file,
+      `${JSON.stringify(
+        {
+          version: 1,
+          facts: [
+            {
+              id: "fact_legacy01",
+              citekey,
+              type: "value",
+              input: "Legacy AUROC figure",
+              answer: "1,250",
+              highlights: [],
+              status: "confirmed",
+              createdAt: "2024-01-01T00:00:00.000Z",
+              updatedAt: "2024-01-01T00:00:00.000Z",
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const listed = await listFacts(citekey);
+    const legacy = listed.find((f) => f.id === "fact_legacy01");
+    assert.ok(legacy?.key);
+    assert.equal(legacy!.value, 1250);
+    assert.ok(fs.existsSync(`${file}.bak`));
+    const persisted = JSON.parse(fs.readFileSync(file, "utf8")) as {
+      facts: Array<{ id: string; key?: string; value?: number }>;
+    };
+    assert.equal(persisted.facts.find((f) => f.id === "fact_legacy01")?.key, legacy!.key);
+  });
+
+  it("resets confirmed status when answer changes unless confirmWithContent", async () => {
+    const fact = await createFact(
+      citekey,
+      { type: "value", input: "Fee per read", answer: "412.5" },
+      { retrieve: async () => ({ answer: "412.5", quotes: ["AUROC 0.91"] }) },
+    );
+    await updateFact(citekey, fact.id, { status: "confirmed" });
+    const edited = await updateFact(citekey, fact.id, { answer: "500" });
+    assert.equal(edited.status, "unreviewed");
+    assert.equal(edited.value, 500);
+    const kept = await updateFact(citekey, fact.id, {
+      answer: "510",
+      status: "confirmed",
+      confirmWithContent: true,
+    });
+    assert.equal(kept.status, "confirmed");
+    assert.equal(kept.value, 510);
+  });
 });

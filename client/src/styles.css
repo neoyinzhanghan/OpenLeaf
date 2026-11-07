@@ -2614,6 +2614,28 @@ a {
   font-size: 0.68rem;
 }
 
+.library-facts-key-chip,
+.library-facts-copy-fact {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.68rem;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent-strong, var(--accent));
+  border-radius: 4px;
+  padding: 0.05rem 0.35rem;
+  cursor: pointer;
+  line-height: 1.4;
+}
+
+.library-facts-key-chip:hover,
+.library-facts-copy-fact:hover {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.library-facts-value {
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
 .library-facts-quote {
   margin: 0.25rem 0 0;
   font-size: 0.72rem;
