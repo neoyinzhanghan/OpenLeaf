@@ -102,10 +102,13 @@ describe("knowledge kuzu index", () => {
     const graph = await buildKnowledgeGraph(true);
     assert.ok(graph.nodes.some((n) => n.id === "kn:demo-kuzu-item"));
     assert.ok(graph.nodes.some((n) => n.id === "fact:demo-kuzu-metric"));
+    const hidden = graph.nodes.find((n) => n.id === "fact:demo-kuzu-hidden");
+    assert.ok(hidden, "uncited facts are indexed for search/neighborhood");
+    assert.equal(hidden.inTree, false, "uncited facts are not in the default tree");
     assert.equal(
-      graph.nodes.some((n) => n.id === "fact:demo-kuzu-hidden"),
-      false,
-      "uncited facts stay out of the default tree",
+      graph.nodes.find((n) => n.id === "fact:demo-kuzu-metric")?.inTree,
+      true,
+      "cited facts are in the default tree",
     );
     const status = knowledgeIndexStatus();
     assert.ok(status.nodes >= 3);

@@ -83,7 +83,14 @@ type Props = {
 
 type Density = "compact" | "comfortable";
 
+function isWebSource(paper: PaperRecord): boolean {
+  return paper.source === "web" || Boolean(paper.url && !paper.doi && !paper.arxivId);
+}
+
 function phoneMeta(paper: PaperRecord): string {
+  if (isWebSource(paper)) {
+    return ["Web page", paper.year != null ? String(paper.year) : ""].filter(Boolean).join(" · ");
+  }
   const first = paper.authors[0];
   const who = !first
     ? "Unknown author"
@@ -94,6 +101,7 @@ function phoneMeta(paper: PaperRecord): string {
 }
 
 function authorsLabel(paper: PaperRecord, opts?: { compact?: boolean }): string {
+  if (isWebSource(paper) && !paper.authors.length) return "Web page";
   if (!paper.authors.length) return "Unknown authors";
   if (opts?.compact) {
     const first = paper.authors[0]!;
@@ -119,6 +127,10 @@ function integrityBadge(paper: PaperRecord): { label: string; className: string 
   }
   if (paper.integrity.reason?.trim()) {
     return { label: "Explained", className: "lib-badge lib-badge-warn" };
+  }
+  // Web pages are not Crossref-checked — "Unchecked" is meaningless there.
+  if (isWebSource(paper)) {
+    return { label: "Web snapshot", className: "lib-badge" };
   }
   return { label: "Unchecked", className: "lib-badge" };
 }

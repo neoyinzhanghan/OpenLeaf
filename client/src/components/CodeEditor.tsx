@@ -95,6 +95,8 @@ type Props = {
   outNames?: string[];
   /** Knowledge step status gutter dots */
   knowledgeStepMarks?: Array<{ line: number; status: string }>;
+  /** Click a knowledge step gutter mark → open that step in the inspector */
+  onOpenKnowledgeStep?: (line: number) => void;
   /** Cursor moved — used by knowledge inspector */
   onCursorChange?: (pos: { line: number; column: number; lineText: string; nearby: string[] }) => void;
   /** Cmd/Ctrl+Alt+M or selection helper — open compose for current selection */
@@ -187,6 +189,7 @@ export function CodeEditor({
   knowledgeHints = [],
   outNames = [],
   knowledgeStepMarks = [],
+  onOpenKnowledgeStep,
   onCursorChange,
   onRequestComment,
   onOpenCommentThread,
@@ -219,6 +222,10 @@ export function CodeEditor({
   commentReqRef.current = onRequestComment;
   const openThreadRef = useRef(onOpenCommentThread);
   openThreadRef.current = onOpenCommentThread;
+  const openKnowledgeStepRef = useRef(onOpenKnowledgeStep);
+  openKnowledgeStepRef.current = onOpenKnowledgeStep;
+  const knowledgeStepMarksRef = useRef(knowledgeStepMarks);
+  knowledgeStepMarksRef.current = knowledgeStepMarks;
   const commentMarksRef = useRef(commentMarks);
   commentMarksRef.current = commentMarks;
   const saveRef = useRef(onSave);
@@ -561,6 +568,15 @@ export function CodeEditor({
             openThreadRef.current(hit.threadId);
             return;
           }
+        }
+      }
+      if (el?.classList?.contains("knowledge-step-glyph") || el?.closest?.(".knowledge-step-glyph")) {
+        const line = detail.position?.lineNumber;
+        if (line && openKnowledgeStepRef.current && knowledgeStepMarksRef.current.some((m) => m.line === line)) {
+          e.event.preventDefault();
+          e.event.stopPropagation();
+          openKnowledgeStepRef.current(line);
+          return;
         }
       }
       const pos = e.target.position;

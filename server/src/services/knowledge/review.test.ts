@@ -150,10 +150,21 @@ describe("review.json service", () => {
       fs.readFileSync(path.join(libraryRoot, "papers", citekey, "facts.json"), "utf8"),
     ) as { facts: Array<{ id: string; key?: string }> };
     const f = facts.facts.find((x) => x.key === factKey)!;
-    await updateFact(citekey, f.id, { status: "rejected" });
+    await updateFact(citekey, f.id, {
+      status: "rejected",
+      rejectReason: "Wrong number for the test",
+    });
     const steps = await listStepStatuses(projectId);
     const calc = steps.find((s) => s.id === "calculation:total");
     assert.equal(calc?.status, "flagged");
     assert.ok(calc?.why.some((w) => /rejected/.test(w)));
+
+    await assert.rejects(
+      () => reviewStep(projectId, "calculation:total", "reviewed", "tester"),
+      (err: unknown) => {
+        assert.ok(err && typeof err === "object" && "status" in err && (err as { status: number }).status === 409);
+        return true;
+      },
+    );
   });
 });

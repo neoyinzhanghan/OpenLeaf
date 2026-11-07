@@ -20,13 +20,39 @@ export type AddWebSourceInput = {
   notes?: string;
 };
 
+export type SnapshotProvenance = "fetched" | "curated" | "pasted" | "uploaded";
+
 export type WebSnapshotMeta = {
   url: string;
   fetchedAt: string;
   sha256: string;
   title: string;
   bytes: number;
+  /** How the snapshot text entered OpenLeaf. Omitted on legacy files → treat as fetched if sha256 looks real. */
+  provenance?: SnapshotProvenance;
+  /** Human note (e.g. why a curated excerpt was used). */
+  note?: string;
 };
+
+export function describeSnapshotProvenance(meta: Partial<WebSnapshotMeta> | null | undefined): string {
+  const p = meta?.provenance;
+  const when = meta?.fetchedAt ? meta.fetchedAt.slice(0, 10) : null;
+  if (p === "curated") {
+    return when
+      ? `Text pasted by an agent (curated excerpt) · ${when}`
+      : "Text pasted by an agent (curated excerpt)";
+  }
+  if (p === "pasted") {
+    return when ? `Text pasted by an agent · ${when}` : "Text pasted by an agent";
+  }
+  if (p === "uploaded") {
+    return when ? `Uploaded by you · ${when}` : "Uploaded by you";
+  }
+  if (p === "fetched" || (!p && meta?.fetchedAt)) {
+    return when ? `Fetched by OpenLeaf on ${when}` : "Fetched by OpenLeaf";
+  }
+  return "Source snapshot";
+}
 
 export async function addWebSource(
   input: AddWebSourceInput,
@@ -61,6 +87,7 @@ export async function addWebSource(
     sha256: fetched.sha256,
     title,
     bytes: fetched.bytes,
+    provenance: "fetched",
   };
   await fsPromises.writeFile(snapshotJsonPath(paper.citekey), `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
   return { paper, snapshot };

@@ -621,7 +621,8 @@ export function KnowledgePage() {
       x1 = Math.max(x1, x + n.r);
       y1 = Math.max(y1, y + n.r);
     }
-    const z = Math.max(0.35, Math.min(2.2, Math.min(W / (x1 - x0 + 220), H / (y1 - y0 + 180))));
+    // Extra padding so labels on the left edge are not clipped (overnight #9).
+    const z = Math.max(0.3, Math.min(2.0, Math.min(W / (x1 - x0 + 360), H / (y1 - y0 + 280))));
     const cx = (x0 + x1) / 2;
     const cy = (y0 + y1) / 2;
     const nvx = W / 2 - cx * z;
@@ -896,8 +897,8 @@ export function KnowledgePage() {
         if (ui.labels === "all") return true;
         if (focus === n.id) return true;
         if (focus) {
-          // One knowledge/project label while focused — neighbors only as facts/sources when zoomed.
-          if (n.kind === "knowledge" || n.kind === "project") return false;
+          // Focused branch: keep knowledge + paper labels on lit nodes so the paper is never nameless.
+          if (n.kind === "knowledge" || n.kind === "project") return Boolean(lit?.has(n.id));
           return Boolean(lit?.has(n.id)) && cam.zoom >= 1.2;
         }
         return n.kind === "knowledge" || n.kind === "project";
@@ -908,9 +909,10 @@ export function KnowledgePage() {
           a.name.localeCompare(b.name),
       );
 
-    const fontPx = 11 / cam.zoom;
+    // Keep labels proportional to the rest of the UI (overnight #9 — was oversized).
+    const fontPx = Math.min(12, Math.max(9, 10 / Math.sqrt(Math.max(cam.zoom, 0.5))));
     ctx.font = `500 ${fontPx}px var(--font), sans-serif`;
-    const maxLabels = ui.labels === "all" ? 60 : focus ? 14 : 12;
+    const maxLabels = ui.labels === "all" ? 60 : focus ? 18 : 12;
     let drawnLabels = 0;
 
     for (const n of labelCandidates) {

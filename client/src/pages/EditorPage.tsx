@@ -386,6 +386,15 @@ export function EditorPage() {
     setTreeCollapsed(false);
     setTreeWidth((w) => Math.max(w, 300));
   }, [reviewMode, knowledgeMeta?.kind, knowledgeMeta?.knowledgeId]);
+  // Deep-link: ?step=calculation:total opens the step inspector.
+  const stepParam = searchParams.get("step");
+  useEffect(() => {
+    if (!stepParam || knowledgeMeta?.kind !== "knowledge") return;
+    const hit = knowledgeSteps.find((s) => s.id === stepParam);
+    if (!hit) return;
+    setKnowledgeTarget({ kind: "step", stepId: hit.id, line: hit.line ?? 1 });
+    setKnowledgeInspectorOpen(true);
+  }, [stepParam, knowledgeSteps, knowledgeMeta?.kind]);
   const [treeDragging, setTreeDragging] = useState(false);
   const [jumpTo, setJumpTo] = useState<{
     path?: string;
@@ -2407,7 +2416,8 @@ export function EditorPage() {
             ))}
           {knowledgeMeta?.kind === "knowledge" ? (
             <>
-              <span
+              <button
+                type="button"
                 className={`knowledge-status-chip toolbar-wide-only${
                   knowledgeSteps.some((s) => s.status === "flagged" || s.status === "rejected")
                     ? " is-flag"
@@ -2415,12 +2425,35 @@ export function EditorPage() {
                       ? " is-needs"
                       : " is-ok"
                 }`}
-                title={knowledgeSteps.map((s) => `${s.id}: ${s.status}`).join("\n") || "No steps yet"}
+                title={
+                  knowledgeSteps.map((s) => `${s.id}: ${s.status}`).join("\n") ||
+                  "No steps yet — open the trail to review dependencies"
+                }
+                onClick={() => {
+                  setDepReviewOpen(true);
+                  setTreeCollapsed(false);
+                  setTreeWidth((w) => Math.max(w, 300));
+                  const first = knowledgeSteps.find(
+                    (s) =>
+                      s.status === "needs-review" ||
+                      s.status === "flagged" ||
+                      s.status === "rejected",
+                  );
+                  setSearchParams(
+                    (prev) => {
+                      const p = new URLSearchParams(prev);
+                      p.set("review", "1");
+                      if (first?.id) p.set("step", first.id);
+                      return p;
+                    },
+                    { replace: true },
+                  );
+                }}
               >
                 {knowledgeSteps.length
                   ? `${knowledgeSteps.filter((s) => s.status === "needs-review" || s.status === "flagged").length} of ${knowledgeSteps.length} steps need review`
                   : "No steps yet"}
-              </span>
+              </button>
               <button
                 type="button"
                 className={`btn btn-quiet toolbar-wide-only${depReviewOpen ? " is-active" : ""}`}
@@ -3519,6 +3552,12 @@ export function EditorPage() {
                         knowledgeStepMarks={knowledgeSteps
                           .filter((s) => typeof s.line === "number")
                           .map((s) => ({ line: s.line!, status: s.status }))}
+                        onOpenKnowledgeStep={(line) => {
+                          const step = knowledgeSteps.find((s) => s.line === line);
+                          if (!step) return;
+                          setKnowledgeTarget({ kind: "step", stepId: step.id, line });
+                          setKnowledgeInspectorOpen(true);
+                        }}
                         onCursorChange={(pos) => {
                           const t = knowledgeCursorTarget(pos.lineText, pos.column, pos.line, pos.nearby);
                           setKnowledgeTarget(t);

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
+  getLibrarySnapshotMeta,
   getLibrarySnapshotText,
   libraryPdfUrl,
   listAllLibraryFacts,
@@ -306,6 +307,7 @@ export function LibraryFactsView({ papers, onBack, onError }: Props) {
   const [snapshotText, setSnapshotText] = useState<string | null>(null);
   const [snapshotError, setSnapshotError] = useState<string | null>(null);
   const [snapshotBusy, setSnapshotBusy] = useState(false);
+  const [provenanceLabel, setProvenanceLabel] = useState<string | null>(null);
   const snapshotRef = useRef<HTMLPreElement | null>(null);
   const [queueCollapsed, setQueueCollapsed] = useState(
     () => localStorage.getItem("openleaf.facts.queueCollapsed") === "1",
@@ -529,21 +531,27 @@ export function LibraryFactsView({ papers, onBack, onError }: Props) {
     };
   }, [activeFact?.citekey, activeFact?.id]);
 
-  // Web sources: load snapshot.txt and scroll to the highlighted passage.
+  // Web sources: load snapshot.txt + provenance, then scroll to the highlighted passage.
   useEffect(() => {
     let cancelled = false;
     if (!activeFact || !isWebEvidence) {
       setSnapshotText(null);
       setSnapshotError(null);
+      setProvenanceLabel(null);
       setSnapshotBusy(false);
       return;
     }
     setSnapshotBusy(true);
     setSnapshotError(null);
-    void getLibrarySnapshotText(activeFact.citekey)
-      .then((text) => {
+    setProvenanceLabel(null);
+    void Promise.all([
+      getLibrarySnapshotText(activeFact.citekey),
+      getLibrarySnapshotMeta(activeFact.citekey).catch(() => null),
+    ])
+      .then(([text, meta]) => {
         if (cancelled) return;
         setSnapshotText(text);
+        setProvenanceLabel(meta?.provenanceLabel ?? null);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -801,6 +809,11 @@ export function LibraryFactsView({ papers, onBack, onError }: Props) {
             <> · p.{evidenceFact.highlights[0].page}</>
           ) : null}
         </p>
+        {isWebEvidence && provenanceLabel ? (
+          <p className="library-facts-provenance" title={provenanceLabel}>
+            {provenanceLabel}
+          </p>
+        ) : null}
         {isWebEvidence && activePaper.url ? (
           <p className="library-facts-source-url">
             <a href={activePaper.url} target="_blank" rel="noreferrer">

@@ -10706,18 +10706,32 @@ button.lib-badge:hover {
 .kn-dep-copy strong {
   font-size: 0.88rem;
   font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* Prefer readable wrap over "DEM…" truncation (overnight #9). */
+  overflow-wrap: anywhere;
+  white-space: normal;
+  line-height: 1.25;
 }
 
 .kn-dep-meta,
 .kn-dep-note {
   font-size: 0.72rem;
   color: var(--ink-faint);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.kn-dep-source-badge {
+  font-size: 0.68rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.library-facts-provenance {
+  margin: 0.15rem 0 0;
+  font-size: 0.78rem;
+  color: var(--ink-faint);
 }
 
 .kn-dep-foot {
@@ -10877,6 +10891,15 @@ button.lib-badge:hover {
   font-weight: 600;
   background: var(--accent-soft);
   color: var(--accent-strong);
+  border: none;
+  font-family: inherit;
+  cursor: default;
+}
+button.knowledge-status-chip {
+  cursor: pointer;
+}
+button.knowledge-status-chip:hover {
+  filter: brightness(0.97);
 }
 
 .knowledge-status-chip.is-flag {
@@ -11280,6 +11303,7 @@ button.lib-badge:hover {
   border-radius: 2px;
 }
 .knowledge-step-glyph {
+  cursor: pointer;
   margin-left: 2px;
   width: 6px !important;
   border-radius: 50%;

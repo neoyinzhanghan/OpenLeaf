@@ -12,12 +12,15 @@ type Props = {
   nodeId: string;
   /** Optional project folder for “back to write-up”. */
   projectId?: string;
+  /** When true, trail sits beside the write-up — hide redundant “Back to write-up”. */
   compact?: boolean;
   onClose?: () => void;
 };
 
-function statusLabel(status: KnowledgeStatus): string {
-  if (status === "up-to-date" || status === "confirmed" || status === "reviewed") return "OK";
+function statusLabel(kind: KnowledgeGraphNode["kind"], status: KnowledgeStatus): string | null {
+  // Sources are not reviewed — never show an OK badge on them.
+  if (kind === "source") return null;
+  if (status === "up-to-date" || status === "confirmed" || status === "reviewed") return "Checked";
   if (status === "needs-review" || status === "unreviewed") return "Needs review";
   if (status === "flagged") return "Flagged";
   if (status === "rejected" || status === "not_found") return "Rejected";
@@ -30,6 +33,13 @@ function kindLabel(kind: KnowledgeGraphNode["kind"]): string {
   if (kind === "knowledge") return "Knowledge";
   if (kind === "project") return "Paper";
   return kind;
+}
+
+function statusChipClass(status: KnowledgeStatus): string {
+  if (status === "rejected" || status === "not_found") return "is-reject";
+  if (status === "flagged") return "is-flag";
+  if (status === "needs-review" || status === "unreviewed") return "is-needs";
+  return "is-ok";
 }
 
 function reviewOrder(nodes: KnowledgeGraphNode[], rootId: string): KnowledgeGraphNode[] {
@@ -82,27 +92,31 @@ export function KnowledgeDependencyReview({ nodeId, projectId, compact, onClose 
   const trail = useMemo(() => reviewOrder(nodes, nodeId), [nodes, nodeId]);
   const root = nodes.find((n) => n.id === nodeId) ?? null;
   const needs = trail.filter((n) => {
+    if (n.kind === "source") return false;
     const s = n.status;
     return s === "needs-review" || s === "unreviewed" || s === "flagged" || s === "rejected" || s === "not_found";
   });
+  const trustLine = root
+    ? `Built on ${trail.filter((n) => n.kind === "fact").length} facts and ${
+        trail.filter((n) => n.kind === "knowledge").length
+      } knowledge items · ${needs.length} need attention`
+    : null;
 
   return (
     <aside className={`kn-dep-review${compact ? " is-compact" : ""}`} aria-label="Knowledge dependency review">
       <header className="kn-dep-review-head">
         <div>
           <p className="kn-dep-kicker">Review trail</p>
-          <h2>{root?.name || "Knowledge"}</h2>
+          <h2 title={root?.name || "Knowledge"}>{root?.name || "Knowledge"}</h2>
           <p className="kn-dep-lede">
             {loading
               ? "Gathering sources and facts this write-up builds on…"
-              : trail.length
-                ? `${trail.length} dependenc${trail.length === 1 ? "y" : "ies"} · ${needs.length} need attention`
-                : "No upstream dependencies indexed yet."}
+              : trustLine || "No upstream dependencies indexed yet."}
           </p>
         </div>
         {onClose ? (
           <button type="button" className="btn btn-ghost btn-quiet" onClick={onClose}>
-            Close
+            {compact ? "Show files" : "Close"}
           </button>
         ) : null}
       </header>
@@ -112,28 +126,31 @@ export function KnowledgeDependencyReview({ nodeId, projectId, compact, onClose 
       <ol className="kn-dep-trail">
         {trail.map((n, i) => {
           const href = openNodeHref(n);
+          const label = statusLabel(n.kind, n.status);
           const attention =
-            n.status === "needs-review" ||
-            n.status === "unreviewed" ||
-            n.status === "flagged" ||
-            n.status === "rejected" ||
-            n.status === "not_found";
+            n.kind !== "source" &&
+            (n.status === "needs-review" ||
+              n.status === "unreviewed" ||
+              n.status === "flagged" ||
+              n.status === "rejected" ||
+              n.status === "not_found");
           return (
             <li key={n.id} className={attention ? "is-attention" : undefined}>
               <span className="kn-dep-step">{i + 1}</span>
               <span className="knowledge-kind-dot" data-kind={n.kind} />
               <div className="kn-dep-copy">
-                <strong>{n.name}</strong>
+                <strong title={n.name}>{n.name}</strong>
                 <span className="kn-dep-meta">
                   {kindLabel(n.kind)}
-                  {n.citekey ? ` · ${n.citekey}` : ""}
-                  {n.factKey ? ` · \\fact{${n.factKey}}` : ""}
+                  {n.why?.[0] ? ` · ${n.why[0]}` : ""}
                 </span>
                 {n.note && n.kind === "fact" ? <span className="kn-dep-note">{n.note}</span> : null}
               </div>
-              <span className={`knowledge-status-chip${attention ? " is-needs" : ""}`}>
-                {statusLabel(n.status)}
-              </span>
+              {label ? (
+                <span className={`knowledge-status-chip ${statusChipClass(n.status)}`}>{label}</span>
+              ) : (
+                <span className="kn-dep-source-badge">Source</span>
+              )}
               {href ? (
                 <button
                   type="button"
@@ -158,10 +175,15 @@ export function KnowledgeDependencyReview({ nodeId, projectId, compact, onClose 
           dependency above is sound.
         </p>
         <div className="kn-dep-foot-actions">
-          {projectId ? (
+          {!compact && projectId ? (
             <Link className="btn btn-primary" to={`/p/${encodeURIComponent(projectId)}`}>
               Back to write-up
             </Link>
+          ) : null}
+          {compact && onClose ? (
+            <button type="button" className="btn btn-primary" onClick={onClose}>
+              Done — show files
+            </button>
           ) : null}
           <Link className="btn btn-quiet" to={`/knowledge?focus=${encodeURIComponent(nodeId)}`}>
             View on graph

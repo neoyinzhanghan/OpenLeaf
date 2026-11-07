@@ -881,6 +881,21 @@ export async function getLibrarySnapshotText(citekey: string): Promise<string> {
   return res.text();
 }
 
+export function getLibrarySnapshotMeta(citekey: string): Promise<{
+  snapshot: {
+    url: string;
+    fetchedAt: string;
+    sha256: string;
+    title: string;
+    bytes: number;
+    provenance?: "fetched" | "curated" | "pasted" | "uploaded";
+    note?: string;
+  };
+  provenanceLabel: string;
+}> {
+  return request(`/api/library/${encodeURIComponent(citekey)}/snapshot.json`);
+}
+
 export function importLibraryBibtex(bibtex: string): Promise<{
   imported: PaperRecord[];
   skipped: Array<{

@@ -32,3 +32,13 @@ One line per decision: **question** — choice — why. Newest at the bottom.
 - **Progressive disclosure** — Default canvas hides fact/source nodes; focus loads `/api/knowledge/neighborhood` (incl. sibling facts on touched sources) and reveals the lit branch. — Matches “hidden until you look”.
 - **Tree vs index** — Default tree only `inTree` nodes (knowledge-cited facts/sources + kn/projects); full fact set is indexed for search/neighborhood. — Sparse UI, complete retrieval.
 - **Authored papers vs knowledge** — Graph `project` nodes only for OpenLeaf projects with explicit `"kind": "paper"` (Inference Powered Prediction, WSIP Paper, Reframing AIT FAccT, Label-free correction for label shift, DeepHeme MSK NatMed). Other folders are knowledge or notes, not papers. Papers render as amber rounded squares; knowledge as violet ringed discs. — Owner taxonomy; keeps benches/talks out of the paper layer.
+
+## Decided overnight (knowledge-review-ux)
+- **Paper up-to-date rule** — A paper is `flagged` whenever any cited fact/knowledge is rejected, flagged, needs-review, or unreviewed (stricter than SPEC §5.5). — Overnight brief: a number built on unchecked work must never look fine.
+- **Upstream why always carried** — `computeStepStatus` keeps rejected/unchecked input reasons even when the step itself is still `needs-review`. — Owner must see the real cause, not an empty why.
+- **Reject requires a reason** — Host reject of a fact needs non-empty `rejectReason`; `previousStatus` enables Undo. — SPEC 7.3 + overnight #4.
+- **Cannot rubber-stamp steps** — `reviewStep(reviewed)` returns 409 when any fact input is rejected or unchecked (unless `force`). — Overnight #2.
+- **Trail lives in the Files sidebar** — Files | Trail tabs; compact mode hides “Back to write-up”. — Overnight #11; write-up stays visible.
+- **Snapshot provenance** — `snapshot.json.provenance`: fetched | curated | pasted | uploaded; seed curated excerpts labelled; offline fetch skips cleanly. — Overnight #8.
+- **Calculation math mode** — Calculation bodies typeset in math; `\fact`/`\kn` emit numeric macros inside calc. — Overnight #5 first-compile determinism.
+- **Human number format** — Prefer thousands separators and “$41.3 million” over scientific notation. — Overnight #6 / SPEC 5.4.

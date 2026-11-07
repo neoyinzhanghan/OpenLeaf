@@ -269,6 +269,25 @@ libraryRouter.post("/import/web", async (req, res) => {
 });
 
 /** Readable web snapshot — always text/plain (never serve snapshot.html). */
+libraryRouter.get("/:citekey/snapshot.json", async (req, res) => {
+  try {
+    const { snapshotJsonPath } = await import("../services/library/sourceText.js");
+    const { describeSnapshotProvenance } = await import("../services/library/webSource.js");
+    const file = snapshotJsonPath(req.params.citekey);
+    if (!fs.existsSync(file)) {
+      res.status(404).json({ error: "No web snapshot for this source" });
+      return;
+    }
+    const raw = JSON.parse(await fs.promises.readFile(file, "utf8")) as Record<string, unknown>;
+    res.json({
+      snapshot: raw,
+      provenanceLabel: describeSnapshotProvenance(raw as never),
+    });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
 libraryRouter.get("/:citekey/snapshot.txt", async (req, res) => {
   try {
     const file = snapshotTxtPath(req.params.citekey);

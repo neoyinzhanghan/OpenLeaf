@@ -95,6 +95,8 @@ fs.writeFileSync(
       sha256: "demo",
       title: "DEMO fee schedule (synthetic)",
       bytes: text.length,
+      provenance: "pasted",
+      note: "DEMO seed text — not fetched by OpenLeaf.",
     },
     null,
     2,
@@ -123,7 +125,10 @@ const rejected = await createFact(paper.citekey, {
   sourceKind: "web",
   highlights: [{ page: 1, start: 0, end: 10, quote: text.slice(0, 10) }],
 });
-await updateFact(paper.citekey, rejected.id, { status: "rejected" });
+await updateFact(paper.citekey, rejected.id, {
+  status: "rejected",
+  rejectReason: "DEMO — intentionally rejected so flags are visible",
+});
 
 const asp = await createKnowledgeItem({
   title: "DEMO US aspirates per year",

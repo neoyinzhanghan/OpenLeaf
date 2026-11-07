@@ -113,9 +113,19 @@ async function importAndFact(
     return "";
   }
   console.log(`Fetching ${url}`);
-  const { paper } = await addWebSource({ url, title, collections: [COLLECTION], notes });
-  await attachFacts(paper.citekey, title, wanted);
-  return paper.citekey;
+  try {
+    const { paper } = await addWebSource({ url, title, collections: [COLLECTION], notes });
+    await attachFacts(paper.citekey, title, wanted);
+    return paper.citekey;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // Offline / DNS / network — never crash the whole seed.
+    if (/ENOTFOUND|ECONNREFUSED|ETIMEDOUT|fetch failed|network/i.test(msg)) {
+      console.warn(`Skip offline fetch for ${title}: ${msg}`);
+      return "";
+    }
+    throw err;
+  }
 }
 
 /** When the live site blocks bots, store a dated excerpt with the canonical URL. */
@@ -155,7 +165,8 @@ async function curatedWebSource(
           sha256: "curated-excerpt",
           title,
           bytes: snapshotText.length,
-          note: "Curated excerpt — live fetch blocked; numbers verified against source.",
+          provenance: "curated",
+          note: "Curated excerpt — live fetch blocked; numbers verified against source. Not fetched by OpenLeaf.",
         },
         null,
         2,
