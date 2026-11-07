@@ -63,6 +63,22 @@ knowledgeRouter.get("/impact", async (req, res) => {
   }
 });
 
+knowledgeRouter.get("/neighborhood", async (req, res) => {
+  try {
+    const node = typeof req.query.node === "string" ? req.query.node : "";
+    if (!node) {
+      res.status(400).json({ error: "node is required" });
+      return;
+    }
+    const depthRaw = typeof req.query.depth === "string" ? Number(req.query.depth) : 2;
+    const depth = Number.isFinite(depthRaw) ? depthRaw : 2;
+    const { neighborhoodOf } = await import("../services/knowledge/graph.js");
+    res.json(await neighborhoodOf(node, depth));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
 knowledgeRouter.get("/inbox", async (_req, res) => {
   try {
     const { knowledgeInbox } = await import("../services/knowledge/graph.js");

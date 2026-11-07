@@ -298,6 +298,115 @@ export async function buildKnowledgeGraph(force = false): Promise<KnowledgeGraph
   return graph;
 }
 
+/**
+ * Neighborhood around a node for progressive disclosure.
+ * When a source (or a fact on a source) is in view, also hydrate *all* facts
+ * from that source — not only ones cited by knowledge — so relevant hidden
+ * library facts can "come to light" while the default graph stays sparse.
+ */
+export async function neighborhoodOf(
+  nodeId: string,
+  depth: number = 2,
+): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> {
+  const graph = await buildKnowledgeGraph();
+  const maxDepth = Math.max(0, Math.min(8, Math.floor(depth)));
+  const adj = new Map<string, string[]>();
+  for (const e of graph.edges) {
+    const a = adj.get(e.from) ?? [];
+    a.push(e.to);
+    adj.set(e.from, a);
+    const b = adj.get(e.to) ?? [];
+    b.push(e.from);
+    adj.set(e.to, b);
+  }
+
+  const keep = new Set<string>();
+  const queue: Array<{ id: string; d: number }> = [{ id: nodeId, d: 0 }];
+  keep.add(nodeId);
+  while (queue.length) {
+    const { id, d } = queue.shift()!;
+    if (d >= maxDepth) continue;
+    for (const n of adj.get(id) ?? []) {
+      if (keep.has(n)) continue;
+      keep.add(n);
+      queue.push({ id: n, d: d + 1 });
+    }
+  }
+
+  // Sources to expand: any src: in the keep set, or the source of a kept fact.
+  const expandCitekeys = new Set<string>();
+  for (const id of keep) {
+    if (id.startsWith("src:")) expandCitekeys.add(id.slice(4));
+    if (id.startsWith("fact:")) {
+      const existing = graph.nodes.find((n) => n.id === id);
+      const src = existing?.inputs.find((i) => i.startsWith("src:"));
+      if (src) expandCitekeys.add(src.slice(4));
+    }
+  }
+  if (nodeId.startsWith("src:")) expandCitekeys.add(nodeId.slice(4));
+
+  const extraNodes: GraphNode[] = [];
+  const extraEdges: GraphEdge[] = [];
+  const have = new Set(graph.nodes.map((n) => n.id));
+
+  for (const citekey of expandCitekeys) {
+    let paper;
+    try {
+      paper = await getPaper(citekey);
+    } catch {
+      continue;
+    }
+    const srcId = `src:${citekey}`;
+    if (!have.has(srcId)) {
+      const collection = paper.collections[0] || "unsorted";
+      extraNodes.push({
+        id: srcId,
+        kind: "source",
+        name: paper.title,
+        status: "up-to-date",
+        why: [],
+        collection,
+        inputs: [],
+        outputs: [],
+        updatedAt: paper.updatedAt || paper.addedAt,
+      });
+      have.add(srcId);
+    }
+    const { listAllFacts } = await import("../library/facts.js");
+    const facts = await listAllFacts({ citekey, skipDisplay: true });
+    for (const fact of facts) {
+      if (!fact.key) continue;
+      const fid = `fact:${fact.key}`;
+      if (have.has(fid)) continue;
+      const collection = paper.collections[0] || "unsorted";
+      const status = computeFactStatus(fact.status);
+      extraNodes.push({
+        id: fid,
+        kind: "fact",
+        name: fact.key,
+        status,
+        why: fact.status === "rejected" ? ["rejected by reviewer"] : [],
+        collection,
+        note: fact.input,
+        inputs: [srcId],
+        outputs: [],
+        updatedAt: fact.updatedAt,
+      });
+      extraEdges.push({ from: srcId, to: fid, flagged: status === "rejected" });
+      have.add(fid);
+      keep.add(fid);
+    }
+    keep.add(srcId);
+  }
+
+  const baseNodes = graph.nodes.filter((n) => keep.has(n.id));
+  const baseEdges = graph.edges.filter((e) => keep.has(e.from) && keep.has(e.to));
+  return {
+    nodes: [...baseNodes, ...extraNodes],
+    edges: [...baseEdges, ...extraEdges],
+  };
+}
+
 export async function impactOf(nodeId: string): Promise<{
   node: string;
   flagged: GraphNode[];

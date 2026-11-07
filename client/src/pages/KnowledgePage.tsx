@@ -24,8 +24,10 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   getKnowledgeGraph,
   getKnowledgeInbox,
+  getKnowledgeNeighborhood,
   listKnowledgeItems,
   type KnowledgeGraph,
+  type KnowledgeGraphEdge,
   type KnowledgeGraphNode,
   type KnowledgeStatus,
 } from "../api/client";
@@ -90,6 +92,30 @@ function kindColor(kind: KindKey): string {
 
 function statusNeedsAttention(status: KnowledgeStatus): boolean {
   return status === "needs-review" || status === "unreviewed" || status === "flagged" || status === "rejected";
+}
+
+function isDetailKind(kind: KnowledgeGraphNode["kind"]): boolean {
+  return kind === "fact" || kind === "source";
+}
+
+function mergeGraphPatch(
+  base: KnowledgeGraph,
+  patch: { nodes: KnowledgeGraphNode[]; edges: KnowledgeGraphEdge[] } | null,
+): KnowledgeGraph {
+  if (!patch?.nodes.length) return base;
+  const byId = new Map(base.nodes.map((n) => [n.id, n]));
+  for (const n of patch.nodes) byId.set(n.id, n);
+  const edgeKey = (e: KnowledgeGraphEdge) => `${e.from}->${e.to}`;
+  const edges = new Map(base.edges.map((e) => [edgeKey(e), e]));
+  for (const e of patch.edges) edges.set(edgeKey(e), e);
+  const collections = new Set(base.collections);
+  for (const n of patch.nodes) collections.add(n.collection);
+  return {
+    nodes: [...byId.values()],
+    edges: [...edges.values()],
+    collections: [...collections].sort(),
+    generatedAt: base.generatedAt,
+  };
 }
 
 function nodeRadius(n: KnowledgeGraphNode): number {
@@ -174,8 +200,13 @@ export function KnowledgePage() {
   const remoteHost = session.kind === "host" && session.remote;
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
-  const [graph, setGraph] = useState<KnowledgeGraph | null>(null);
+  const [baseGraph, setBaseGraph] = useState<KnowledgeGraph | null>(null);
+  const [revealPatch, setRevealPatch] = useState<{
+    nodes: KnowledgeGraphNode[];
+    edges: KnowledgeGraphEdge[];
+  } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [revealing, setRevealing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [inboxCount, setInboxCount] = useState(0);
   const [lastProject, setLastProject] = useState<LastProject | null>(null);
@@ -193,7 +224,14 @@ export function KnowledgePage() {
     knowledge: true,
     project: true,
   });
+  /** When false (default), facts/sources stay hidden until focus reveals them. */
+  const [alwaysShowDetails, setAlwaysShowDetails] = useState(false);
   const [attention, setAttention] = useState(false);
+
+  const graph = useMemo(
+    () => (baseGraph ? mergeGraphPatch(baseGraph, revealPatch) : null),
+    [baseGraph, revealPatch],
+  );
   const [labels, setLabels] = useState<"auto" | "all" | "off">("auto");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [q, setQ] = useState("");
@@ -214,10 +252,19 @@ export function KnowledgePage() {
   const dragRef = useRef<{ id: string; sx: number; sy: number; moved: boolean } | null>(null);
   const suppressClick = useRef(false);
   const cameraRef = useRef({ zoom, vx, vy, anim });
-  const uiRef = useRef({ focus, depth, kinds, attention, labels, collapsed, pathTo });
+  const uiRef = useRef({
+    focus,
+    depth,
+    kinds,
+    attention,
+    labels,
+    collapsed,
+    pathTo,
+    alwaysShowDetails,
+  });
 
   cameraRef.current = { zoom, vx, vy, anim };
-  uiRef.current = { focus, depth, kinds, attention, labels, collapsed, pathTo };
+  uiRef.current = { focus, depth, kinds, attention, labels, collapsed, pathTo, alwaysShowDetails };
 
   useEffect(() => {
     setLastProject(readLastProject());
@@ -230,7 +277,7 @@ export function KnowledgePage() {
     void getKnowledgeGraph()
       .then((g) => {
         if (cancelled) return;
-        setGraph(g);
+        setBaseGraph(g);
         setLoading(false);
       })
       .catch((err: unknown) => {
@@ -380,9 +427,52 @@ export function KnowledgePage() {
     return branchSet(focus, depth, inputsMap, outputsMap);
   }, [focus, depth, inputsMap, outputsMap]);
 
+  // Progressive disclosure: hydrate sibling facts from sources in the focused branch.
+  useEffect(() => {
+    if (!focus) {
+      setRevealPatch(null);
+      setRevealing(false);
+      return;
+    }
+    let cancelled = false;
+    setRevealing(true);
+    const d = depth === "all" ? 4 : Number(depth);
+    void getKnowledgeNeighborhood(focus, d)
+      .then((patch) => {
+        if (cancelled) return;
+        setRevealPatch(patch);
+        setRevealing(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setRevealPatch(null);
+        setRevealing(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [focus, depth]);
+
+  const nodeIsVisible = useCallback(
+    (n: KnowledgeGraphNode, lit: Set<string> | null, path: Set<string> | null) => {
+      if (collapsed[n.collection]) return false;
+      if (!kinds[n.kind]) return false;
+      if (attention && !statusNeedsAttention(n.status)) return false;
+      if (isDetailKind(n.kind) && !alwaysShowDetails) {
+        if (!focus) return false;
+        if (lit?.has(n.id)) return true;
+        if (path?.has(n.id)) return true;
+        return false;
+      }
+      return true;
+    },
+    [collapsed, kinds, attention, alwaysShowDetails, focus],
+  );
+
   const visibleNodes = useCallback(() => {
-    return nodesRef.current.filter((n) => !collapsed[n.collection] && kinds[n.kind]);
-  }, [collapsed, kinds]);
+    const path = pathIds ? new Set(pathIds) : null;
+    return nodesRef.current.filter((n) => nodeIsVisible(n, focusedBranch, path));
+  }, [nodeIsVisible, focusedBranch, pathIds]);
 
   const fitTo = useCallback((list: SimNode[], animate: boolean) => {
     const wrap = wrapRef.current;
@@ -470,10 +560,22 @@ export function KnowledgePage() {
     const nodes = nodesRef.current;
     const links = linksRef.current;
 
+    const lit = ui.focus ? focusedBranch : null;
+    const pathSet = pathIds ? new Set(pathIds) : null;
+
     const visible = new Set(
       nodes
-        .filter((n) => !ui.collapsed[n.collection] && ui.kinds[n.kind])
-        .filter((n) => !ui.attention || statusNeedsAttention(n.status))
+        .filter((n) => {
+          if (ui.collapsed[n.collection] || !ui.kinds[n.kind]) return false;
+          if (ui.attention && !statusNeedsAttention(n.status)) return false;
+          if (isDetailKind(n.kind) && !ui.alwaysShowDetails) {
+            if (!ui.focus) return false;
+            if (lit?.has(n.id)) return true;
+            if (pathSet?.has(n.id)) return true;
+            return false;
+          }
+          return true;
+        })
         .map((n) => n.id),
     );
 
@@ -505,9 +607,6 @@ export function KnowledgePage() {
       if (!visible.has(id)) return null;
       return { x: n.x ?? 0, y: n.y ?? 0, r: n.r };
     };
-
-    const lit = ui.focus ? focusedBranch : null;
-    const pathSet = pathIds ? new Set(pathIds) : null;
 
     ctx.save();
     ctx.translate(cam.vx, cam.vy);
@@ -713,7 +812,23 @@ export function KnowledgePage() {
         };
       }
     }
-  }, [tick, zoom, vx, vy, focus, depth, kinds, attention, labels, collapsed, pathTo, pathIds, focusedBranch, anim]);
+  }, [
+    tick,
+    zoom,
+    vx,
+    vy,
+    focus,
+    depth,
+    kinds,
+    attention,
+    labels,
+    collapsed,
+    pathTo,
+    pathIds,
+    focusedBranch,
+    anim,
+    alwaysShowDetails,
+  ]);
 
   const hitTest = useCallback((clientX: number, clientY: number): SimNode | null => {
     const wrap = wrapRef.current;
@@ -722,10 +837,8 @@ export function KnowledgePage() {
     const cam = cameraRef.current;
     const wx = (clientX - rect.left - cam.vx) / cam.zoom;
     const wy = (clientY - rect.top - cam.vy) / cam.zoom;
-    const ui = uiRef.current;
-    const candidates = nodesRef.current.filter(
-      (n) => !ui.collapsed[n.collection] && ui.kinds[n.kind] && (!ui.attention || statusNeedsAttention(n.status)),
-    );
+    const path = pathIds ? new Set(pathIds) : null;
+    const candidates = nodesRef.current.filter((n) => nodeIsVisible(n, focusedBranch, path));
     const tree = quadtree<SimNode>()
       .x((d) => d.x ?? 0)
       .y((d) => d.y ?? 0)
@@ -751,7 +864,7 @@ export function KnowledgePage() {
       return x0 > wx + 20 || x1 < wx - 20 || y0 > wy + 20 || y1 < wy - 20;
     });
     return best;
-  }, []);
+  }, [nodeIsVisible, focusedBranch, pathIds]);
 
   const onPointerDown = (e: ReactPointerEvent) => {
     if (e.button !== 0) return;
@@ -935,7 +1048,10 @@ export function KnowledgePage() {
   }, [graph]);
 
   const panelList = useMemo(() => {
-    if (!focus || !focusedBranch || !graph) return graph?.nodes.slice(0, 40) ?? [];
+    if (!graph) return [];
+    if (!focus || !focusedBranch) {
+      return graph.nodes.filter((n) => n.kind === "knowledge" || n.kind === "project").slice(0, 60);
+    }
     return graph.nodes.filter((n) => focusedBranch.has(n.id));
   }, [focus, focusedBranch, graph]);
 
@@ -1081,11 +1197,21 @@ export function KnowledgePage() {
               </button>
               <button
                 type="button"
+                className={`btn btn-quiet${alwaysShowDetails ? " is-active" : ""}`}
+                title="When off, facts and sources stay hidden until you focus a related node"
+                onClick={() => setAlwaysShowDetails((v) => !v)}
+              >
+                {alwaysShowDetails ? "Facts: always" : "Facts: on focus"}
+                {revealing ? "…" : ""}
+              </button>
+              <button
+                type="button"
                 className="btn btn-quiet"
                 onClick={() => {
                   setFocus(null);
                   setPathTo(null);
                   setPathMode(false);
+                  setRevealPatch(null);
                 }}
               >
                 Clear focus

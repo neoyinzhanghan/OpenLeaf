@@ -27,3 +27,5 @@ One line per decision: **question** — choice — why. Newest at the bottom.
 - **PDF review overlay deferred** — Inspector + gutter + flagged banner ship first; SyncTeX overlay logged as blocker. — Highest-value review path without blocking handover.
 - **Graph shows only knowledge-cited facts/sources** — Override SPEC §6 “all facts with keys”; a fact/source node appears only if a knowledge item `\fact{…}` cites it. — Keeps the tree usable; Facts page still lists the full library.
 - **Graph/inbox skip PDF display rects** — `listAllFacts({ skipDisplay: true })` / `getFactsByKeys`. — `withDisplay` was loading every PDF text cache and dominated rebuild time.
+- **No graph database** — Knowledge graph stays files + in-memory rebuild/cache (SPEC “everything is files”), not Neo4j/etc. — Local-first; scalability via sparse default graph, neighborhood hydrate on focus, and skipDisplay.
+- **Progressive disclosure** — Default canvas hides fact/source nodes; focus loads `/api/knowledge/neighborhood` (incl. sibling facts on touched sources) and reveals the lit branch. — Matches “hidden until you look”.

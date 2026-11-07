@@ -1323,6 +1323,15 @@ export function getKnowledgeGraph(): Promise<KnowledgeGraph> {
   return request("/api/knowledge/graph");
 }
 
+export function getKnowledgeNeighborhood(
+  node: string,
+  depth = 2,
+): Promise<{ nodes: KnowledgeGraphNode[]; edges: KnowledgeGraphEdge[] }> {
+  return request(
+    `/api/knowledge/neighborhood?node=${encodeURIComponent(node)}&depth=${encodeURIComponent(String(depth))}`,
+  );
+}
+
 export function getKnowledgeImpact(node: string): Promise<KnowledgeImpact> {
   return request(`/api/knowledge/impact?node=${encodeURIComponent(node)}`);
 }
