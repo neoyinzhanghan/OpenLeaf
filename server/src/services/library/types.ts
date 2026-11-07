@@ -29,6 +29,7 @@ export const PaperSourceSchema = z.enum([
   "pdf-upload",
   "bibtex-import",
   "manual",
+  "web",
 ]);
 
 /** Reading / triage workflow — Paperpile folders + ReadCube read state. */

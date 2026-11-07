@@ -1,0 +1,51 @@
+%% openleaf-knowledge.sty — knowledge macros for OpenLeaf (Spec §5.1)
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{openleaf-knowledge}[2026/11/06 OpenLeaf Knowledge]
+\RequirePackage{xcolor}
+\RequirePackage{mdframed}
+\RequirePackage{xspace}
+
+\providecommand{\olv@unknown}[1]{\textbf{\textcolor{red}{??#1}}}
+\InputIfFileExists{openleaf-values.tex}{}{}
+
+\newcommand{\fact}[1]{%
+  \@ifundefined{olv@fact@#1}{\olv@unknown{#1}}{\csname olv@fact@#1\endcsname}%
+  \textsuperscript{\scriptsize f}\xspace}
+\newcommand{\kn}[2][]{%
+  \def\olv@tmp{#1}%
+  \ifx\olv@tmp\@empty
+    \@ifundefined{olv@kn@#2@primary}{\olv@unknown{#2}}{\csname olv@kn@#2@primary\endcsname}%
+  \else
+    \@ifundefined{olv@kn@#2@#1}{\olv@unknown{#2.#1}}{\csname olv@kn@#2@#1\endcsname}%
+  \fi
+  \textsuperscript{\scriptsize k}\xspace}
+\newcommand{\knref}[1]{%
+  \@ifundefined{olv@knref@#1}{\olv@unknown{#1}}{\csname olv@knref@#1\endcsname}\xspace}
+\newcommand{\out}[1]{%
+  \@ifundefined{olv@out@#1}{\olv@unknown{#1}}{\csname olv@out@#1\endcsname}\xspace}
+
+\newcounter{olvstep}
+\newenvironment{knowledge}[2][]{%
+  \section*{#2}%
+}{%
+  \par\vspace{0.75em}%
+  {\small\itshape Built on facts and knowledge referenced above.}%
+}
+\newenvironment{calculation}[2][]{%
+  \refstepcounter{olvstep}%
+  \par\smallskip\noindent\textbf{\theolvstep\,·\,Calculation.}\ #2\ $=\ $\ignorespaces
+}{\par\smallskip}
+\newenvironment{assumption}[1][]{%
+  \refstepcounter{olvstep}%
+  \par\smallskip\noindent\textbf{\theolvstep\,·\,Assumption.}\ignorespaces
+}{\par\smallskip}
+\newenvironment{judgment}[1][]{%
+  \refstepcounter{olvstep}%
+  \par\smallskip\noindent\textbf{\theolvstep\,·\,Judgment call.}\ignorespaces
+}{\par\smallskip}
+\newcommand{\set}[2]{#2}
+\newcommand{\conclusion}[1]{%
+  \begin{mdframed}[backgroundcolor=black!3,linewidth=0.4pt]
+  \textbf{Conclusion.}\ #1
+  \end{mdframed}}
+\endinput

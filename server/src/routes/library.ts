@@ -43,6 +43,8 @@ import {
 import { fetchAndAttachPdf, getPdfSourceHint, pdfSourceHintSync } from "../services/library/pdfFetch.js";
 import { attachOrReplacePaperPdf, pdfReplacePreview } from "../services/library/attachPdf.js";
 import { attachmentPath, paperDir, recordPath } from "../services/library/paths.js";
+import { addWebSource } from "../services/library/webSource.js";
+import { snapshotTxtPath } from "../services/library/sourceText.js";
 import { formatAbsolutePath, parsePathOs } from "../services/hostPath.js";
 import {
   BulkLibraryPatchSchema,
@@ -233,6 +235,49 @@ libraryRouter.post("/import/link", async (req, res) => {
       dryRun: Boolean(req.body?.dryRun),
     });
     res.status(result.created ? 201 : 200).json(result);
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+/** Save a web page as a library source (snapshot.txt only ever served as text). */
+libraryRouter.post("/import/web", async (req, res) => {
+  try {
+    const url =
+      typeof req.body?.url === "string"
+        ? req.body.url
+        : typeof req.body?.link === "string"
+          ? req.body.link
+          : "";
+    if (!url.trim()) {
+      res.status(400).json({ error: "url is required" });
+      return;
+    }
+    const collections = Array.isArray(req.body?.collections)
+      ? req.body.collections.filter((c: unknown): c is string => typeof c === "string")
+      : undefined;
+    const result = await addWebSource({
+      url: url.trim(),
+      title: typeof req.body?.title === "string" ? req.body.title : undefined,
+      collections,
+      notes: typeof req.body?.notes === "string" ? req.body.notes : undefined,
+    });
+    res.status(201).json(result);
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+/** Readable web snapshot — always text/plain (never serve snapshot.html). */
+libraryRouter.get("/:citekey/snapshot.txt", async (req, res) => {
+  try {
+    const file = snapshotTxtPath(req.params.citekey);
+    if (!fs.existsSync(file)) {
+      res.status(404).json({ error: "No web snapshot for this source" });
+      return;
+    }
+    res.type("text/plain; charset=utf-8");
+    res.send(await fs.promises.readFile(file, "utf8"));
   } catch (err) {
     sendError(res, err);
   }

@@ -19,6 +19,7 @@ import {
   importLibraryBibtex,
   importLibraryLink,
   importLibraryPdf,
+  importLibraryWeb,
   listLibraryPapers,
   patchLibraryPaper,
   type CitationInstance,
@@ -1154,9 +1155,36 @@ export function LibraryPanel({
               disabled={busy}
             />
           </label>
-          <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void runImportLink()}>
-            Import link
-          </button>
+          <div className="library-import-actions">
+            <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void runImportLink()}>
+              Import link
+            </button>
+            <button
+              type="button"
+              className="btn btn-quiet"
+              disabled={busy || !importLink.trim()}
+              title="Fetch the page and save a text snapshot as a web source"
+              onClick={() => {
+                void (async () => {
+                  if (!importLink.trim()) return;
+                  setBusy(true);
+                  try {
+                    const result = await importLibraryWeb({ url: importLink.trim() });
+                    setImportLink("");
+                    setImportOpen(false);
+                    await refresh();
+                    setSelectedKey(result.paper.citekey);
+                  } catch (err) {
+                    setError(err instanceof Error ? err.message : "Could not add web page");
+                  } finally {
+                    setBusy(false);
+                  }
+                })();
+              }}
+            >
+              Add web page
+            </button>
+          </div>
           <label className="library-field">
             Bulk BibTeX
             <textarea

@@ -11,6 +11,7 @@ import { guestRouter, joinRouter } from "./routes/guest.js";
 import { hostRouter, pairRouter } from "./routes/host.js";
 import { identitiesRouter } from "./routes/identities.js";
 import { libraryRouter } from "./routes/library.js";
+import { knowledgeRouter } from "./routes/knowledge.js";
 import { librarySharePublicRouter, libraryShareRouter } from "./routes/libraryShare.js";
 import {
   libraryAiApiRouter,
@@ -92,6 +93,7 @@ async function main() {
   app.use("/api/identities", hostOnly, identitiesRouter);
   // Citation library is host-only (guests use tokenized /api/lib-share instead).
   app.use("/api/library", hostOnly, libraryRouter);
+  app.use("/api/knowledge", hostOnly, knowledgeRouter);
   app.use("/api/library-share", libraryShareRouter);
   app.use("/api/lib-share", librarySharePublicRouter);
   app.use("/api/projects", projectsRouter);

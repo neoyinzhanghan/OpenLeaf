@@ -222,6 +222,10 @@ async function writeFile(citekey: string, data: FactsFile): Promise<void> {
 
 async function withDisplay(citekey: string, fact: PaperFact): Promise<PaperFactView> {
   if (!fact.highlights.length) return { ...fact, displayRects: [] };
+  if (fact.sourceKind === "web") {
+    // Web facts use char offsets into snapshot.txt; no PDF display rects.
+    return { ...fact, displayRects: [] };
+  }
   try {
     const cache = await getPdfTextForPaper(citekey);
     return { ...fact, displayRects: highlightDisplayRects(cache.pages, fact.highlights) };
@@ -254,8 +258,16 @@ function applyMatchedHighlights(
   return { highlights, status: "unreviewed" };
 }
 
-export async function getFactsCapability(citekey: string): Promise<PdfTextCapability> {
-  await getPaper(citekey);
+export async function getFactsCapability(
+  citekey: string,
+): Promise<PdfTextCapability | { ok: true; pages: number; chars: number; kind: "web" } | { ok: false; reason: "no-source" | "no-text"; kind?: "web" }> {
+  const { sourceTextCapability } = await import("./sourceText.js");
+  const cap = await sourceTextCapability(citekey);
+  if (cap.ok) {
+    if (cap.kind === "web") return { ok: true, pages: cap.pages, chars: cap.chars, kind: "web" };
+    return { ok: true, pages: cap.pages, chars: cap.chars };
+  }
+  if (cap.kind === "web") return { ok: false, reason: cap.reason, kind: "web" };
   return pdfTextCapability(citekey);
 }
 
@@ -289,41 +301,51 @@ export async function createFact(
 ): Promise<PaperFactView> {
   const paper = await getPaper(citekey);
   const parsed = CreateFactInputSchema.parse(input);
-  const capability = await pdfTextCapability(citekey);
+  const { getSourceText, sourceTextCapability } = await import("./sourceText.js");
+  const capability = await sourceTextCapability(citekey);
   if (!capability.ok) {
     throw httpError(
       400,
-      capability.reason === "no-pdf"
-        ? "Facts need a PDF attached to this paper"
-        : "Facts need a PDF with a selectable text layer",
+      capability.reason === "no-source"
+        ? paper.source === "web"
+          ? "Facts need a saved web snapshot on this source"
+          : "Facts need a PDF attached to this paper"
+        : paper.source === "web"
+          ? "Facts need readable text in the web snapshot"
+          : "Facts need a PDF with a selectable text layer",
     );
   }
 
   const now = new Date().toISOString();
   const humanTag = Boolean(parsed.highlights?.length || parsed.rect);
+  const sourceKind = parsed.sourceKind ?? (capability.kind === "web" ? "web" : "pdf");
 
   let highlights: FactHighlight[] = [];
   let answer = "";
   let status: FactStatus = "unreviewed";
 
   if (humanTag) {
-    highlights = await resolveHumanHighlights(citekey, {
-      highlights: parsed.highlights,
-      rect: parsed.rect,
-    });
+    if (sourceKind === "web" && parsed.highlights?.length) {
+      highlights = parsed.highlights;
+    } else {
+      highlights = await resolveHumanHighlights(citekey, {
+        highlights: parsed.highlights,
+        rect: parsed.rect,
+      });
+    }
     answer = (parsed.answer ?? "").trim();
     if (parsed.type === "tag") answer = "";
     status = "confirmed";
   } else {
-    const cache = await getPdfTextForPaper(citekey);
+    const { pages } = await getSourceText(citekey);
     const retrieve = deps?.retrieve ?? retrieveFactFromPdf;
     const retrieved = await retrieve({
       type: parsed.type,
       input: parsed.input.trim(),
       paperTitle: paper.title,
-      pages: cache.pages,
+      pages,
     });
-    const matched = applyMatchedHighlights(retrieved.quotes, cache.pages, retrieved.answer);
+    const matched = applyMatchedHighlights(retrieved.quotes, pages, retrieved.answer);
     highlights = matched.highlights;
     answer = retrieved.answer;
     status = matched.status;
@@ -332,11 +354,9 @@ export async function createFact(
   const taken = await takenFactKeys();
   const key = uniquifyFactKey(parsed.key, parsed.input.trim(), taken);
   const unit = parsed.unit ?? "";
-  const value =
-    parsed.value !== undefined
-      ? parsed.value
-      : parseFactValue(answer, unit).value;
-  const inferredUnit = parsed.unit ?? parseFactValue(answer, unit).unit;
+  const parsedVal = parseFactValue(answer, unit);
+  const value = parsed.value !== undefined ? parsed.value : parsedVal.value;
+  const inferredUnit = parsed.unit ?? parsedVal.unit;
   const fact = PaperFactSchema.parse({
     id: newId(),
     citekey,
@@ -351,7 +371,7 @@ export async function createFact(
     value,
     unit: inferredUnit,
     createdBy: parsed.createdBy ?? { kind: "human", name: "" },
-    sourceKind: parsed.sourceKind ?? "pdf",
+    sourceKind,
   });
   const file = await readFile(citekey);
   file.facts.push(fact);

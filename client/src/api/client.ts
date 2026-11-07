@@ -851,6 +851,36 @@ export function importLibraryLink(body: {
   return request("/api/library/import/link", { method: "POST", body: JSON.stringify(body) });
 }
 
+export function importLibraryWeb(body: {
+  url: string;
+  title?: string;
+  collections?: string[];
+  notes?: string;
+}): Promise<{
+  paper: PaperRecord;
+  snapshot: { url: string; fetchedAt: string; sha256: string; title: string; bytes: number };
+}> {
+  return request("/api/library/import/web", { method: "POST", body: JSON.stringify(body) });
+}
+
+export async function getLibrarySnapshotText(citekey: string): Promise<string> {
+  const res = await fetch(`/api/library/${encodeURIComponent(citekey)}/snapshot.txt`, {
+    credentials: "include",
+    headers: { Accept: "text/plain" },
+  });
+  if (!res.ok) {
+    let message = res.statusText;
+    try {
+      const body = (await res.json()) as { error?: string };
+      if (body.error) message = body.error;
+    } catch {
+      /* ignore */
+    }
+    throw Object.assign(new Error(message), { status: res.status });
+  }
+  return res.text();
+}
+
 export function importLibraryBibtex(bibtex: string): Promise<{
   imported: PaperRecord[];
   skipped: Array<{

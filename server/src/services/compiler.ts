@@ -139,6 +139,7 @@ async function compileWithLatexmk(
   timeoutMs: number,
   allowRc: boolean,
   onChunk?: (chunk: string) => void,
+  env?: NodeJS.ProcessEnv,
 ): Promise<{ code: number; log: string }> {
   const engineFlag = engine === "xelatex" ? "-xelatex" : "-pdf";
   const jobname = path.basename(mainFile, path.extname(mainFile));
@@ -159,7 +160,7 @@ async function compileWithLatexmk(
     `-outdir=${outDir}`,
     mainFile,
   ];
-  return runCommand("latexmk", args, cwd, timeoutMs, onChunk);
+  return runCommand("latexmk", args, cwd, timeoutMs, onChunk, env);
 }
 
 async function compileFallback(
@@ -169,6 +170,7 @@ async function compileFallback(
   outDir: string,
   timeoutMs: number,
   onChunk?: (chunk: string) => void,
+  env?: NodeJS.ProcessEnv,
 ): Promise<{ code: number; log: string }> {
   const jobname = path.basename(mainFile, path.extname(mainFile));
   const absOut = path.isAbsolute(outDir) ? outDir : path.join(cwd, outDir);
@@ -184,7 +186,7 @@ async function compileFallback(
   let log = "";
   const pass = async (label: string) => {
     onChunk?.(`\n[openleaf] ${label}\n`);
-    const r = await runCommand(engine, texArgs, cwd, timeoutMs, onChunk);
+    const r = await runCommand(engine, texArgs, cwd, timeoutMs, onChunk, env);
     log += r.log;
     return r.code;
   };
@@ -195,7 +197,7 @@ async function compileFallback(
   if (fs.existsSync(aux)) {
     onChunk?.("\n[openleaf] bibtex\n");
     const bibEnv = {
-      ...texEnv(),
+      ...(env ?? texEnv()),
       BIBINPUTS: `${cwd}${path.delimiter}${process.env.BIBINPUTS ?? ""}`,
       BSTINPUTS: `${cwd}${path.delimiter}${process.env.BSTINPUTS ?? ""}`,
     };
@@ -270,10 +272,34 @@ async function compileProjectUnlocked(
       : `[openleaf] latexmk not found; using ${engine} + bibtex fallback\n`,
   );
 
+  let knowledgeLog = "";
+  const env = texEnv();
+  try {
+    const { prepareKnowledgeCompile } = await import("./knowledge/prepareCompile.js");
+    const prepared = await prepareKnowledgeCompile(id);
+    if (prepared.usesKnowledge) {
+      env.TEXINPUTS = `${prepared.texinputs}${env.TEXINPUTS ?? ""}`;
+      if (prepared.errors.length) {
+        knowledgeLog = prepared.errors
+          .map((e) => {
+            const loc = e.file ? `${e.file}:${e.line ?? 1}` : projectCfg.mainFile;
+            return `! OpenLeaf Knowledge Error\n${loc}: ${e.message}\n`;
+          })
+          .join("");
+        onChunk?.(`[openleaf] knowledge: ${prepared.errors.length} issue(s) (values may show ??)\n`);
+      } else {
+        onChunk?.("[openleaf] knowledge values prepared\n");
+      }
+    }
+  } catch (err) {
+    knowledgeLog = `! OpenLeaf Knowledge Error\n${err instanceof Error ? err.message : String(err)}\n`;
+    onChunk?.(`[openleaf] knowledge prepare failed: ${err instanceof Error ? err.message : String(err)}\n`);
+  }
+
   const allowRc = await projectLatexmkrcAllowed(id);
   const result = useMk
-    ? await compileWithLatexmk(cwd, projectCfg.mainFile, engine, outRel, cfg.latex.timeoutMs, allowRc, onChunk)
-    : await compileFallback(cwd, projectCfg.mainFile, engine, outRel, cfg.latex.timeoutMs, onChunk);
+    ? await compileWithLatexmk(cwd, projectCfg.mainFile, engine, outRel, cfg.latex.timeoutMs, allowRc, onChunk, env)
+    : await compileFallback(cwd, projectCfg.mainFile, engine, outRel, cfg.latex.timeoutMs, onChunk, env);
 
   const pdfAbs = pdfPathAbs(id, projectCfg.mainFile, cwd);
   let pdfMtime = 0;
@@ -294,7 +320,8 @@ async function compileProjectUnlocked(
   // Coarse filesystem timestamps can land in the second before Date.now().
   const pdfExists = pdfMtime > 0;
   const pdfUpdated = pdfExists && pdfMtime >= started - 2000;
-  const issues = parseTexLog(`${result.log}\n${diskLog}`, { defaultFile: projectCfg.mainFile });
+  const combinedLog = `${knowledgeLog}${result.log}\n${diskLog}`;
+  const issues = parseTexLog(combinedLog, { defaultFile: projectCfg.mainFile });
   const ok = result.code === 0 && texErrorCount(issues) === 0 && pdfExists;
   const upToDate = ok && !pdfUpdated;
   const pdfRelative = pdfExists ? path.relative(cwd, pdfAbs).replace(/\\/g, "/") : null;
@@ -314,7 +341,7 @@ async function compileProjectUnlocked(
     issues,
     engine,
     usedLatexmk: useMk,
-    log: result.log,
+    log: combinedLog,
     pdfRelative,
     durationMs: Date.now() - started,
   };

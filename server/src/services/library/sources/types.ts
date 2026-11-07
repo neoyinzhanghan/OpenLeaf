@@ -12,7 +12,7 @@ export type ResolvedPaper = {
   venue: string;
   year: number | null;
   abstract: string;
-  source: "doi" | "arxiv" | "pdf-upload" | "bibtex-import" | "manual";
+  source: "doi" | "arxiv" | "pdf-upload" | "bibtex-import" | "manual" | "web";
   /** Raw payload from the upstream API (for cache). */
   raw?: unknown;
 };

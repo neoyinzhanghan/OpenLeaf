@@ -47,6 +47,12 @@ export type PaperflowProjectConfig = {
   identities?: Identity[];
   /** Host file-access rules. Preserved across config patches so they stay in git. */
   fileAccess?: { rules: StoredFileAccessRule[] };
+  /** Defaults to "paper" when absent. Spec §4.3. */
+  kind?: "paper" | "knowledge";
+  /** Stable id for `\kn{…}` — unique across knowledge items. */
+  knowledgeId?: string;
+  /** Optional library collection id. */
+  collection?: string;
 };
 
 /**
