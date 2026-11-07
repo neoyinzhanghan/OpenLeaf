@@ -175,6 +175,7 @@ export function KnowledgePage() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const [graph, setGraph] = useState<KnowledgeGraph | null>(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [inboxCount, setInboxCount] = useState(0);
   const [lastProject, setLastProject] = useState<LastProject | null>(null);
@@ -224,17 +225,29 @@ export function KnowledgePage() {
 
   useEffect(() => {
     let cancelled = false;
-    void Promise.all([getKnowledgeGraph(), getKnowledgeInbox(), listKnowledgeItems()])
-      .then(([g, inbox, items]) => {
+    setLoading(true);
+    // Graph first for a fast first paint; inbox/items fill in after.
+    void getKnowledgeGraph()
+      .then((g) => {
         if (cancelled) return;
         setGraph(g);
+        setLoading(false);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setLoading(false);
+        setError(err instanceof Error ? err.message : "Could not load knowledge graph");
+      });
+    void Promise.all([getKnowledgeInbox(), listKnowledgeItems()])
+      .then(([inbox, items]) => {
+        if (cancelled) return;
         setInboxCount(inbox.groups.reduce((n, gr) => n + gr.items.length, 0));
         const map = new Map<string, string>();
         for (const it of items.items) map.set(it.knowledgeId, it.id);
         setProjectByKn(map);
       })
-      .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Could not load knowledge graph");
+      .catch(() => {
+        /* non-fatal for the canvas */
       });
     return () => {
       cancelled = true;
@@ -979,12 +992,22 @@ export function KnowledgePage() {
 
       <div className="knowledge-main">
         <div
-          className="knowledge-canvas-wrap"
+          className={`knowledge-canvas-wrap${loading && !graph ? " is-loading" : ""}`}
           ref={wrapRef}
           tabIndex={0}
           onKeyDown={onKeyDown}
           aria-label="Knowledge graph canvas"
+          aria-busy={loading && !graph}
         >
+          {loading && !graph ? (
+            <div className="knowledge-loading" role="status" aria-live="polite">
+              <div className="knowledge-loading-orb" aria-hidden />
+              <div className="knowledge-loading-copy">
+                <strong>Building knowledge graph</strong>
+                <p>Only facts cited by knowledge items appear here.</p>
+              </div>
+            </div>
+          ) : null}
           <div className="knowledge-toolbar">
             <div className="knowledge-toolbar-group">
               <button type="button" className="btn btn-quiet" aria-label="Zoom out" onClick={() => zoomBy(0.8)}>

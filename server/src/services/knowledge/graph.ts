@@ -1,12 +1,15 @@
 /**
  * Library-wide knowledge graph + impact + inbox. Spec §6, §7.3–7.4.
  * Status engine lives in status.ts; this module builds nodes/edges.
+ *
+ * Facts/sources appear only when a knowledge item cites them (product choice —
+ * keeps the tree readable as the library grows).
  */
 import fs from "node:fs";
 import fsPromises from "node:fs/promises";
 import path from "node:path";
-import { listAllFacts } from "../library/facts.js";
-import { listAllRecords } from "../library/index.js";
+import { getFactsByKeys, listAllFacts } from "../library/facts.js";
+import { getPaper } from "../library/index.js";
 import { getProjectsRootAbs } from "../../config.js";
 import { listKnowledgeItems } from "./items.js";
 import { parseKnowledge } from "./parse.js";
@@ -42,22 +45,59 @@ async function mtimeStamp(): Promise<string> {
   const parts: string[] = [];
   const root = getProjectsRootAbs();
   if (fs.existsSync(root)) {
-    for (const name of await fsPromises.readdir(root)) {
-      for (const file of ["openleaf.json", "review.json", "main.tex"]) {
-        try {
-          const st = await fsPromises.stat(path.join(root, name, file));
-          parts.push(`${name}/${file}:${st.mtimeMs}`);
-        } catch {
-          /* missing */
-        }
-      }
-    }
+    const names = await fsPromises.readdir(root);
+    await Promise.all(
+      names.map(async (name) => {
+        await Promise.all(
+          ["openleaf.json", "review.json", "main.tex"].map(async (file) => {
+            try {
+              const st = await fsPromises.stat(path.join(root, name, file));
+              parts.push(`${name}/${file}:${st.mtimeMs}`);
+            } catch {
+              /* missing */
+            }
+          }),
+        );
+      }),
+    );
+  }
+  // Fact status changes should invalidate the graph even when tex is unchanged.
+  try {
+    const { getFactKeyIndex } = await import("../library/factKeyIndex.js");
+    const idx = await getFactKeyIndex();
+    parts.push(`facts:${idx.stamp.length}:${idx.allKeys.size}`);
+  } catch {
+    /* ignore */
   }
   return parts.sort().join("|");
 }
 
 export function invalidateKnowledgeGraph(): void {
   cache = null;
+}
+
+type KnParsed = {
+  item: Awaited<ReturnType<typeof listKnowledgeItems>>[number];
+  refs: ReturnType<typeof parseKnowledge>["refs"];
+  steps: ReturnType<typeof parseKnowledge>["steps"];
+  errors: ReturnType<typeof parseKnowledge>["errors"];
+};
+
+async function loadKnowledgeParsed(): Promise<KnParsed[]> {
+  const knItems = await listKnowledgeItems();
+  const root = getProjectsRootAbs();
+  return Promise.all(
+    knItems.map(async (item) => {
+      try {
+        const main = path.join(root, item.id, "main.tex");
+        const text = await fsPromises.readFile(main, "utf8");
+        const parsed = parseKnowledge({ "main.tex": text });
+        return { item, refs: parsed.refs, steps: parsed.steps, errors: parsed.errors };
+      } catch {
+        return { item, refs: [], steps: [], errors: [] };
+      }
+    }),
+  );
 }
 
 export async function buildKnowledgeGraph(force = false): Promise<KnowledgeGraph> {
@@ -67,18 +107,38 @@ export async function buildKnowledgeGraph(force = false): Promise<KnowledgeGraph
   const nodes: GraphNode[] = [];
   const edges: GraphEdge[] = [];
   const collections = new Set<string>(["unsorted"]);
+  const byId = new Map<string, GraphNode>();
 
-  const facts = await listAllFacts();
-  const papers = await listAllRecords();
-  const paperByKey = new Map(papers.map((p) => [p.citekey, p]));
-  const sourcesWithFacts = new Set(facts.map((f) => f.citekey));
+  const knParsed = await loadKnowledgeParsed();
 
-  for (const citekey of sourcesWithFacts) {
+  // Only facts that knowledge items actually cite.
+  const citedFactKeys = new Set<string>();
+  for (const kn of knParsed) {
+    for (const r of kn.refs) {
+      if (r.kind === "fact" && r.key) citedFactKeys.add(r.key);
+    }
+  }
+
+  const citedFacts = await getFactsByKeys(citedFactKeys);
+  const factByKey = new Map(citedFacts.filter((f) => f.key).map((f) => [f.key!, f]));
+  const citekeys = [...new Set(citedFacts.map((f) => f.citekey))];
+  const papers = await Promise.all(
+    citekeys.map(async (ck) => {
+      try {
+        return await getPaper(ck);
+      } catch {
+        return null;
+      }
+    }),
+  );
+  const paperByKey = new Map(papers.filter(Boolean).map((p) => [p!.citekey, p!]));
+
+  for (const citekey of citekeys) {
     const paper = paperByKey.get(citekey);
     if (!paper) continue;
     const collection = paper.collections[0] || "unsorted";
     collections.add(collection);
-    nodes.push({
+    const node: GraphNode = {
       id: `src:${citekey}`,
       kind: "source",
       name: paper.title,
@@ -88,107 +148,144 @@ export async function buildKnowledgeGraph(force = false): Promise<KnowledgeGraph
       inputs: [],
       outputs: [],
       updatedAt: paper.updatedAt || paper.addedAt,
-    });
+    };
+    nodes.push(node);
+    byId.set(node.id, node);
   }
 
-  for (const fact of facts) {
-    if (!fact.key) continue;
-    const paper = paperByKey.get(fact.citekey);
-    const collection = paper?.collections[0] || "unsorted";
-    collections.add(collection);
-    const status = computeFactStatus(fact.status);
-    const id = `fact:${fact.key}`;
-    nodes.push({
-      id,
-      kind: "fact",
-      name: fact.key,
-      status,
-      why: fact.status === "rejected" ? ["rejected by reviewer"] : [],
-      collection,
-      note: fact.input,
-      inputs: [`src:${fact.citekey}`],
-      outputs: [],
-      updatedAt: fact.updatedAt,
-    });
-    edges.push({ from: `src:${fact.citekey}`, to: id, flagged: status === "rejected" });
+  for (const key of citedFactKeys) {
+    const fact = factByKey.get(key);
+    const id = `fact:${key}`;
+    if (fact) {
+      const paper = paperByKey.get(fact.citekey);
+      const collection = paper?.collections[0] || "unsorted";
+      collections.add(collection);
+      const status = computeFactStatus(fact.status);
+      const node: GraphNode = {
+        id,
+        kind: "fact",
+        name: key,
+        status,
+        why: fact.status === "rejected" ? ["rejected by reviewer"] : [],
+        collection,
+        note: fact.input,
+        inputs: [`src:${fact.citekey}`],
+        outputs: [],
+        updatedAt: fact.updatedAt,
+      };
+      nodes.push(node);
+      byId.set(id, node);
+      edges.push({ from: `src:${fact.citekey}`, to: id, flagged: status === "rejected" });
+      const src = byId.get(`src:${fact.citekey}`);
+      if (src) src.outputs.push(id);
+    } else {
+      // Cited by knowledge but missing from the library — still show a stub.
+      const node: GraphNode = {
+        id,
+        kind: "fact",
+        name: key,
+        status: "not_found",
+        why: ["fact key not found in library"],
+        collection: "unsorted",
+        note: "Missing fact",
+        inputs: [],
+        outputs: [],
+        updatedAt: new Date().toISOString(),
+      };
+      nodes.push(node);
+      byId.set(id, node);
+    }
   }
 
-  const knItems = await listKnowledgeItems();
-  for (const item of knItems) {
-    const collection = item.collection || "unsorted";
+  for (const kn of knParsed) {
+    const collection = kn.item.collection || "unsorted";
     collections.add(collection);
-    let refs: Array<{ kind: string; key?: string; id?: string }> = [];
-    try {
-      const root = path.join(getProjectsRootAbs(), item.id);
-      const main = path.join(root, "main.tex");
-      const text = await fsPromises.readFile(main, "utf8");
-      const parsed = parseKnowledge({ "main.tex": text });
-      refs = parsed.refs;
-    } catch {
-      /* empty */
+    const inputSet = new Set<string>();
+    for (const r of kn.refs) {
+      if (r.kind === "fact" && r.key) inputSet.add(`fact:${r.key}`);
+      if ((r.kind === "kn" || r.kind === "knref") && r.id) inputSet.add(`kn:${r.id}`);
     }
-    const inputs: string[] = [];
-    for (const r of refs) {
-      if (r.kind === "fact" && r.key) inputs.push(`fact:${r.key}`);
-      if ((r.kind === "kn" || r.kind === "knref") && r.id) inputs.push(`kn:${r.id}`);
-    }
+    const inputs = [...inputSet];
     const status = computeItemStatus({
-      steps: [],
-      hasErrors: false,
+      steps: kn.steps.map(() => ({ status: "needs-review" as Status })),
+      hasErrors: kn.errors.length > 0,
     });
-    const id = `kn:${item.knowledgeId}`;
-    nodes.push({
+    const id = `kn:${kn.item.knowledgeId}`;
+    const node: GraphNode = {
       id,
       kind: "knowledge",
-      name: item.title,
+      name: kn.item.title,
       status,
       why: [],
       collection,
       inputs,
       outputs: [],
       updatedAt: new Date().toISOString(),
-    });
+    };
+    nodes.push(node);
+    byId.set(id, node);
     for (const from of inputs) {
       edges.push({ from, to: id, flagged: false });
-      const src = nodes.find((n) => n.id === from);
+      const src = byId.get(from);
       if (src) src.outputs.push(id);
     }
   }
 
-  // Ordinary projects that reference facts/kn
-  for (const name of fs.existsSync(getProjectsRootAbs()) ? await fsPromises.readdir(getProjectsRootAbs()) : []) {
-    try {
-      const cfg = await readProjectConfig(name);
-      if (cfg.kind === "knowledge") continue;
-      const mainPath = path.join(getProjectsRootAbs(), name, cfg.mainFile || "main.tex");
-      const text = await fsPromises.readFile(mainPath, "utf8");
-      if (!/\\fact\{|\\kn\{|\\knref\{/.test(text)) continue;
-      const parsed = parseKnowledge({ [cfg.mainFile || "main.tex"]: text });
-      const inputs: string[] = [];
-      for (const r of parsed.refs) {
-        if (r.kind === "fact" && r.key) inputs.push(`fact:${r.key}`);
-        if ((r.kind === "kn" || r.kind === "knref") && r.id) inputs.push(`kn:${r.id}`);
-      }
-      if (!inputs.length) continue;
-      const collection = cfg.collection || "unsorted";
-      collections.add(collection);
-      const status = computeProjectStatus(inputs.map((id) => nodes.find((n) => n.id === id)?.status ?? "up-to-date"));
-      const id = `proj:${name}`;
-      nodes.push({
-        id,
-        kind: "project",
-        name: cfg.name || name,
-        status,
-        why: status === "flagged" ? ["depends on flagged or rejected upstream"] : [],
-        collection,
-        inputs,
-        outputs: [],
-        updatedAt: new Date().toISOString(),
-      });
-      for (const from of inputs) edges.push({ from, to: id, flagged: status === "flagged" });
-    } catch {
-      /* skip */
-    }
+  // Ordinary projects that reference facts/kn — only link to nodes already in the graph
+  // (facts only exist here if knowledge cites them; kn nodes always exist).
+  const root = getProjectsRootAbs();
+  if (fs.existsSync(root)) {
+    const names = await fsPromises.readdir(root);
+    await Promise.all(
+      names.map(async (name) => {
+        try {
+          const cfg = await readProjectConfig(name);
+          if (cfg.kind === "knowledge") return;
+          const mainPath = path.join(root, name, cfg.mainFile || "main.tex");
+          const text = await fsPromises.readFile(mainPath, "utf8");
+          if (!/\\fact\{|\\kn\{|\\knref\{/.test(text)) return;
+          const parsed = parseKnowledge({ [cfg.mainFile || "main.tex"]: text });
+          const inputs: string[] = [];
+          for (const r of parsed.refs) {
+            if (r.kind === "fact" && r.key) {
+              const fid = `fact:${r.key}`;
+              if (byId.has(fid)) inputs.push(fid);
+            }
+            if ((r.kind === "kn" || r.kind === "knref") && r.id) {
+              const kid = `kn:${r.id}`;
+              if (byId.has(kid)) inputs.push(kid);
+            }
+          }
+          if (!inputs.length) return;
+          const collection = cfg.collection || "unsorted";
+          collections.add(collection);
+          const status = computeProjectStatus(
+            inputs.map((id) => byId.get(id)?.status ?? "up-to-date"),
+          );
+          const id = `proj:${name}`;
+          const node: GraphNode = {
+            id,
+            kind: "project",
+            name: cfg.name || name,
+            status,
+            why: status === "flagged" ? ["depends on flagged or rejected upstream"] : [],
+            collection,
+            inputs,
+            outputs: [],
+            updatedAt: new Date().toISOString(),
+          };
+          nodes.push(node);
+          byId.set(id, node);
+          for (const from of inputs) {
+            edges.push({ from, to: id, flagged: status === "flagged" });
+            const src = byId.get(from);
+            if (src) src.outputs.push(id);
+          }
+        } catch {
+          /* skip */
+        }
+      }),
+    );
   }
 
   const graph: KnowledgeGraph = {
@@ -242,11 +339,11 @@ export async function knowledgeInbox(): Promise<{
     }>;
   }>;
 }> {
-  const facts = await listAllFacts();
-  const unreviewed = facts.filter((f) => f.status === "unreviewed");
-  const byAgent = new Map<string, typeof unreviewed>();
-  const other: typeof unreviewed = [];
-  for (const f of unreviewed) {
+  // skipDisplay: inbox does not need PDF highlight rects
+  const facts = await listAllFacts({ status: "unreviewed", skipDisplay: true });
+  const byAgent = new Map<string, typeof facts>();
+  const other: typeof facts = [];
+  for (const f of facts) {
     if (f.createdBy?.kind === "agent" && f.createdBy.name) {
       const list = byAgent.get(f.createdBy.name) ?? [];
       list.push(f);
@@ -283,7 +380,6 @@ export async function knowledgeInbox(): Promise<{
       })),
     });
   }
-  // Steps whose reviewed text drifted (changed outside OpenLeaf UI)
   try {
     const { listProjects, readProjectConfig } = await import("../projectFs.js");
     const { listStepStatuses } = await import("./review.js");
@@ -294,24 +390,36 @@ export async function knowledgeInbox(): Promise<{
       status: Status;
       createdBy?: string;
     }> = [];
-    for (const p of await listProjects()) {
-      try {
-        const cfg = await readProjectConfig(p.id);
-        if (cfg.kind !== "knowledge") continue;
-        for (const s of await listStepStatuses(p.id)) {
-          if (s.status === "needs-review" && s.reviewedText && s.reviewedText !== s.body) {
-            changedSteps.push({
-              type: "step",
-              id: `${p.id}:${s.id}`,
-              label: `${cfg.name || p.name} · ${s.id}`,
-              status: "needs-review",
-            });
-          }
+    const projects = await listProjects();
+    const knProjects = await Promise.all(
+      projects.map(async (p) => {
+        try {
+          const cfg = await readProjectConfig(p.id);
+          return cfg.kind === "knowledge" ? { p, cfg } : null;
+        } catch {
+          return null;
         }
-      } catch {
-        /* ignore */
-      }
-    }
+      }),
+    );
+    await Promise.all(
+      knProjects.filter(Boolean).map(async (row) => {
+        const { p, cfg } = row!;
+        try {
+          for (const s of await listStepStatuses(p.id)) {
+            if (s.status === "needs-review" && s.reviewedText && s.reviewedText !== s.body) {
+              changedSteps.push({
+                type: "step",
+                id: `${p.id}:${s.id}`,
+                label: `${cfg.name || p.name} · ${s.id}`,
+                status: "needs-review",
+              });
+            }
+          }
+        } catch {
+          /* ignore */
+        }
+      }),
+    );
     if (changedSteps.length) {
       groups.push({ title: "Changed outside OpenLeaf", kind: "changed", items: changedSteps });
     }

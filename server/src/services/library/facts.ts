@@ -516,6 +516,8 @@ export async function listAllFacts(opts?: {
   type?: FactType;
   status?: FactStatus;
   q?: string;
+  /** Skip PDF display-rect computation (graph/inbox). Default false. */
+  skipDisplay?: boolean;
 }): Promise<LibraryFactView[]> {
   const records = await listAllRecords();
   const q = opts?.q?.trim().toLowerCase() ?? "";
@@ -530,11 +532,43 @@ export async function listAllFacts(opts?: {
         const hay = `${fact.input}\n${fact.answer}\n${fact.key ?? ""}\n${fact.highlights.map((h) => h.quote).join("\n")}`.toLowerCase();
         if (!hay.includes(q)) continue;
       }
-      const view = await withDisplay(paper.citekey, fact);
-      out.push({ ...view, paperTitle: paper.title });
+      const view = opts?.skipDisplay
+        ? ({ ...fact, displayRects: [], paperTitle: paper.title } as LibraryFactView)
+        : { ...(await withDisplay(paper.citekey, fact)), paperTitle: paper.title };
+      out.push(view);
     }
   }
   out.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return out;
+}
+
+/** Resolve a small set of fact keys without scanning the whole library / PDF caches. */
+export async function getFactsByKeys(keys: Iterable<string>): Promise<LibraryFactView[]> {
+  const wanted = [...new Set([...keys].filter(Boolean))];
+  if (!wanted.length) return [];
+  const { resolveFactKey } = await import("./factKeyIndex.js");
+  const byCite = new Map<string, Set<string>>();
+  for (const key of wanted) {
+    const hit = await resolveFactKey(key);
+    if (!hit) continue;
+    const set = byCite.get(hit.citekey) ?? new Set();
+    set.add(key);
+    byCite.set(hit.citekey, set);
+  }
+  const out: LibraryFactView[] = [];
+  for (const [citekey, keySet] of byCite) {
+    let paperTitle = citekey;
+    try {
+      paperTitle = (await getPaper(citekey)).title;
+    } catch {
+      /* ignore */
+    }
+    const file = await readFile(citekey);
+    for (const fact of file.facts) {
+      if (!fact.key || !keySet.has(fact.key)) continue;
+      out.push({ ...fact, displayRects: [], paperTitle });
+    }
+  }
   return out;
 }
 

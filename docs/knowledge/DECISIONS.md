@@ -25,3 +25,5 @@ One line per decision: **question** — choice — why. Newest at the bottom.
 - **Step edit detection** — Comments alone do not invalidate review hashes (`normalizeStepText` strips `%`); tests change real expression text. — Matches authoring intent.
 - **Seed script** — TypeScript via `tsx` (`scripts/seed-knowledge-demo.mts`) wrapped by `.mjs` npm script. — Reuses server services; DEMO titles everywhere.
 - **PDF review overlay deferred** — Inspector + gutter + flagged banner ship first; SyncTeX overlay logged as blocker. — Highest-value review path without blocking handover.
+- **Graph shows only knowledge-cited facts/sources** — Override SPEC §6 “all facts with keys”; a fact/source node appears only if a knowledge item `\fact{…}` cites it. — Keeps the tree usable; Facts page still lists the full library.
+- **Graph/inbox skip PDF display rects** — `listAllFacts({ skipDisplay: true })` / `getFactsByKeys`. — `withDisplay` was loading every PDF text cache and dominated rebuild time.

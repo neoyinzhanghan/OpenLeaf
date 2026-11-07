@@ -9867,6 +9867,7 @@ button.lib-badge:hover {
 }
 
 .knowledge-main {
+  position: relative;
   flex: 1;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
@@ -9874,6 +9875,48 @@ button.lib-badge:hover {
   background: var(--tree-bg);
 }
 
+.knowledge-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-content: center;
+  gap: 1rem;
+  justify-items: center;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(2px);
+  pointer-events: none;
+}
+.knowledge-loading-orb {
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--kind-knowledge) 35%, var(--border));
+  border-top-color: var(--kind-knowledge);
+  animation: knowledge-spin 0.85s linear infinite;
+}
+.knowledge-loading-copy {
+  text-align: center;
+  max-width: 22rem;
+}
+.knowledge-loading-copy strong {
+  display: block;
+  font-size: 1rem;
+  margin-bottom: 0.25rem;
+}
+.knowledge-loading-copy p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.knowledge-canvas-wrap.is-loading {
+  opacity: 0.35;
+}
+@keyframes knowledge-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 .knowledge-canvas-wrap {
   position: relative;
   min-width: 0;
