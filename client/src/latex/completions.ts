@@ -14,6 +14,8 @@ export type LatexSuggestContext = {
   /** Richer library + bib hints (preferred over bare citations when present). */
   citationHints?: LatexCitationHint[];
   labels: string[];
+  /** When true, citation hovers link to the reference library in a new tab. */
+  openLibrary?: boolean;
 };
 
 function wordRange(model: editor.ITextModel, position: Position): IRange {

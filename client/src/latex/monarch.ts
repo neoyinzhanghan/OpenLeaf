@@ -23,7 +23,7 @@ export const latexMonarch: languages.IMonarchLanguage = {
       ],
       [/\\(documentclass|usepackage|input|include)\b/, "keyword.package"],
       [/\\(label|ref|eqref|pageref|cite|citep|nocite)\b/, "keyword.reference"],
-      [/\\(textbf|textit|texttt|emph|underline|textsc|textsf)\b/, "keyword.formatting"],
+      [/\\(textbf|textit|texttt|emph|underline|textsc|textsf|hl)\b/, "keyword.formatting"],
       [/\\[a-zA-Z@]+\*?/, "keyword"],
       [/\\[@|!$%&\-{}$#,~^\\ _]/, "keyword.escape"],
 

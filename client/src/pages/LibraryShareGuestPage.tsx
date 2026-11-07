@@ -11,6 +11,7 @@ import {
   type SharedPaperView,
 } from "../api/libraryShare";
 import { ThemePicker } from "../components/ThemeToggle";
+import { ErrorBanner } from "../components/ErrorBanner";
 import { useSession } from "../session/SessionContext";
 
 const VISITOR_KEY = (token: string) => `openleaf-lib-share-visitor:${token}`;
@@ -198,7 +199,7 @@ export function LibraryShareGuestPage() {
         </div>
       </header>
 
-      {error ? <div className="library-error">{error}</div> : null}
+      {error ? <ErrorBanner className="library-error" onDismiss={() => setError(null)}>{error}</ErrorBanner> : null}
       {status ? <div className="library-share-status">{status}</div> : null}
 
       {!share ? (

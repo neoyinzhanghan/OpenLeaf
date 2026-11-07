@@ -26,8 +26,22 @@ import {
   PatchAnnotationInputSchema,
   updateAnnotation,
 } from "../services/library/annotations.js";
+import {
+  CreateFactInputSchema,
+  createFact,
+  deleteFact,
+  FactStatusSchema,
+  FactTypeSchema,
+  getFactsCapability,
+  listAllFacts,
+  listFacts,
+  PatchFactInputSchema,
+  updateFact,
+} from "../services/library/facts.js";
 import { fetchAndAttachPdf, getPdfSourceHint, pdfSourceHintSync } from "../services/library/pdfFetch.js";
-import { attachmentPath } from "../services/library/paths.js";
+import { attachOrReplacePaperPdf, pdfReplacePreview } from "../services/library/attachPdf.js";
+import { attachmentPath, paperDir, recordPath } from "../services/library/paths.js";
+import { formatAbsolutePath, parsePathOs } from "../services/hostPath.js";
 import {
   BulkLibraryPatchSchema,
   CreatePaperInputSchema,
@@ -46,7 +60,13 @@ function statusOf(err: unknown): number {
 
 function sendError(res: { status: (code: number) => { json: (body: unknown) => void } }, err: unknown): void {
   const message = err instanceof Error ? err.message : "Library error";
-  res.status(statusOf(err)).json({ error: message });
+  const body: Record<string, unknown> = { error: message };
+  if (err && typeof err === "object") {
+    for (const key of ["code", "taggedFactCount", "totalFacts"] as const) {
+      if (key in err) body[key] = (err as Record<string, unknown>)[key];
+    }
+  }
+  res.status(statusOf(err)).json(body);
 }
 
 libraryRouter.get("/", async (req, res) => {
@@ -318,6 +338,31 @@ libraryRouter.post("/:citekey/integrity", async (req, res) => {
   }
 });
 
+libraryRouter.get("/:citekey/host-path", async (req, res) => {
+  try {
+    const paper = await getPaper(req.params.citekey);
+    const kind = typeof req.query.kind === "string" ? req.query.kind : "folder";
+    let abs: string;
+    if (kind === "pdf") {
+      if (!paper.attachment || !fs.existsSync(attachmentPath(paper.citekey))) {
+        res.status(404).json({ error: "No PDF attachment" });
+        return;
+      }
+      abs = attachmentPath(paper.citekey);
+    } else if (kind === "record") {
+      abs = recordPath(paper.citekey);
+    } else if (kind === "folder") {
+      abs = paperDir(paper.citekey);
+    } else {
+      res.status(400).json({ error: "kind must be pdf, folder, or record" });
+      return;
+    }
+    res.json({ path: await formatAbsolutePath(abs, parsePathOs(req.query.os)) });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
 libraryRouter.get("/:citekey/pdf", async (req, res) => {
   try {
     const paper = await getPaper(req.params.citekey);
@@ -359,6 +404,99 @@ libraryRouter.post("/:citekey/fetch-pdf", async (req, res) => {
   try {
     const result = await fetchAndAttachPdf(req.params.citekey);
     res.json(result);
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+libraryRouter.get("/:citekey/pdf-replace-preview", async (req, res) => {
+  try {
+    res.json(await pdfReplacePreview(req.params.citekey));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+libraryRouter.post("/:citekey/pdf", async (req, res) => {
+  try {
+    const pdfBase64 = typeof req.body?.pdfBase64 === "string" ? req.body.pdfBase64 : "";
+    if (!pdfBase64) {
+      res.status(400).json({ error: "pdfBase64 is required" });
+      return;
+    }
+    const replace =
+      req.body?.replace === true || req.query.replace === "1" || req.query.replace === "true";
+    let buffer: Buffer;
+    try {
+      buffer = Buffer.from(pdfBase64, "base64");
+    } catch {
+      res.status(400).json({ error: "Invalid pdfBase64" });
+      return;
+    }
+    const result = await attachOrReplacePaperPdf(req.params.citekey, buffer, { replace });
+    res.json(result);
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+libraryRouter.get("/facts", async (req, res) => {
+  try {
+    const citekey = typeof req.query.citekey === "string" ? req.query.citekey : undefined;
+    const typeRaw = typeof req.query.type === "string" ? req.query.type : undefined;
+    const statusRaw = typeof req.query.status === "string" ? req.query.status : undefined;
+    const q = typeof req.query.q === "string" ? req.query.q : undefined;
+    const type = typeRaw ? FactTypeSchema.parse(typeRaw) : undefined;
+    const status = statusRaw ? FactStatusSchema.parse(statusRaw) : undefined;
+    const facts = await listAllFacts({ citekey, type, status, q });
+    res.json({ facts });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+libraryRouter.get("/:citekey/facts/capability", async (req, res) => {
+  try {
+    const capability = await getFactsCapability(req.params.citekey);
+    res.json({ capability });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+libraryRouter.get("/:citekey/facts", async (req, res) => {
+  try {
+    const facts = await listFacts(req.params.citekey);
+    res.json({ facts });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+libraryRouter.post("/:citekey/facts", async (req, res) => {
+  try {
+    const input = CreateFactInputSchema.parse(req.body ?? {});
+    const fact = await createFact(req.params.citekey, input);
+    res.status(201).json({ fact });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+libraryRouter.patch("/:citekey/facts/:id", async (req, res) => {
+  try {
+    const patch = PatchFactInputSchema.parse(req.body ?? {});
+    const fact = await updateFact(req.params.citekey, req.params.id, patch);
+    res.json({ fact });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+libraryRouter.delete("/:citekey/facts/:id", async (req, res) => {
+  try {
+    await deleteFact(req.params.citekey, req.params.id);
+    res.status(204).end();
   } catch (err) {
     sendError(res, err);
   }

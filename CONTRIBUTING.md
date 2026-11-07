@@ -6,13 +6,13 @@ Thanks for wanting to help. OpenLeaf is MIT-licensed; by opening a pull request 
 
 ```bash
 npm install
-npm run dev          # Vite :5173 + API :8787
+npm run dev          # Vite :5173 + API :8786
 node cli/bin/openleaf.js setup   # ordinary-user setup; works before the app is built
 npm run typecheck
 npm test             # server tests and CLI tests
 ```
 
-Use the Vite URL in development (`http://127.0.0.1:5173`), not `:8787`.
+Use the Vite URL in development (`http://127.0.0.1:5173`), not `:8786`.
 
 See [README.md](README.md) for install prerequisites and [AGENTS.md](AGENTS.md) for layout conventions.
 

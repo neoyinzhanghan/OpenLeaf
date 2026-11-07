@@ -39,14 +39,21 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   }
   if (!res.ok) {
     let message = res.statusText;
+    let extras: Record<string, unknown> = {};
     try {
-      const body = (await res.json()) as { error?: string; code?: string };
+      const body = (await res.json()) as {
+        error?: string;
+        code?: string;
+        taggedFactCount?: number;
+        totalFacts?: number;
+      };
       if (body.error) message = body.error;
+      extras = body;
       noteHostAuth(res.status, body.code);
     } catch {
       /* ignore */
     }
-    throw new Error(message);
+    throw Object.assign(new Error(message), { status: res.status, ...extras });
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
@@ -329,6 +336,17 @@ export function getProject(id: string): Promise<ProjectMeta> {
   return request(`/api/projects/${encodeURIComponent(id)}`);
 }
 
+/** Absolute path of a project file, in the viewer's operating-system syntax. */
+export function getProjectHostPath(
+  id: string,
+  relativePath: string,
+  opts: { os: string; branchId?: string },
+): Promise<{ path: string }> {
+  const params = new URLSearchParams({ path: relativePath, os: opts.os });
+  if (opts.branchId) params.set("branchId", opts.branchId);
+  return request(`/api/projects/${encodeURIComponent(id)}/host-path?${params}`);
+}
+
 export function createProject(id: string, fromTemplate?: string): Promise<ProjectMeta> {
   return request("/api/projects", {
     method: "POST",
@@ -347,6 +365,21 @@ export function renameProject(id: string, name: string): Promise<ProjectMeta> {
   return request(`/api/projects/${encodeURIComponent(id)}`, {
     method: "PATCH",
     body: JSON.stringify({ name }),
+  });
+}
+
+/** Persist which `.tex` file Compile / Recompile builds (Overleaf-style main document). */
+export function setProjectMainFile(
+  id: string,
+  mainFile: string,
+  opts?: { branchId?: string },
+): Promise<ProjectMeta> {
+  const params = new URLSearchParams();
+  if (opts?.branchId) params.set("branchId", opts.branchId);
+  const q = params.toString() ? `?${params}` : "";
+  return request(`/api/projects/${encodeURIComponent(id)}/main-file${q}`, {
+    method: "PUT",
+    body: JSON.stringify({ mainFile }),
   });
 }
 
@@ -726,6 +759,15 @@ export function getLibraryPaper(citekey: string): Promise<PaperRecord> {
   return request(`/api/library/${encodeURIComponent(citekey)}`);
 }
 
+/** Absolute path of a library PDF, paper folder, or record.json. */
+export function getLibraryHostPath(
+  citekey: string,
+  opts: { os: string; kind: "pdf" | "folder" | "record" },
+): Promise<{ path: string }> {
+  const params = new URLSearchParams({ os: opts.os, kind: opts.kind });
+  return request(`/api/library/${encodeURIComponent(citekey)}/host-path?${params}`);
+}
+
 export function createLibraryPaper(
   body: Partial<PaperRecord> & { title: string },
 ): Promise<PaperRecord> {
@@ -840,6 +882,28 @@ export function importLibraryPdf(body: {
   return request("/api/library/import/pdf", { method: "POST", body: JSON.stringify(body) });
 }
 
+export function getLibraryPdfReplacePreview(citekey: string): Promise<{
+  hasPdf: boolean;
+  taggedFactCount: number;
+  totalFacts: number;
+}> {
+  return request(`/api/library/${encodeURIComponent(citekey)}/pdf-replace-preview`);
+}
+
+export function attachLibraryPdf(
+  citekey: string,
+  body: { pdfBase64: string; replace?: boolean },
+): Promise<{
+  paper: PaperRecord;
+  replaced: boolean;
+  factsUntagged: number;
+}> {
+  return request(`/api/library/${encodeURIComponent(citekey)}/pdf`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 export function exportLibraryPapers(body: {
   citekeys?: string[];
   collection?: string;
@@ -933,6 +997,75 @@ export function deleteLibraryAnnotation(citekey: string, id: string): Promise<vo
   return request(`/api/library/${encodeURIComponent(citekey)}/annotations/${encodeURIComponent(id)}`, {
     method: "DELETE",
   });
+}
+
+export function getLibraryFactsCapability(
+  citekey: string,
+): Promise<{ capability: import("./types").FactsCapability }> {
+  return request(`/api/library/${encodeURIComponent(citekey)}/facts/capability`);
+}
+
+export function listLibraryFacts(
+  citekey: string,
+): Promise<{ facts: import("./types").PaperFact[] }> {
+  return request(`/api/library/${encodeURIComponent(citekey)}/facts`);
+}
+
+export type FactTagRect = { page: number; x: number; y: number; w: number; h: number };
+
+export function createLibraryFact(
+  citekey: string,
+  body: {
+    type: import("./types").FactType;
+    input: string;
+    answer?: string;
+    highlights?: import("./types").FactHighlight[];
+    rect?: FactTagRect;
+  },
+): Promise<{ fact: import("./types").PaperFact }> {
+  return request(`/api/library/${encodeURIComponent(citekey)}/facts`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function patchLibraryFact(
+  citekey: string,
+  id: string,
+  body: Partial<{
+    input: string;
+    answer: string;
+    status: "confirmed" | "rejected" | "unreviewed";
+    highlights: import("./types").FactHighlight[];
+    rect: FactTagRect;
+    untag: boolean;
+  }>,
+): Promise<{ fact: import("./types").PaperFact }> {
+  return request(`/api/library/${encodeURIComponent(citekey)}/facts/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export function deleteLibraryFact(citekey: string, id: string): Promise<void> {
+  return request(`/api/library/${encodeURIComponent(citekey)}/facts/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
+export function listAllLibraryFacts(opts?: {
+  citekey?: string;
+  type?: import("./types").FactType;
+  status?: import("./types").FactStatus;
+  q?: string;
+}): Promise<{ facts: import("./types").LibraryFact[] }> {
+  const params = new URLSearchParams();
+  if (opts?.citekey) params.set("citekey", opts.citekey);
+  if (opts?.type) params.set("type", opts.type);
+  if (opts?.status) params.set("status", opts.status);
+  if (opts?.q) params.set("q", opts.q);
+  const qs = params.toString();
+  return request(`/api/library/facts${qs ? `?${qs}` : ""}`);
 }
 
 export function checkLibraryIntegrity(body?: {

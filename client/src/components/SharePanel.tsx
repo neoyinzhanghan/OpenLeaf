@@ -10,6 +10,7 @@ import {
   type ShareSessionView,
   type UpdateShareInput,
 } from "../api/share";
+import { ErrorBanner } from "./ErrorBanner";
 import { ShareBranchPicker, type ShareBranchChoice } from "./ShareBranchPicker";
 import { copyText } from "../lib/clipboard";
 
@@ -453,14 +454,11 @@ export function SharePanel({
         </div>
       </div>
 
-      {error && (
-        <div className="error-banner share-error">
+      {error ? (
+        <ErrorBanner className="error-banner share-error" onDismiss={() => setError(null)}>
           {error}
-          <button type="button" className="btn btn-ghost" onClick={() => setError(null)}>
-            Dismiss
-          </button>
-        </div>
-      )}
+        </ErrorBanner>
+      ) : null}
 
       {loading && !session && sessions.length === 0 ? (
         <p className="history-hint">Loading…</p>

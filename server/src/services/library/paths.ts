@@ -53,6 +53,15 @@ export function annotationsPath(citekey: string): string {
   return path.join(paperDir(citekey), "annotations.json");
 }
 
+export function factsPath(citekey: string): string {
+  return path.join(paperDir(citekey), "facts.json");
+}
+
+/** Cached PDF text layer (page strings + item geometry) for fact quote matching. */
+export function pdfTextCachePath(citekey: string): string {
+  return path.join(paperDir(citekey), "pdf-text.json");
+}
+
 export function attachmentPath(citekey: string): string {
   return path.join(paperDir(citekey), "attachment.pdf");
 }

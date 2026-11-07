@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
+import { ErrorBanner } from "./ErrorBanner";
 import QRCode from "qrcode";
 import {
   cancelHostPairing,
@@ -191,7 +192,7 @@ export function HostAccessPanel({ open, onClose, nextPath = "/" }: Props) {
             I understand this creates a public link to the OpenLeaf on this computer.
           </label>
         )}
-        {error && <div className="error-banner">{error}</div>}
+        {error ? <ErrorBanner className="error-banner" onDismiss={() => setError(null)}>{error}</ErrorBanner> : null}
         {!link ? (
           <button type="button" className="btn btn-primary" disabled={busy || (route === "tunnel" && !riskAck)} onClick={() => void makeLink()}>
             {busy ? (route === "tunnel" ? "Starting tunnel…" : "Starting…") : "Create link"}

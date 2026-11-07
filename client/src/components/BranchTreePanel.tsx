@@ -17,6 +17,7 @@ import { TimelineGraph } from "./TimelineGraph";
 import { formatWhen, isAiBranch } from "./timelineLayout";
 import { applyMergeTipPick, DEFAULT_PRE_MERGE_MESSAGE, mergeStartAllowed } from "./mergeCompose";
 import { nextTimelineEscape } from "./timelineEscape";
+import { ErrorBanner } from "./ErrorBanner";
 
 type Props = {
   projectId: string;
@@ -561,7 +562,7 @@ export function BranchTreePanel({
           : "Time runs left → right. Tap a leaf to inspect, tap again to open. Merge is a two-tap on tips."}
       </p>
 
-      {error && <div className="error-banner">{error}</div>}
+      {error ? <ErrorBanner className="error-banner" onDismiss={() => setError(null)}>{error}</ErrorBanner> : null}
 
       {mergeDraft && view && (
         <div className="tl-merge-composer" role="region" aria-label="Compose merge">

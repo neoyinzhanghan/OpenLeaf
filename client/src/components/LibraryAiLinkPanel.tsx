@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { ErrorBanner } from "./ErrorBanner";
 import {
   listLibraryAiLinks,
   mintLibraryAiLink,
@@ -62,6 +63,7 @@ export function LibraryAiLinkPanel({ open, onClose }: Props) {
   const [ttlMinutes, setTtlMinutes] = useState<number | null>(7 * 24 * 60);
   const [lastPrompt, setLastPrompt] = useState<string | null>(null);
   const [lastUrl, setLastUrl] = useState<string | null>(null);
+  const [lastConnector, setLastConnector] = useState<{ url: string; authorization: string } | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -104,6 +106,12 @@ export function LibraryAiLinkPanel({ open, onClose }: Props) {
       });
       setLastPrompt(minted.starterPrompt);
       setLastUrl(minted.libraryAiUrl);
+      if (minted.mcpUrl && minted.session.token) {
+        setLastConnector({
+          url: minted.mcpUrl,
+          authorization: `Bearer ${minted.session.token}`,
+        });
+      }
       setSessions((prev) => [minted.session, ...prev.filter((s) => s.id !== minted.session.id)]);
       setRiskAck(false);
     } catch (e) {
@@ -149,12 +157,10 @@ export function LibraryAiLinkPanel({ open, onClose }: Props) {
         </div>
 
         <p className="muted library-hint">
-          Paste the prompt into ChatGPT or Claude in the browser. They call your library API with the
-          token in that prompt. Each add is checked online, then waits in your review queue until you
-          Accept it.
+          Paste the prompt into ChatGPT or Claude when that assistant can reach the public address. For Claude, add the connector after you create the link so Claude calls the library from its own cloud. Copy a fresh prompt after you create the link. Each add is checked online, then waits in your review queue until you Accept it.
         </p>
 
-        {error ? <div className="share-error">{error}</div> : null}
+        {error ? <ErrorBanner className="error-banner share-error" onDismiss={() => setError(null)}>{error}</ErrorBanner> : null}
 
         <label className="library-field">
           Link title
@@ -237,7 +243,7 @@ export function LibraryAiLinkPanel({ open, onClose }: Props) {
 
         {lastPrompt ? (
           <div className="library-share-invite">
-            <p className="muted">Paste this into ChatGPT or Claude. Do not open the link in the browser first.</p>
+            <p className="muted">Paste this into ChatGPT or Claude. Leave the briefing page unopened.</p>
             <div className="library-share-invite-actions">
               <CopyButton value={lastPrompt} label="prompt" primary>
                 Copy prompt
@@ -245,6 +251,37 @@ export function LibraryAiLinkPanel({ open, onClose }: Props) {
               {lastUrl ? <CopyButton value={lastUrl} label="briefing URL" /> : null}
             </div>
             <pre className="library-share-invite-url">{lastPrompt.slice(0, 420)}…</pre>
+          </div>
+        ) : null}
+
+        {lastConnector || sessions.some((s) => s.mcpUrl && s.token) ? (
+          <div className="library-connector">
+            <h3>Claude connector</h3>
+            <ol className="library-connector-steps">
+              <li>In Claude, open Customize, then Connectors, then Add custom connector.</li>
+              <li>Paste the connector URL.</li>
+              <li>Choose No sign-in.</li>
+              <li>
+                Add a request header named Authorization. Paste the copied header value, including the word Bearer
+                and the space after it. Claude shows request headers on accounts where that beta is enabled.
+              </li>
+              <li>Turn the connector on in the chat. Each add still waits in your review queue until you Accept.</li>
+            </ol>
+            {lastConnector ? (
+              <>
+                <div className="library-share-invite-actions">
+                  <CopyButton value={lastConnector.url} label="connector URL" primary>
+                    Copy connector URL
+                  </CopyButton>
+                  <CopyButton value={lastConnector.authorization} label="Authorization header">
+                    Copy header
+                  </CopyButton>
+                </div>
+                <pre className="library-connector-url">{lastConnector.url}</pre>
+              </>
+            ) : (
+              <p className="muted">Copy the URL and header from a live link below.</p>
+            )}
           </div>
         ) : null}
 
@@ -264,6 +301,16 @@ export function LibraryAiLinkPanel({ open, onClose }: Props) {
                 {s.starterPrompt ? (
                   <CopyButton value={s.starterPrompt} label="prompt">
                     Prompt
+                  </CopyButton>
+                ) : null}
+                {s.mcpUrl ? (
+                  <CopyButton value={s.mcpUrl} label="connector URL">
+                    URL
+                  </CopyButton>
+                ) : null}
+                {s.token ? (
+                  <CopyButton value={`Bearer ${s.token}`} label="Authorization header">
+                    Header
                   </CopyButton>
                 ) : null}
                 <button

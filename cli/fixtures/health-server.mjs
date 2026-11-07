@@ -1,6 +1,6 @@
 import http from "node:http";
 
-const port = Number(process.env.OPENLEAF_PORT || 8787);
+const port = Number(process.env.OPENLEAF_PORT || 8786);
 const host = process.env.OPENLEAF_HOST || "127.0.0.1";
 
 const server = http.createServer((req, res) => {

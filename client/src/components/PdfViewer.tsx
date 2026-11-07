@@ -2,26 +2,18 @@ import { useEffect, useRef, useState } from "react";
 import * as pdfjs from "pdfjs-dist";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import { citationLinkAtPoint, citekeyFromPdfDest, type PdfCiteLink } from "../latex/libraryLink";
+import { isTransientPdfError, isTransientPdfErrorMessage } from "../lib/transientErrors";
+import { ErrorBanner } from "./ErrorBanner";
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
 
-// Reuse one worker for the lifetime of the tab. PDF.js otherwise creates and
-// destroys a worker for every document URL; switching projects/checkpoints then
-// repeatedly reloads and recompiles the worker bundle, and Chromium keeps much
-// of that native high-water allocation even after each worker is terminated.
-let sharedPdfWorker: pdfjs.PDFWorker | null = null;
-
-function getPdfWorker(): pdfjs.PDFWorker {
-  if (!sharedPdfWorker) sharedPdfWorker = new pdfjs.PDFWorker();
-  return sharedPdfWorker;
-}
-
-if (import.meta.hot) {
-  import.meta.hot.dispose(() => {
-    sharedPdfWorker?.destroy();
-    sharedPdfWorker = null;
-  });
-}
+// PDF.js always destroys the worker passed to getDocument when the loading task
+// / document is destroyed. Sharing one worker across papers therefore kills the
+// *next* PDF's transport (sendWithPromise on null) when the previous doc is
+// dropped — which is exactly what Facts/Library do when switching papers.
+// Let each document own its worker; workerSrc above still caches the script.
+let pdfLoadGate: Promise<void> = Promise.resolve();
 
 const MIN_SCALE = 0.6;
 const MAX_SCALE = 2.4;
@@ -34,8 +26,10 @@ export type PdfHighlight = {
   y: number;
   width?: number;
   height?: number;
-  /** Stretch highlight across the page content width */
+  /** Stretch highlight across the page content width (horizontal table rows). */
   fullWidth?: boolean;
+  /** Stretch highlight down the page content height (vertical/rotated table cells). */
+  fullHeight?: boolean;
   label?: string;
   /** Force re-flash even if coords unchanged */
   nonce?: number;
@@ -64,7 +58,7 @@ export type PdfAnnotationMark = {
   rects?: Array<{ x: number; y: number; w: number; h: number }>;
 };
 
-export type PdfInteractionMode = "sync" | "pin" | "highlight" | "underline" | "area";
+export type PdfInteractionMode = "sync" | "pin" | "highlight" | "underline" | "area" | "text";
 
 export type PdfAreaRect = {
   page: number;
@@ -73,6 +67,9 @@ export type PdfAreaRect = {
   w: number;
   h: number;
 };
+
+/** Native text-layer selection (page + quote + covering bbox). */
+export type PdfTextSelection = PdfAreaRect & { quote: string };
 
 export type PdfDiffHighlightControls = {
   enabled: boolean;
@@ -103,6 +100,8 @@ type Props = {
   /** Shown when there is no PDF URL yet (e.g. auto-building after a branch switch). */
   emptyHint?: string | null;
   onReverseSearch?: (page: number, x: number, y: number) => void;
+  /** Click a compiled citation → open that paper in the reference library. */
+  onCitationClick?: (citekey: string) => void;
   /** Shift+click PDF → create a comment at the SyncTeX source hit */
   onCommentAt?: (page: number, x: number, y: number) => void;
   /** Toolbar hint for shift+click; pass null to hide. */
@@ -115,9 +114,12 @@ type Props = {
   /**
    * Interaction mode. Default "sync" preserves Editor SyncTeX click/shift-click.
    * Library annotate modes: pin (click), highlight/underline/area (drag rect).
+   * "text" enables a selectable text layer for fact tagging.
    */
   interactionMode?: PdfInteractionMode;
   onAreaSelect?: (rect: PdfAreaRect) => void;
+  /** Fired when the user selects text in "text" mode. */
+  onTextSelect?: (sel: PdfTextSelection) => void;
   onAnnotationClick?: (id: string) => void;
   onVisiblePageChange?: (page: number) => void;
   diffHighlight?: PdfDiffHighlightControls | null;
@@ -203,6 +205,7 @@ export function PdfViewer({
   url,
   emptyHint,
   onReverseSearch,
+  onCitationClick,
   onCommentAt,
   shiftClickHint,
   highlight,
@@ -210,6 +213,7 @@ export function PdfViewer({
   annotations,
   interactionMode = "sync",
   onAreaSelect,
+  onTextSelect,
   onAnnotationClick,
   onVisiblePageChange,
   diffHighlight,
@@ -220,12 +224,17 @@ export function PdfViewer({
   const scrollRef = useRef<HTMLDivElement>(null);
   const reverseRef = useRef(onReverseSearch);
   reverseRef.current = onReverseSearch;
+  const citationClickRef = useRef(onCitationClick);
+  citationClickRef.current = onCitationClick;
+  const citeLinksRef = useRef<Map<number, PdfCiteLink[]>>(new Map());
   const commentRef = useRef(onCommentAt);
   commentRef.current = onCommentAt;
   const modeRef = useRef(interactionMode);
   modeRef.current = interactionMode;
   const areaSelectRef = useRef(onAreaSelect);
   areaSelectRef.current = onAreaSelect;
+  const textSelectRef = useRef(onTextSelect);
+  textSelectRef.current = onTextSelect;
   const annClickRef = useRef(onAnnotationClick);
   annClickRef.current = onAnnotationClick;
   const visiblePageRef = useRef(onVisiblePageChange);
@@ -242,13 +251,26 @@ export function PdfViewer({
 
   const [pageCount, setPageCount] = useState(0);
   const [scale, setScale] = useState(1);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setErrorState] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [flash, setFlash] = useState<PdfHighlight | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   /** Bumps when the loaded document identity changes so pages re-render. */
   const [docVersion, setDocVersion] = useState(0);
   const [pagesReady, setPagesReady] = useState(false);
+
+  const setError = (msg: string | null) => {
+    if (msg && isTransientPdfErrorMessage(msg)) {
+      setErrorState(null);
+      return;
+    }
+    setErrorState(msg);
+  };
+
+  // Belt-and-suspenders: clear sticky PDF.js worker races even if something else set them.
+  useEffect(() => {
+    if (error && isTransientPdfErrorMessage(error)) setErrorState(null);
+  }, [error]);
 
   scaleRef.current = scale;
 
@@ -312,6 +334,7 @@ export function PdfViewer({
   useEffect(() => {
     if (!url) {
       pendingAnchorRef.current = null;
+      citeLinksRef.current = new Map();
       dropResidentDoc();
       setPageCount(0);
       setPagesReady(false);
@@ -329,13 +352,23 @@ export function PdfViewer({
 
     let cancelled = false;
     let settledDoc: PDFDocumentProxy | null = null;
-    const loadingTask = pdfjs.getDocument({ url, worker: getPdfWorker() });
+    let loadingTask: ReturnType<typeof pdfjs.getDocument> | null = null;
     const replacing = docRef.current != null;
     if (!replacing) setLoading(true);
     setError(null);
 
+    const prevGate = pdfLoadGate;
+    let releaseGate: () => void = () => undefined;
+    pdfLoadGate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+
     (async () => {
       try {
+        await prevGate;
+        if (cancelled) return;
+        // Each document owns its worker — see note above on shared workers.
+        loadingTask = pdfjs.getDocument({ url });
         const doc = await loadingTask.promise;
         settledDoc = doc;
         if (cancelled) {
@@ -344,11 +377,24 @@ export function PdfViewer({
           return;
         }
         const sizes: Array<{ width: number; height: number }> = [];
+        const citeLinks = new Map<number, PdfCiteLink[]>();
         for (let i = 1; i <= doc.numPages; i += 1) {
           const page = await doc.getPage(i);
           try {
             const viewport = page.getViewport({ scale: 1 });
             sizes.push({ width: viewport.width, height: viewport.height });
+            const annots = await page.getAnnotations();
+            const links: PdfCiteLink[] = [];
+            for (const annot of annots) {
+              if (annot.subtype !== "Link") continue;
+              const citekey = citekeyFromPdfDest(annot.dest);
+              const raw = annot.rect;
+              if (!citekey || !Array.isArray(raw) || raw.length < 4) continue;
+              const rect = [Number(raw[0]), Number(raw[1]), Number(raw[2]), Number(raw[3])];
+              if (rect.some((n) => !Number.isFinite(n))) continue;
+              links.push({ citekey, rect });
+            }
+            citeLinks.set(i, links);
           } finally {
             page.cleanup();
           }
@@ -362,14 +408,18 @@ export function PdfViewer({
         paintTokenRef.current += 1;
         docRef.current = doc;
         settledDoc = null; // ownership moved to docRef
+        citeLinksRef.current = citeLinks;
         pageSizesRef.current = sizes;
         renderedScaleRef.current = scaleRef.current;
         setPagesReady(false);
         setPageCount(doc.numPages);
         setDocVersion((v) => v + 1);
+        setError(null);
+        // Safe now: previous owned a different worker.
         if (previous && previous !== doc) previous.destroy().catch(() => undefined);
       } catch (err) {
-        if (!cancelled && !docRef.current) {
+        if (cancelled || isTransientPdfError(err)) return;
+        if (!docRef.current) {
           setError(
             err instanceof Error
               ? /missing pdf|unexpected server response|404/i.test(err.message)
@@ -386,13 +436,19 @@ export function PdfViewer({
 
     return () => {
       cancelled = true;
-      void Promise.resolve(loadingTask.destroy()).catch(() => undefined);
-      // Leave the current document painted. The next load replaces it, and
-      // unmount drops it. Clearing here is what sent the preview back to page 1.
-      if (settledDoc) {
-        settledDoc.destroy().catch(() => undefined);
-        settledDoc = null;
-      }
+      void (async () => {
+        try {
+          if (loadingTask) await Promise.resolve(loadingTask.destroy()).catch(() => undefined);
+          // Leave the current document painted. The next load replaces it, and
+          // unmount drops it. Clearing here is what sent the preview back to page 1.
+          if (settledDoc) {
+            await settledDoc.destroy().catch(() => undefined);
+            settledDoc = null;
+          }
+        } finally {
+          releaseGate();
+        }
+      })();
     };
   }, [url]);
 
@@ -439,7 +495,9 @@ export function PdfViewer({
       canvas.className = "pdf-page";
       canvas.dataset.page = String(pageNum);
       canvas.style.display = "none";
-      canvas.title = "Click → source · Shift+click → comment";
+      canvas.title = citationClickRef.current
+        ? "Click a citation → library · Click elsewhere → source · Shift+click → comment"
+        : "Click → source · Shift+click → comment";
       const clientToPdf = (ev: MouseEvent, target: HTMLElement) => {
         const rect = target.getBoundingClientRect();
         if (rect.width <= 0 || rect.height <= 0) return null;
@@ -455,6 +513,7 @@ export function PdfViewer({
 
       wrap.addEventListener("mousedown", (ev) => {
         const mode = modeRef.current;
+        // "text" uses the selectable text layer — don't steal the drag.
         if (mode !== "highlight" && mode !== "underline" && mode !== "area") return;
         if (ev.button !== 0) return;
         const target = ev.currentTarget as HTMLElement;
@@ -474,6 +533,16 @@ export function PdfViewer({
       });
 
       wrap.addEventListener("mousemove", (ev) => {
+        if (!dragStart && modeRef.current === "sync") {
+          const target = ev.currentTarget as HTMLElement;
+          const pt = clientToPdf(ev, target);
+          const pageHeight = target.offsetHeight / scaleRef.current;
+          const citekey =
+            pt && citationClickRef.current
+              ? citationLinkAtPoint(citeLinksRef.current.get(pageNum) ?? [], pt.x, pt.y, pageHeight)
+              : null;
+          target.classList.toggle("is-cite-link", Boolean(citekey));
+        }
         if (!dragStart || !dragBand) return;
         const target = ev.currentTarget as HTMLElement;
         const pt = clientToPdf(ev, target);
@@ -506,8 +575,30 @@ export function PdfViewer({
         if (w < 4 || h < 4) return;
         areaSelectRef.current?.({ page: pageNum, x, y, w, h });
       };
-      wrap.addEventListener("mouseup", endDrag);
+      wrap.addEventListener("mouseup", (ev) => {
+        endDrag(ev);
+        if (modeRef.current !== "text" || !textSelectRef.current) return;
+        const sel = window.getSelection();
+        if (!sel || sel.isCollapsed || !sel.rangeCount) return;
+        const target = ev.currentTarget as HTMLElement;
+        if (!target.contains(sel.anchorNode) && !target.contains(sel.focusNode)) return;
+        const quote = sel.toString().replace(/\s+/g, " ").trim();
+        if (quote.length < 1) return;
+        const range = sel.getRangeAt(0);
+        const r = range.getBoundingClientRect();
+        const wrapRect = target.getBoundingClientRect();
+        if (wrapRect.width <= 0 || wrapRect.height <= 0) return;
+        const currentScale = scaleRef.current;
+        const x = ((r.left - wrapRect.left) / wrapRect.width) * (target.offsetWidth / currentScale);
+        const y = ((r.top - wrapRect.top) / wrapRect.height) * (target.offsetHeight / currentScale);
+        const w = (r.width / wrapRect.width) * (target.offsetWidth / currentScale);
+        const h = (r.height / wrapRect.height) * (target.offsetHeight / currentScale);
+        if (w < 2 || h < 2) return;
+        textSelectRef.current({ page: pageNum, x, y, w, h, quote });
+        sel.removeAllRanges();
+      });
       wrap.addEventListener("mouseleave", (ev) => {
+        (ev.currentTarget as HTMLElement).classList.remove("is-cite-link");
         if (dragStart) endDrag(ev);
       });
 
@@ -544,6 +635,14 @@ export function PdfViewer({
 
         if (ev.shiftKey && commentRef.current) {
           commentRef.current(pageNum, x, y);
+          return;
+        }
+        const pageHeight = target.offsetHeight / scaleRef.current;
+        const citekey = citationClickRef.current
+          ? citationLinkAtPoint(citeLinksRef.current.get(pageNum) ?? [], x, y, pageHeight)
+          : null;
+        if (citekey && citationClickRef.current) {
+          citationClickRef.current(citekey);
           return;
         }
         reverseRef.current?.(pageNum, x, y);
@@ -601,6 +700,7 @@ export function PdfViewer({
 
     const isCancelledRender = (err: unknown): boolean => {
       if (cancelled || token !== paintTokenRef.current) return true;
+      if (isTransientPdfError(err)) return true;
       const name = err && typeof err === "object" && "name" in err ? String(err.name) : "";
       const message = err instanceof Error ? err.message : String(err ?? "");
       return (
@@ -657,6 +757,31 @@ export function PdfViewer({
           return;
         }
         wrap.classList.remove("is-placeholder");
+        // Selectable text layer for fact tagging (mode "text").
+        wrap.querySelector(".pdf-text-layer")?.remove();
+        if (modeRef.current === "text" && page) {
+          try {
+            const content = await page.getTextContent();
+            const layer = document.createElement("div");
+            layer.className = "pdf-text-layer";
+            for (const raw of content.items) {
+              if (!("str" in raw) || typeof raw.str !== "string" || !raw.str) continue;
+              const tr = pdfjs.Util.transform(viewport.transform, raw.transform);
+              const fontH = Math.hypot(tr[2], tr[3]) || 10;
+              const span = document.createElement("span");
+              span.textContent = raw.str;
+              span.style.left = `${tr[4]}px`;
+              span.style.top = `${tr[5] - fontH}px`;
+              span.style.fontSize = `${fontH}px`;
+              span.style.fontFamily = "sans-serif";
+              layer.appendChild(span);
+              if (raw.hasEOL) layer.appendChild(document.createElement("br"));
+            }
+            wrap.appendChild(layer);
+          } catch {
+            /* text layer is best-effort */
+          }
+        }
         rendered = true;
       } catch (err) {
         if (isCancelledRender(err)) {
@@ -666,7 +791,7 @@ export function PdfViewer({
             visible.has(pageNum);
           return;
         }
-        if (!cancelled && token === paintTokenRef.current) {
+        if (!cancelled && token === paintTokenRef.current && !isTransientPdfError(err)) {
           setError(err instanceof Error ? err.message : "Failed to render PDF page");
         }
       } finally {
@@ -789,56 +914,110 @@ export function PdfViewer({
     return () => scroller.removeEventListener("wheel", onWheel);
   }, []);
 
-  // SyncTeX highlight marks — reposition on zoom without re-scrolling.
+  // SyncTeX / fact flash — wait until page wraps exist; retry after load.
   useEffect(() => {
-    if (!flash || !containerRef.current || loading) return;
-    const wrap = containerRef.current.querySelector(
-      `.pdf-page-wrap[data-page="${flash.page}"]`,
-    ) as HTMLElement | null;
-    if (!wrap) return;
+    if (!flash || !containerRef.current || loading || !pagesReady) return;
+    let cancelled = false;
+    let tries = 0;
 
-    containerRef.current.querySelectorAll(".pdf-sync-mark, .pdf-sync-label").forEach((el) => el.remove());
+    const paint = (): boolean => {
+      const container = containerRef.current;
+      if (!container || cancelled) return false;
+      const wrap = container.querySelector(
+        `.pdf-page-wrap[data-page="${flash.page}"]`,
+      ) as HTMLElement | null;
+      if (!wrap) return false;
 
-    const pageW = wrap.clientWidth;
-    // SyncTeX boxes are often hairline-thin; paint a readable highlighter band instead.
-    const synctexH = Math.max((flash.height ?? 12) * scale, 1);
-    const h = Math.max(synctexH * 1.35, 26 * Math.min(scale, 1.4));
-    const top = Math.max(0, flash.y * scale - h * 0.55);
-    const left = flash.fullWidth !== false ? pageW * 0.05 : Math.max(0, flash.x * scale - 6);
-    const width =
-      flash.fullWidth !== false
-        ? pageW * 0.9
-        : Math.max((flash.width ?? 120) * scale, 96);
+      container.querySelectorAll(".pdf-sync-mark, .pdf-sync-label").forEach((el) => el.remove());
 
-    const mark = document.createElement("div");
-    mark.className = "pdf-sync-mark";
-    mark.style.left = `${left}px`;
-    mark.style.top = `${top}px`;
-    mark.style.width = `${width}px`;
-    mark.style.height = `${h}px`;
-    wrap.appendChild(mark);
+      const pageW = wrap.clientWidth;
+      const pageH = wrap.clientHeight;
+      const vertical = Boolean(flash.fullHeight);
+      // SyncTeX / fact boxes are often hairline-thin; paint a readable band instead.
+      let left: number;
+      let top: number;
+      let width: number;
+      let h: number;
+      if (vertical) {
+        // Tight column on the cell ink — no tall page band (imprecise for 90° tables).
+        const cellW = Math.max((flash.width ?? 14) * scale, 1);
+        const cellH = Math.max((flash.height ?? 24) * scale, 1);
+        width = Math.max(cellW + 4, 12);
+        left = Math.max(0, flash.x * scale + cellW / 2 - width / 2);
+        top = Math.max(0, flash.y * scale - 3);
+        h = Math.min(pageH - top, Math.max(cellH + 6, 14));
+      } else if (flash.fullWidth !== false) {
+        const synctexH = Math.max((flash.height ?? 12) * scale, 1);
+        h = Math.max(synctexH * 1.35, 26 * Math.min(scale, 1.4));
+        top = Math.max(0, flash.y * scale - h * 0.55);
+        left = pageW * 0.05;
+        width = pageW * 0.9;
+      } else {
+        // Table / fact cell: hug the number bbox.
+        const cellW = Math.max((flash.width ?? 40) * scale, 1);
+        const cellH = Math.max((flash.height ?? 12) * scale, 1);
+        left = Math.max(0, flash.x * scale - 3);
+        top = Math.max(0, flash.y * scale - 2);
+        width = Math.max(cellW + 6, 18);
+        h = Math.max(cellH + 4, 12);
+      }
 
-    if (flash.label) {
-      const label = document.createElement("div");
-      label.className = "pdf-sync-label";
-      label.textContent = flash.label;
-      label.style.left = `${left}px`;
-      label.style.top = `${Math.max(0, top - 26)}px`;
-      wrap.appendChild(label);
-    }
+      const mark = document.createElement("div");
+      mark.className = `pdf-sync-mark${vertical ? " is-vertical" : ""}`;
+      mark.style.left = `${left}px`;
+      mark.style.top = `${top}px`;
+      mark.style.width = `${width}px`;
+      mark.style.height = `${h}px`;
+      wrap.appendChild(mark);
 
-    const flashKey = flash.nonce ?? flash.page * 1e9 + flash.x * 1e3 + flash.y;
-    if (scrolledFlashNonceRef.current === flashKey) return;
-    scrolledFlashNonceRef.current = flashKey;
+      if (flash.label) {
+        const label = document.createElement("div");
+        label.className = `pdf-sync-label${vertical ? " is-vertical" : ""}`;
+        label.textContent = flash.label;
+        if (vertical) {
+          label.style.left = `${Math.min(pageW - 120, left + width + 6)}px`;
+          label.style.top = `${Math.max(0, flash.y * scale - 4)}px`;
+        } else {
+          label.style.left = `${left}px`;
+          label.style.top = `${Math.max(0, top - 26)}px`;
+        }
+        wrap.appendChild(label);
+      }
 
-    wrap.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
-    const scroller = scrollRef.current;
-    if (scroller) {
-      const wrapTop = wrap.offsetTop;
-      const target = wrapTop + top - scroller.clientHeight / 2 + h / 2;
-      scroller.scrollTo({ top: Math.max(0, target), behavior: "smooth" });
-    }
-  }, [flash, scale, pageCount, loading]);
+      const flashKey = flash.nonce ?? flash.page * 1e9 + flash.x * 1e3 + flash.y;
+      if (scrolledFlashNonceRef.current === flashKey) return true;
+      scrolledFlashNonceRef.current = flashKey;
+
+      // Center the mark in the PDF scroller (not the page top). Avoid scrollIntoView —
+      // it races nested scroll parents and leaves the hit under the toolbar/meta.
+      const scroller = scrollRef.current;
+      if (scroller) {
+        const centerMark = () => {
+          const markRect = mark.getBoundingClientRect();
+          const scrollerRect = scroller.getBoundingClientRect();
+          if (markRect.height <= 0 || scrollerRect.height <= 0) return;
+          const markMid = markRect.top + markRect.height / 2;
+          const viewMid = scrollerRect.top + scrollerRect.height / 2;
+          const nextTop = scroller.scrollTop + (markMid - viewMid);
+          const maxTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+          scroller.scrollTo({ top: Math.min(maxTop, Math.max(0, nextTop)), behavior: "smooth" });
+        };
+        requestAnimationFrame(() => requestAnimationFrame(centerMark));
+      }
+      return true;
+    };
+
+    if (paint()) return;
+
+    const timer = window.setInterval(() => {
+      tries += 1;
+      if (paint() || tries >= 40) window.clearInterval(timer);
+    }, 50);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [flash, scale, pageCount, loading, pagesReady, docVersion]);
 
   // Git-diff addition overlays — persist until toggled off; no scroll jump.
   useEffect(() => {
@@ -958,6 +1137,57 @@ export function PdfViewer({
     if (!container) return;
     container.dataset.annMode = interactionMode;
   }, [interactionMode, pagesReady, docVersion]);
+
+  // Build / tear down selectable text layers when entering "text" mode.
+  useEffect(() => {
+    const container = containerRef.current;
+    const doc = docRef.current;
+    if (!container) return;
+    if (interactionMode !== "text") {
+      container.querySelectorAll(".pdf-text-layer").forEach((n) => n.remove());
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      for (const wrap of [...container.querySelectorAll(".pdf-page-wrap")] as HTMLElement[]) {
+        if (cancelled || wrap.classList.contains("is-placeholder")) continue;
+        if (wrap.querySelector(".pdf-text-layer")) continue;
+        const pageNum = Number(wrap.dataset.page);
+        if (!doc || !pageNum) continue;
+        try {
+          const page = await doc.getPage(pageNum);
+          if (cancelled) {
+            page.cleanup();
+            return;
+          }
+          const viewport = page.getViewport({ scale: scaleRef.current });
+          const content = await page.getTextContent();
+          const layer = document.createElement("div");
+          layer.className = "pdf-text-layer";
+          for (const raw of content.items) {
+            if (!("str" in raw) || typeof raw.str !== "string" || !raw.str) continue;
+            const tr = pdfjs.Util.transform(viewport.transform, raw.transform);
+            const fontH = Math.hypot(tr[2], tr[3]) || 10;
+            const span = document.createElement("span");
+            span.textContent = raw.str;
+            span.style.left = `${tr[4]}px`;
+            span.style.top = `${tr[5] - fontH}px`;
+            span.style.fontSize = `${fontH}px`;
+            span.style.fontFamily = "sans-serif";
+            layer.appendChild(span);
+            if (raw.hasEOL) layer.appendChild(document.createElement("br"));
+          }
+          wrap.appendChild(layer);
+          page.cleanup();
+        } catch {
+          /* ignore */
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [interactionMode, pagesReady, docVersion, scale]);
 
   return (
     <div
@@ -1093,11 +1323,11 @@ export function PdfViewer({
         </div>
       )}
       {loading && pageCount === 0 && <div className="empty-hint">Loading PDF…</div>}
-      {error && (
-        <div className="error-banner" style={{ margin: "1rem" }}>
+      {error && !isTransientPdfErrorMessage(error) ? (
+        <ErrorBanner style={{ margin: "1rem" }} onDismiss={() => setError(null)}>
           {error}
-        </div>
-      )}
+        </ErrorBanner>
+      ) : null}
       <div className="pdf-scroll" ref={scrollRef}>
         <div ref={containerRef} />
       </div>

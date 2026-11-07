@@ -23,20 +23,27 @@ export function CompileLog({ log, open, onToggle, height, className, issues = []
           {open ? "Hide" : "Show"}
         </button>
       </div>
-      {open && issues.length > 0 && (
-        <ul className="compile-issues">
-          {issues.map((issue, index) => (
-            <li key={`${issue.severity}-${issue.line ?? "x"}-${index}`}>
-              <button type="button" className={`compile-issue is-${issue.severity}`} onClick={() => onJump?.(issue)}>
-                <strong>{issue.severity}</strong>
-                {issue.file ? ` ${issue.file}` : ""}
-                {issue.line ? `:${issue.line}` : ""} — {issue.message}
-              </button>
-            </li>
-          ))}
-        </ul>
+      {open && (
+        <div
+          className="compile-log-body"
+          onWheel={(event) => event.stopPropagation()}
+        >
+          {issues.length > 0 && (
+            <ul className="compile-issues">
+              {issues.map((issue, index) => (
+                <li key={`${issue.severity}-${issue.line ?? "x"}-${index}`}>
+                  <button type="button" className={`compile-issue is-${issue.severity}`} onClick={() => onJump?.(issue)}>
+                    <strong>{issue.severity}</strong>
+                    {issue.file ? ` ${issue.file}` : ""}
+                    {issue.line ? `:${issue.line}` : ""} — {issue.message}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <pre>{log || "No compile output yet."}</pre>
+        </div>
       )}
-      {open && <pre>{log || "No compile output yet."}</pre>}
     </div>
   );
 }

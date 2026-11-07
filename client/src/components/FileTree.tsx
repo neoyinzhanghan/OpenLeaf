@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import type { FileAccessLevel, FileChangeDiff, TreeNode } from "../api/types";
+import { copyText } from "../lib/clipboard";
 
 export type FileChangeHint = Pick<FileChangeDiff, "status" | "additions" | "deletions">;
 
 type Props = {
   nodes: TreeNode[];
   activePath: string | null;
+  /** Project compile root (openleaf.json mainFile). */
+  mainFile?: string | null;
   onOpen: (path: string) => void;
   onNewFile: (dir?: string) => void;
   onNewFolder: (dir?: string) => void;
@@ -13,12 +16,16 @@ type Props = {
   onDelete: (path?: string) => void;
   onRename: (path?: string) => void;
   onMove: (from: string, toDir: string) => void;
+  /** Persist a `.tex` file as the project main document. */
+  onSetMainFile?: (path: string) => void;
   canMutateActive: boolean;
   /** Hide every mutating control (read-only guest). */
   readOnly?: boolean;
   /** Who is looking at the tree. Guests see locks; only local and device can change them. */
   actor?: "local" | "device" | "guest";
   onSetAccess?: (path: string, level: FileAccessLevel) => void;
+  /** Resolve a project-relative path to an absolute path for this computer. */
+  onCopyPath?: (relativePath: string) => Promise<string>;
   /** When Differences is on — Cursor-style +/− badges per path. */
   fileChanges?: Record<string, FileChangeHint> | null;
 };
@@ -160,6 +167,40 @@ function WhoCanEdit({
   );
 }
 
+function CopyTreePath({
+  relativePath,
+  onCopyPath,
+  onLayout,
+}: {
+  relativePath: string;
+  onCopyPath: (relativePath: string) => Promise<string>;
+  onLayout: () => void;
+}) {
+  const [label, setLabel] = useState("Copy path");
+  const [shown, setShown] = useState("");
+
+  const copy = async () => {
+    try {
+      const text = await onCopyPath(relativePath);
+      setShown(text);
+      const ok = await copyText(text);
+      setLabel(ok ? "Copied" : "Select the path below");
+    } catch {
+      setLabel("Could not copy");
+    }
+    onLayout();
+  };
+
+  return (
+    <>
+      <button type="button" onClick={() => void copy()} title="Absolute path on this computer">
+        {label}
+      </button>
+      {shown ? <code className="project-path">{shown}</code> : null}
+    </>
+  );
+}
+
 function ChangeBadge({ hint }: { hint: FileChangeHint }) {
   const letter =
     hint.status === "added" ? "A" : hint.status === "deleted" ? "D" : hint.status === "renamed" ? "R" : "M";
@@ -175,6 +216,7 @@ function ChangeBadge({ hint }: { hint: FileChangeHint }) {
 function NodeView({
   node,
   activePath,
+  mainFile,
   dragOverDir,
   expanded,
   fileChanges,
@@ -188,6 +230,7 @@ function NodeView({
 }: {
   node: TreeNode;
   activePath: string | null;
+  mainFile?: string | null;
   dragOverDir: string | null;
   expanded: ReadonlySet<string>;
   fileChanges?: Record<string, FileChangeHint> | null;
@@ -228,6 +271,7 @@ function NodeView({
               key={child.path}
               node={child}
               activePath={activePath}
+              mainFile={mainFile}
               dragOverDir={dragOverDir}
               expanded={expanded}
               fileChanges={fileChanges}
@@ -246,10 +290,11 @@ function NodeView({
   }
 
   const hint = fileChanges?.[node.path];
+  const isMain = Boolean(mainFile && node.path === mainFile);
   return (
     <button
       type="button"
-      className={`tree-file${activePath === node.path ? " active" : ""}${hint ? ` tree-file--${hint.status}` : ""}`}
+      className={`tree-file${activePath === node.path ? " active" : ""}${isMain ? " tree-file--main" : ""}${hint ? ` tree-file--${hint.status}` : ""}`}
       onClick={() => onOpen(node.path)}
       onContextMenu={(e) => onContextMenu(e, node)}
       draggable
@@ -257,9 +302,14 @@ function NodeView({
       onDragOver={(e) => onDirDragOver(e, parentOf(node.path))}
       onDragLeave={(e) => onDirDragLeave(e, parentOf(node.path))}
       onDrop={(e) => onDropInDir(e, parentOf(node.path))}
-      title={accessTitle(node) ?? node.path}
+      title={isMain ? `${node.path} (main document — Compile builds this file)` : accessTitle(node) ?? node.path}
     >
       <span className="tree-file-name">{node.name}</span>
+      {isMain && (
+        <span className="tree-main-badge" title="Main document — Compile builds this file">
+          Main
+        </span>
+      )}
       <AccessMark node={node} />
       {hint && <ChangeBadge hint={hint} />}
     </button>
@@ -269,6 +319,7 @@ function NodeView({
 export function FileTree({
   nodes,
   activePath,
+  mainFile = null,
   onOpen,
   onNewFile,
   onNewFolder,
@@ -276,13 +327,16 @@ export function FileTree({
   onDelete,
   onRename,
   onMove,
+  onSetMainFile,
   canMutateActive: _canMutateActive,
   readOnly = false,
   fileChanges = null,
   actor = "local",
   onSetAccess,
+  onCopyPath,
 }: Props) {
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [menuLayout, setMenuLayout] = useState(0);
   const [showBuildFiles, setShowBuildFiles] = useState(false);
   const [dragOverDir, setDragOverDir] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(ancestorsOf(activePath)));
@@ -329,15 +383,20 @@ export function FileTree({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setMenu(null);
     };
+    const closeOnScroll = (e: Event) => {
+      const target = e.target;
+      if (target instanceof Element && target.closest(".monaco-editor, .editor-pane")) return;
+      close();
+    };
     window.addEventListener("mousedown", close);
     window.addEventListener("blur", close);
     window.addEventListener("keydown", onKey);
-    window.addEventListener("scroll", close, true);
+    window.addEventListener("scroll", closeOnScroll, true);
     return () => {
       window.removeEventListener("mousedown", close);
       window.removeEventListener("blur", close);
       window.removeEventListener("keydown", onKey);
-      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("scroll", closeOnScroll, true);
     };
   }, [menu]);
 
@@ -349,12 +408,12 @@ export function FileTree({
     const x = Math.min(menu.x, window.innerWidth - rect.width - 8);
     const y = Math.min(menu.y, window.innerHeight - rect.height - 8);
     if (x !== menu.x || y !== menu.y) setMenu({ ...menu, x, y });
-  }, [menu]);
+  }, [menu, menuLayout]);
 
   const openMenu = (e: React.MouseEvent, node: TreeNode | null) => {
     e.preventDefault();
     e.stopPropagation();
-    if (readOnly && !(node && node.type === "file")) return;
+    if (readOnly && !onCopyPath && !(node && node.type === "file")) return;
     setMenu({ x: e.clientX, y: e.clientY, node });
   };
 
@@ -465,6 +524,7 @@ export function FileTree({
             key={node.path}
             node={node}
             activePath={activePath}
+            mainFile={mainFile}
             dragOverDir={dragOverDir}
             expanded={expanded}
             fileChanges={fileChanges}
@@ -488,6 +548,7 @@ export function FileTree({
                   type="button"
                   className={`tree-file tree-file--deleted tree-file--ghost${activePath === path ? " active" : ""}`}
                   onClick={() => onOpen(path)}
+                  onContextMenu={(e) => openMenu(e, { name, path, type: "file" })}
                   title={`${path} (deleted since snapshot)`}
                 >
                   <span className="tree-file-name">{name}</span>
@@ -517,11 +578,39 @@ export function FileTree({
           onMouseDown={(e) => e.stopPropagation()}
           onContextMenu={(e) => e.preventDefault()}
         >
+          {onCopyPath && (
+            <CopyTreePath
+              key={menuNode?.path ?? ""}
+              relativePath={menuNode?.path ?? ""}
+              onCopyPath={onCopyPath}
+              onLayout={() => setMenuLayout((n) => n + 1)}
+            />
+          )}
+          {onCopyPath && (menuNode || !readOnly) ? <div className="context-menu-sep" /> : null}
           {menuNode && menuNode.type === "file" && (
             <>
               <button type="button" onClick={() => runMenuAction(() => onOpen(menuNode.path))}>
                 Open
               </button>
+              {!readOnly &&
+                onSetMainFile &&
+                menuNode.path.toLowerCase().endsWith(".tex") &&
+                menuNode.path !== mainFile && (
+                  <button
+                    type="button"
+                    onClick={() => runMenuAction(() => onSetMainFile(menuNode.path))}
+                    title="Compile / Recompile will build this file"
+                  >
+                    Set as main document
+                  </button>
+                )}
+              {!readOnly &&
+                menuNode.path.toLowerCase().endsWith(".tex") &&
+                menuNode.path === mainFile && (
+                  <button type="button" disabled title="Compile already builds this file">
+                    Main document
+                  </button>
+                )}
               {!readOnly && <div className="context-menu-sep" />}
             </>
           )}

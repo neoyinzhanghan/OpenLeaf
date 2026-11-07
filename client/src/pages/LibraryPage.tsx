@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { hostLogout } from "../api/share";
 import { LibraryPanel } from "../components/LibraryPanel";
 import { ThemePicker } from "../components/ThemeToggle";
@@ -10,6 +10,8 @@ import { useSession } from "../session/SessionContext";
 export function LibraryPage() {
   const { session, refresh } = useSession();
   const remoteHost = session.kind === "host" && session.remote;
+  const [params] = useSearchParams();
+  const focusCitekey = params.get("paper");
   const [lastProject, setLastProject] = useState<LastProject | null>(null);
   useEffect(() => {
     setLastProject(readLastProject());
@@ -32,6 +34,13 @@ export function LibraryPage() {
           <Link to="/library" className="btn btn-quiet is-active" aria-current="page">
             Library
           </Link>
+          <Link
+            to={focusCitekey ? `/facts?paper=${encodeURIComponent(focusCitekey)}` : "/facts"}
+            className="btn btn-quiet"
+            title={focusCitekey ? `Review facts for ${focusCitekey}` : "Review extracted facts"}
+          >
+            Facts
+          </Link>
           {lastProject ? (
             <Link to={`/p/${encodeURIComponent(lastProject.id)}`} className="btn btn-quiet topbar-wide-only">
               {lastProject.name}
@@ -53,7 +62,7 @@ export function LibraryPage() {
           <ThemePicker compact />
         </div>
       </header>
-      <LibraryPanel open variant="page" onClose={() => undefined} />
+      <LibraryPanel open variant="page" focusCitekey={focusCitekey} onClose={() => undefined} />
       <nav className={`phone-tabbar${lastProject ? " has-project" : ""}`} aria-label="Primary">
         <Link to="/">Projects</Link>
         {lastProject ? (
@@ -63,6 +72,9 @@ export function LibraryPage() {
         ) : null}
         <Link to="/library" aria-current="page">
           Library
+        </Link>
+        <Link to={focusCitekey ? `/facts?paper=${encodeURIComponent(focusCitekey)}` : "/facts"}>
+          Facts
         </Link>
       </nav>
     </div>

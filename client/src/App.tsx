@@ -2,6 +2,7 @@ import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { EditorPage } from "./pages/EditorPage";
 import { GuestInactive, GuestLogin } from "./pages/GuestLogin";
 import { HostLogin } from "./pages/HostLogin";
+import { FactsPage } from "./pages/FactsPage";
 import { LibraryPage } from "./pages/LibraryPage";
 import { LibraryShareGuestPage } from "./pages/LibraryShareGuestPage";
 import { ProjectList } from "./pages/ProjectList";
@@ -44,6 +45,7 @@ export function App() {
     <Routes>
       <Route path="/" element={<ProjectList />} />
       <Route path="/library" element={<LibraryPage />} />
+      <Route path="/facts" element={<FactsPage />} />
       <Route path="/lib-share/:token" element={<LibraryShareGuestPage />} />
       <Route path="/p/:id" element={<EditorPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />

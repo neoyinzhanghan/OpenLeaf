@@ -6,7 +6,7 @@
 import { Router, type Request, type Response } from "express";
 import { ZodError, z } from "zod";
 import { loadConfig } from "../config.js";
-import { handleLibraryAiMcpHttp } from "../services/libraryAiMcp.js";
+import { handleLibraryAiMcpHttp, libraryAiMcpMethodNotAllowed } from "../services/libraryAiMcp.js";
 import { assertLibraryAiOutbound } from "../services/libraryAiOutboundLimit.js";
 import { enrichPaper } from "../services/library/enrich.js";
 import { lookupExternal } from "../services/library/import.js";
@@ -37,6 +37,7 @@ import {
   rejectLibraryProposal,
 } from "../services/libraryAiReview.js";
 import { hostOnly } from "../services/shareAuth.js";
+import { startHostGateway } from "../services/hostGateway.js";
 
 function statusOf(err: unknown): number {
   if (err instanceof ZodError) return 400;
@@ -63,10 +64,20 @@ function bearerToken(req: Request): string | undefined {
 function requireLibraryAi(req: Request, res: Response) {
   const auth = resolveLibraryAiToken(bearerToken(req));
   if (!auth) {
+    res.setHeader("WWW-Authenticate", 'Bearer realm="OpenLeaf library"');
     res.status(401).json({ error: "Invalid or revoked library AI token", code: "LIBRARY_AI_AUTH" });
     return null;
   }
   return auth;
+}
+
+function writeMcp(res: Response, result: { status: number; headers: Record<string, string>; body: unknown }): void {
+  for (const [k, v] of Object.entries(result.headers)) res.setHeader(k, v);
+  if (result.body == null) {
+    res.status(result.status).end();
+    return;
+  }
+  res.status(result.status).json(result.body);
 }
 
 function escapeHtml(s: string): string {
@@ -111,11 +122,15 @@ const MintSchema = z.object({
 export const libraryAiHostRouter = Router();
 libraryAiHostRouter.use(hostOnly);
 
-libraryAiHostRouter.get("/", (_req, res) => {
+libraryAiHostRouter.get("/", async (_req, res) => {
   try {
     const port = loadConfig().port;
+    const sessions = listLibraryAiSessions();
+    if (sessions.length > 0) {
+      await startHostGateway({ demand: true }).catch(() => undefined);
+    }
     res.json({
-      sessions: listLibraryAiSessions().map((s) => libraryAiHostView(s, port)),
+      sessions: sessions.map((s) => libraryAiHostView(s, port)),
       pendingCount: pendingLibraryProposalCount(),
     });
   } catch (err) {
@@ -175,9 +190,19 @@ libraryAiHostRouter.post("/review/reject", (req, res) => {
   }
 });
 
-libraryAiHostRouter.post("/", (req, res) => {
+libraryAiHostRouter.post("/", async (req, res) => {
   try {
     const body = MintSchema.parse(req.body ?? {});
+    const gateway = await startHostGateway({ demand: true });
+    const publicUrl = (gateway.url || "").replace(/\/$/, "");
+    if (gateway.status !== "active" || !/^https:\/\//i.test(publicUrl)) {
+      res.status(503).json({
+        error: gateway.error
+          ? `The public tunnel is not up (${gateway.error}). A library link needs that address so a cloud assistant can reach this computer.`
+          : "The public tunnel is not up. A library link needs that address so a cloud assistant can reach this computer.",
+      });
+      return;
+    }
     const minted = mintLibraryAi({
       riskAck: body.riskAck,
       ttlMinutes: body.ttlMinutes,
@@ -399,17 +424,15 @@ libraryAiApiRouter.post("/enrich/:citekey", async (req, res) => {
   }
 });
 
-libraryAiApiRouter.post("/mcp", async (req, res) => {
+libraryAiApiRouter.all("/mcp", async (req, res) => {
   const auth = requireLibraryAi(req, res);
   if (!auth) return;
   try {
-    const result = await handleLibraryAiMcpHttp(auth, req.body);
-    for (const [k, v] of Object.entries(result.headers)) res.setHeader(k, v);
-    if (result.status === 202) {
-      res.status(202).end();
+    if (req.method !== "POST") {
+      writeMcp(res, libraryAiMcpMethodNotAllowed());
       return;
     }
-    res.status(result.status).json(result.body);
+    writeMcp(res, await handleLibraryAiMcpHttp(auth, req.body));
   } catch (err) {
     sendError(res, err);
   }

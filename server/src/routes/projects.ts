@@ -44,11 +44,15 @@ import {
   readFile,
   readProjectConfig,
   renamePath,
+  resolveRootPath,
   renameProject,
+  setProjectMainFile,
   writeFile,
   writeProjectConfig,
 } from "../services/projectFs.js";
 import { resolveBranchIdWithActive, branchRoot } from "../services/branchContext.js";
+import { formatAbsolutePath, parsePathOs } from "../services/hostPath.js";
+import { branchDiskRoot } from "../services/timeline.js";
 import { listBranchLeafStats } from "../services/branchLeaves.js";
 import { computeDiffHighlights } from "../services/diffHighlights.js";
 import { forwardSynctex, reverseSynctex } from "../services/synctex.js";
@@ -195,6 +199,50 @@ projectsRouter.get("/:id", async (req, res) => {
   try {
     await ensureInitialSnapshot(req.params.id);
     res.json(projectMetaForCaller(await getProject(req.params.id), req.access?.mode));
+  } catch (err) {
+    res.status(statusOf(err)).json({ error: publicErrorMessage(err) });
+  }
+});
+
+projectsRouter.get("/:id/host-path", async (req, res) => {
+  if (req.access?.mode === "guest") {
+    res.status(403).json({ error: "This share link cannot copy files on the computer" });
+    return;
+  }
+  try {
+    await getProject(req.params.id);
+    const branchId = typeof req.query.branchId === "string" && req.query.branchId.trim() ? req.query.branchId : "main";
+    const rel = typeof req.query.path === "string" ? req.query.path : "";
+    const root = await branchDiskRoot(req.params.id, branchId);
+    const abs = resolveRootPath(root, rel);
+    const formatted = await formatAbsolutePath(abs, parsePathOs(req.query.os));
+    res.json({ path: formatted });
+  } catch (err) {
+    res.status(statusOf(err)).json({ error: publicErrorMessage(err) });
+  }
+});
+
+projectsRouter.put("/:id/main-file", async (req, res) => {
+  if (req.access?.mode === "guest") {
+    res.status(403).json({ error: "Only the host can change the main document" });
+    return;
+  }
+  const schema = z.object({
+    mainFile: z.string().min(1).max(512),
+  });
+  try {
+    const body = schema.parse(req.body);
+    const branchId = await resolveBranchIdWithActive(req, req.params.id, { mutate: true });
+    const root = await branchRoot(req.params.id, branchId);
+    const cfg = await setProjectMainFile(req.params.id, body.mainFile, root);
+    notifyProjectTreeChange(req.params.id, { op: "write", path: "openleaf.json" }, branchId);
+    const project = await getProject(req.params.id);
+    res.json(
+      projectMetaForCaller(
+        { ...project, mainFile: cfg.mainFile, engine: cfg.engine ?? project.engine },
+        req.access?.mode,
+      ),
+    );
   } catch (err) {
     res.status(statusOf(err)).json({ error: publicErrorMessage(err) });
   }

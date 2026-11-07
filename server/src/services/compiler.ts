@@ -141,11 +141,20 @@ async function compileWithLatexmk(
   onChunk?: (chunk: string) => void,
 ): Promise<{ code: number; log: string }> {
   const engineFlag = engine === "xelatex" ? "-xelatex" : "-pdf";
+  const jobname = path.basename(mainFile, path.extname(mainFile));
+  const absOut = path.isAbsolute(outDir) ? outDir : path.join(cwd, outDir);
+  // latexmk reports "Nothing to do" when the PDF is current and then never
+  // runs the engine, so a PDF built without SyncTeX stays unlinkable.
+  const synctexMissing = !fs.existsSync(path.join(absOut, `${jobname}.synctex.gz`));
+  if (synctexMissing) {
+    onChunk?.("[openleaf] SyncTeX data is missing; forcing a rebuild\n");
+  }
   const args = [
     ...(allowRc ? [] : ["-norc"]),
     engineFlag,
     "-interaction=nonstopmode",
     "-f",
+    ...(synctexMissing ? ["-g"] : []),
     "-synctex=1",
     `-outdir=${outDir}`,
     mainFile,

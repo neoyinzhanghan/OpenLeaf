@@ -115,14 +115,14 @@ npm run dev
 | Service | Port | Role |
 |---------|------|------|
 | Vite UI | **5173** | The app you open in the browser |
-| Express API | **8787** | Compile, files, collab WebSocket |
+| Express API | **8786** | Compile, files, collab WebSocket |
 
 **During development, open the Vite URL**, not the API port:
 
 - Local: [http://127.0.0.1:5173](http://127.0.0.1:5173)
 - On your LAN: `http://<your-lan-ip>:5173` when the server binds to `0.0.0.0`
 
-Vite proxies `/api` and `/collab` to the backend. Visiting `:8787` in dev redirects to Vite so you do not accidentally use a stale build.
+Vite proxies `/api` and `/collab` to the backend. Visiting `:8786` in dev redirects to Vite so you do not accidentally use a stale build.
 
 `openleaf start` is the production-style entry for regular use. It serves the built editor from `client/dist` and does not launch Vite.
 
@@ -150,7 +150,7 @@ Run `openleaf doctor`. If it says the server or editor build is missing, run `np
 
 ### The page won’t open
 
-`openleaf status` prints the editor URL. For `openleaf start` that is the API port (default `http://127.0.0.1:8787`). During `npm run dev`, open the Vite port instead (default `http://127.0.0.1:5173`). A localhost install does not listen on your LAN address.
+`openleaf status` prints the editor URL. For `openleaf start` that is the API port (default `http://127.0.0.1:8786`). During `npm run dev`, open the Vite port instead (default `http://127.0.0.1:5173`). A localhost install does not listen on your LAN address.
 
 ### My public link stopped working
 
@@ -237,7 +237,7 @@ Priority: `config/default.json` → `config/local.json` (gitignored) → env var
 | Variable | Meaning |
 |----------|---------|
 | `OPENLEAF_HOST` | Bind address. `openleaf setup` writes `127.0.0.1` for a new install. The shipped file default, used only when nothing else is set, is `0.0.0.0`. |
-| `OPENLEAF_PORT` | API port (default `8787`); Vite proxies `/api` and `/collab` here in dev |
+| `OPENLEAF_PORT` | API port (default `8786`); Vite proxies `/api` and `/collab` here in dev |
 | `OPENLEAF_CLIENT_PORT` | Vite UI port in `npm run dev` (default `5173`) |
 | `OPENLEAF_PROJECTS_ROOT` | Projects directory (relative to repo root, or absolute) |
 | `OPENLEAF_LIBRARY_ROOT` | Citation library directory (default `./library`; sibling of projects) |

@@ -4,6 +4,7 @@ import { getProjectTimeline } from "../api/client";
 import type { TimelineBranch, TimelineNode, TimelineView } from "../api/types";
 import { TimelineGraph } from "./TimelineGraph";
 import { formatWhen } from "./timelineLayout";
+import { ErrorBanner } from "./ErrorBanner";
 
 type Props = {
   projectId: string;
@@ -90,7 +91,7 @@ export function CompareBaselinePicker({ projectId, open, selectedHash, onClose, 
         now (live tip or another checkpoint).
       </p>
 
-      {error && <div className="error-banner">{error}</div>}
+      {error ? <ErrorBanner className="error-banner" onDismiss={() => setError(null)}>{error}</ErrorBanner> : null}
 
       <TimelineGraph
         view={view}

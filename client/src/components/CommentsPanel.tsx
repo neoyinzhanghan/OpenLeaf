@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { ErrorBanner } from "./ErrorBanner";
 import {
   createProjectComment,
   deleteProjectComment,
@@ -277,7 +278,7 @@ export function CommentsPanel({
         </button>
       </div>
 
-      {error && <div className="error-banner">{error}</div>}
+      {error ? <ErrorBanner className="error-banner" onDismiss={() => setError(null)}>{error}</ErrorBanner> : null}
 
       {composeAnchor && (
         <div className="comments-compose">

@@ -4,6 +4,7 @@ import { getProjectTimeline } from "../api/client";
 import type { TimelineBranch, TimelineNode, TimelineView } from "../api/types";
 import { TimelineGraph } from "./TimelineGraph";
 import { formatWhen } from "./timelineLayout";
+import { ErrorBanner } from "./ErrorBanner";
 
 export type ShareBranchChoice =
   | {
@@ -212,7 +213,7 @@ export function ShareBranchPicker({ projectId, value, onChange, disabled }: Prop
           fork required.
         </p>
 
-        {error && <div className="error-banner share-error">{error}</div>}
+        {error ? <ErrorBanner className="error-banner share-error" onDismiss={() => setError(null)}>{error}</ErrorBanner> : null}
 
         <TimelineGraph
           view={view}

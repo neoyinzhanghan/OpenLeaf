@@ -47,7 +47,7 @@ const AccessSchema = z.enum(["localhost", "lan", "remote"]);
 const AppConfigSchema = z
   .object({
     host: z.string().default("127.0.0.1"),
-    port: z.number().int().positive().default(8787),
+    port: z.number().int().positive().default(8786),
     projectsRoot: z.string().default("projects"),
     /** Sibling of projectsRoot — personal citation library (papers/<citekey>/record.json). */
     libraryRoot: z.string().default("library"),

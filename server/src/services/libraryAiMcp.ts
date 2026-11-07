@@ -2,7 +2,7 @@
  * Bearer-authenticated MCP for library AI links — verify-first adds only.
  */
 import { ZodError } from "zod";
-import { MCP_PROTOCOL_VERSION, type McpHttpResult, type McpJsonRpcResponse } from "./aiMcp.js";
+import { MCP_PROTOCOL_VERSION, negotiateProtocol, type McpHttpResult, type McpJsonRpcResponse } from "./aiMcp.js";
 import { enrichPaper } from "./library/enrich.js";
 import { lookupExternal } from "./library/import.js";
 import { getPaper, searchPapers } from "./library/index.js";
@@ -288,6 +288,19 @@ function instructionsFor(auth: LibraryAiAuth): string {
   ].join(" ");
 }
 
+/** GET and other non-POST probes. Streamable HTTP allows a server to decline SSE. */
+export function libraryAiMcpMethodNotAllowed(): McpHttpResult {
+  return {
+    status: 405,
+    headers: {
+      Allow: "POST",
+      "Content-Type": "application/json",
+      "MCP-Protocol-Version": MCP_PROTOCOL_VERSION,
+    },
+    body: fail(null, -32000, "Use POST JSON-RPC"),
+  };
+}
+
 export async function handleLibraryAiMcpHttp(
   auth: LibraryAiAuth,
   body: unknown,
@@ -301,14 +314,15 @@ export async function handleLibraryAiMcpHttp(
   const id = msg.id ?? null;
 
   if (msg.method === "initialize") {
+    const protocolVersion = negotiateProtocol(msg.params?.protocolVersion);
     return {
       status: 200,
       headers: {
         "Content-Type": "application/json",
-        "MCP-Protocol-Version": MCP_PROTOCOL_VERSION,
+        "MCP-Protocol-Version": protocolVersion,
       },
       body: ok(id, {
-        protocolVersion: MCP_PROTOCOL_VERSION,
+        protocolVersion,
         capabilities: { tools: {} },
         serverInfo: { name: "openleaf-library-ai", version: "1.0.0" },
         instructions: instructionsFor(auth),

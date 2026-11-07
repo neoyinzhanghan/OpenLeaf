@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MergeCompareView } from "./MergeCompareView";
+import { ErrorBanner } from "./ErrorBanner";
 import {
   abortProjectMerge,
   completeProjectMerge,
@@ -301,7 +302,7 @@ export function MergePanel({
         </div>
       )}
 
-      {error && <div className="error-banner">{error}</div>}
+      {error ? <ErrorBanner className="error-banner" onDismiss={() => setError(null)}>{error}</ErrorBanner> : null}
 
       {!session && !loading && <div className="merge-empty">No merge in progress.</div>}
 

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { ErrorBanner } from "./ErrorBanner";
 import { listProjectHistory, restoreProjectHistory } from "../api/client";
 import type { GitCommitInfo } from "../api/types";
 
@@ -97,7 +98,7 @@ export function HistoryPanel({
         Highlight additions maps new .tex lines since a snapshot onto the PDF (preview overlay).{" "}
         Markup PDF (experimental) shows the latexdiff track-changes PDF instead.
       </p>
-      {error && <div className="error-banner">{error}</div>}
+      {error ? <ErrorBanner className="error-banner" onDismiss={() => setError(null)}>{error}</ErrorBanner> : null}
       {loading && commits.length === 0 ? (
         <div className="empty-hint">Loading…</div>
       ) : commits.length === 0 ? (

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { ErrorBanner } from "./ErrorBanner";
 import { getFileAccess, putFileAccessRules } from "../api/client";
 import type { FileAccessLevel, FileAccessRule, FileAccessView, TreeNode } from "../api/types";
 
@@ -78,7 +79,7 @@ export function FileAccessDrawer({ projectId, open, onClose, actor, nodes, onCha
       <p className="history-hint">
         Rules only take edit access away. The most specific path wins, and protected files stay locked to this computer.
       </p>
-      {error && <div className="error-banner">{error}</div>}
+      {error ? <ErrorBanner className="error-banner" onDismiss={() => setError(null)}>{error}</ErrorBanner> : null}
       <ul className="file-access-rules">
         {(view?.rules ?? []).length === 0 && <li className="share-muted">No extra locks.</li>}
         {(view?.rules ?? []).map((rule) => (

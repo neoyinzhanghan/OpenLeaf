@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import express from "express";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -22,16 +24,29 @@ loadConfig(true);
 const { closeIndexDb, reindexLibrary } = await import("./library/index.js");
 const { mintLibraryAi, resolveLibraryAiToken, revokeLibraryAi } = await import("./libraryAiShare.js");
 const { handleLibraryAiMcpHttp } = await import("./libraryAiMcp.js");
+const { libraryAiApiRouter } = await import("../routes/libraryAi.js");
 const { handleLibraryMcpHttp } = await import("./library/libraryMcp.js");
 const { assertLibraryAiOutbound, LIBRARY_AI_OUTBOUND_LIMIT, resetLibraryAiOutboundLimitsForTests } =
   await import("./libraryAiOutboundLimit.js");
 
 describe("library AI MCP — search-disabled links cannot lookup/verify", () => {
+  let server: http.Server;
+  let port = 0;
+
   before(async () => {
     await reindexLibrary();
+    const app = express();
+    app.use(express.json());
+    app.use(libraryAiApiRouter);
+    server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+    const addr = server.address();
+    if (!addr || typeof addr === "string") throw new Error("test server has no port");
+    port = addr.port;
   });
 
-  after(() => {
+  after(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
     closeIndexDb();
     fs.rmSync(libraryRoot, { recursive: true, force: true });
     fs.rmSync(projectsRoot, { recursive: true, force: true });
@@ -120,6 +135,75 @@ describe("library AI MCP — search-disabled links cannot lookup/verify", () => 
     try {
       const result = await callTool(session.token, "library_search", { query: "" });
       assert.equal(result.isError, false);
+    } finally {
+      revokeLibraryAi(session.id);
+    }
+  });
+
+  it("echoes a supported initialize protocol version", async () => {
+    const { session } = mintLibraryAi({
+      settings: { allowSearch: true, allowAdd: false, allowEnrich: false },
+      riskAck: true,
+    });
+    try {
+      const auth = resolveLibraryAiToken(session.token);
+      assert.ok(auth);
+      const res = await handleLibraryAiMcpHttp(auth!, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "claude", version: "1" } },
+      });
+      const body = res.body as { result: { protocolVersion: string } };
+      assert.equal(body.result.protocolVersion, "2025-06-18");
+      assert.equal(res.headers["MCP-Protocol-Version"], "2025-06-18");
+    } finally {
+      revokeLibraryAi(session.id);
+    }
+  });
+
+  it("falls back when initialize asks for an unknown protocol version", async () => {
+    const { session } = mintLibraryAi({
+      settings: { allowSearch: true, allowAdd: false, allowEnrich: false },
+      riskAck: true,
+    });
+    try {
+      const auth = resolveLibraryAiToken(session.token);
+      assert.ok(auth);
+      const res = await handleLibraryAiMcpHttp(auth!, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "1999-01-01" },
+      });
+      const body = res.body as { result: { protocolVersion: string } };
+      assert.equal(body.result.protocolVersion, "2025-03-26");
+    } finally {
+      revokeLibraryAi(session.id);
+    }
+  });
+
+  it("answers an unauthenticated GET with 401 and a Bearer challenge", async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/mcp`);
+    assert.equal(res.status, 401);
+    assert.match(res.headers.get("www-authenticate") ?? "", /^Bearer /);
+    const body = (await res.json()) as { code?: string };
+    assert.equal(body.code, "LIBRARY_AI_AUTH");
+  });
+
+  it("answers an authenticated GET with 405 Allow POST", async () => {
+    const { session } = mintLibraryAi({
+      settings: { allowSearch: true, allowAdd: false, allowEnrich: false },
+      riskAck: true,
+    });
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        headers: { Authorization: `Bearer ${session.token}` },
+      });
+      assert.equal(res.status, 405);
+      assert.equal(res.headers.get("allow"), "POST");
+      const body = (await res.json()) as { error?: { code?: number } };
+      assert.equal(body.error?.code, -32000);
     } finally {
       revokeLibraryAi(session.id);
     }

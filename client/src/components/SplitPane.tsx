@@ -8,6 +8,8 @@ type Props = {
   minRight?: number;
   storageKey?: string;
   className?: string;
+  leftClassName?: string;
+  rightClassName?: string;
 };
 
 export function SplitPane({
@@ -18,19 +20,30 @@ export function SplitPane({
   minRight = 240,
   storageKey,
   className,
+  leftClassName,
+  rightClassName,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const ratioRef = useRef(initialLeftRatio);
   const [ratio, setRatio] = useState(() => {
     if (storageKey) {
       const saved = localStorage.getItem(storageKey);
       if (saved) {
         const n = Number(saved);
-        if (!Number.isNaN(n) && n > 0.15 && n < 0.85) return n;
+        if (!Number.isNaN(n) && n > 0.15 && n < 0.85) {
+          ratioRef.current = n;
+          return n;
+        }
       }
     }
+    ratioRef.current = initialLeftRatio;
     return initialLeftRatio;
   });
   const [dragging, setDragging] = useState(false);
+
+  useEffect(() => {
+    ratioRef.current = ratio;
+  }, [ratio]);
 
   useEffect(() => {
     if (!dragging) return;
@@ -41,12 +54,14 @@ export function SplitPane({
       const rect = el.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const clamped = Math.min(rect.width - minRight, Math.max(minLeft, x));
-      setRatio(clamped / rect.width);
+      const next = clamped / rect.width;
+      ratioRef.current = next;
+      setRatio(next);
     };
 
     const onUp = () => {
       setDragging(false);
-      if (storageKey) localStorage.setItem(storageKey, String(ratio));
+      if (storageKey) localStorage.setItem(storageKey, String(ratioRef.current));
     };
 
     window.addEventListener("pointermove", onMove);
@@ -61,17 +76,11 @@ export function SplitPane({
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
     };
-  }, [dragging, minLeft, minRight, ratio, storageKey]);
-
-  useEffect(() => {
-    if (!dragging && storageKey) {
-      localStorage.setItem(storageKey, String(ratio));
-    }
-  }, [dragging, ratio, storageKey]);
+  }, [dragging, minLeft, minRight, storageKey]);
 
   return (
     <div className={`split-row${className ? ` ${className}` : ""}`} ref={containerRef}>
-      <div className="pane" style={{ flex: `0 0 ${ratio * 100}%` }}>
+      <div className={`pane${leftClassName ? ` ${leftClassName}` : ""}`} style={{ flex: `0 0 ${ratio * 100}%` }}>
         {left}
       </div>
       <div
@@ -84,7 +93,7 @@ export function SplitPane({
         aria-orientation="vertical"
         aria-valuenow={Math.round(ratio * 100)}
       />
-      <div className="pane" style={{ flex: "1 1 auto" }}>
+      <div className={`pane${rightClassName ? ` ${rightClassName}` : ""}`} style={{ flex: "1 1 auto" }}>
         {right}
       </div>
     </div>

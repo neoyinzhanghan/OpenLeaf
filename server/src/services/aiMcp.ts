@@ -332,7 +332,7 @@ function isNotification(msg: JsonRpcMessage): boolean {
   return !("id" in msg);
 }
 
-function negotiateProtocol(requested: unknown): string {
+export function negotiateProtocol(requested: unknown): string {
   if (typeof requested === "string" && (MCP_PROTOCOL_VERSIONS as readonly string[]).includes(requested)) {
     return requested;
   }

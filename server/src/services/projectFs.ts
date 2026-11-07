@@ -202,8 +202,8 @@ export async function ensureProjectsRoot(): Promise<void> {
   await fs.mkdir(getProjectsRootAbs(), { recursive: true });
 }
 
-export async function readProjectConfig(id: string): Promise<PaperflowProjectConfig> {
-  const cfgPath = resolveProjectPath(id, "openleaf.json");
+export async function readProjectConfig(id: string, rootDir?: string): Promise<PaperflowProjectConfig> {
+  const cfgPath = rootDir ? path.join(rootDir, "openleaf.json") : resolveProjectPath(id, "openleaf.json");
   const globalEngine = loadConfig().latex.engine;
   try {
     const raw = JSON.parse(await fs.readFile(cfgPath, "utf8")) as Partial<PaperflowProjectConfig>;
@@ -247,8 +247,9 @@ export async function getProjectIdentity(projectId: string, identityId: string):
 export async function writeProjectConfig(
   id: string,
   patch: Partial<PaperflowProjectConfig>,
+  rootDir?: string,
 ): Promise<PaperflowProjectConfig> {
-  const current = await readProjectConfig(id);
+  const current = await readProjectConfig(id, rootDir);
   const next: PaperflowProjectConfig = {
     mainFile: patch.mainFile ?? current.mainFile,
     engine: patch.engine ?? current.engine,
@@ -259,9 +260,29 @@ export async function writeProjectConfig(
   if (!next.identities) delete next.identities;
   if (!next.name) delete next.name;
   if (!next.fileAccess) delete next.fileAccess;
-  const cfgPath = resolveProjectPath(id, "openleaf.json");
+  const cfgPath = rootDir ? path.join(rootDir, "openleaf.json") : resolveProjectPath(id, "openleaf.json");
   await fs.writeFile(cfgPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
   return next;
+}
+
+/**
+ * Point the project's compile root at a `.tex` file on the given branch root.
+ * Validates the path stays inside the project and that the file exists.
+ */
+export async function setProjectMainFile(
+  id: string,
+  mainFile: string,
+  rootDir?: string,
+): Promise<PaperflowProjectConfig> {
+  const normalized = normalizeAccessPath(mainFile);
+  if (!normalized.toLowerCase().endsWith(".tex")) {
+    throw Object.assign(new Error("Main document must be a .tex file"), { status: 400 });
+  }
+  const full = rootDir ? resolveRootPath(rootDir, normalized) : resolveProjectPath(id, normalized);
+  if (!fsSync.existsSync(full) || !fsSync.statSync(full).isFile()) {
+    throw Object.assign(new Error(`File not found: ${normalized}`), { status: 404 });
+  }
+  return writeProjectConfig(id, { mainFile: normalized }, rootDir);
 }
 
 export async function listProjects(): Promise<ProjectMeta[]> {

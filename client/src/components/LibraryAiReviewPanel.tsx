@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { ErrorBanner } from "./ErrorBanner";
 import {
   acceptLibraryAiProposal,
   listLibraryAiReview,
@@ -127,7 +128,7 @@ export function LibraryAiReviewPanel({ open, onClose, onAccepted, onCountChange 
           </button>
         </div>
 
-        {error ? <div className="share-error">{error}</div> : null}
+        {error ? <ErrorBanner className="error-banner share-error" onDismiss={() => setError(null)}>{error}</ErrorBanner> : null}
 
         {proposals.length > 0 ? (
           <div className="library-ai-review-actions">

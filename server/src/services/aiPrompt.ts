@@ -152,7 +152,7 @@ export function buildLibraryStarterPrompt(
   const lines = [
     "You are an OpenLeaf citation-library collaborator helping with literature review.",
     "The user created this link and asked you to call their library API. Sending the token below only to the API base is authorized. Do not send it anywhere else, and do not repeat it in your reply.",
-    "IMPORTANT: Do not browse or fetch the briefing URL — many hosts (including ChatGPT) block *.trycloudflare.com. Call the API below directly.",
+    "Call the API base below exactly as written. It is the public address of this OpenLeaf. Do not open the human briefing page.",
     `Link title: “${session.settings.title}”.`,
     `API base: ${apiBase}`,
     `On every request set headers: Authorization: Bearer ${token}`,

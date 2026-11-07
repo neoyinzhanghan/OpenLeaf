@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { libraryPaperUrl } from "../latex/libraryLink";
 import type * as Y from "yjs";
 import {
   checkoutProjectTimeline,
@@ -12,6 +13,7 @@ import {
   getConfig,
   getDiffHighlights,
   getProject,
+  getProjectHostPath,
   getProjectMerge,
   getProjectTimeline,
   getTree,
@@ -23,6 +25,7 @@ import {
   trackChangesPdfUrl,
   readProjectFile,
   renameProjectPath,
+  setProjectMainFile,
   synctexForward,
   synctexLookup,
   trackChangesDownloadUrl,
@@ -38,7 +41,9 @@ import { guestLogout, hostLogout, listProjectAiReview, acceptAiReview, rejectAiR
 import { flushCollab, useProjectCollab } from "../collab/useProjectCollab";
 import { rememberProject } from "../lib/lastProject";
 import { BinaryPane } from "../components/BinaryPane";
-import { CopyPathMenuItem, ProjectNameField } from "../components/ProjectHostActions";
+import { ErrorBanner } from "../components/ErrorBanner";
+import { CopyFilePathButton, CopyPathMenuItem, ProjectNameField } from "../components/ProjectHostActions";
+import { clientOs } from "../lib/hostPath";
 import { BranchTreePanel } from "../components/BranchTreePanel";
 import { CodeEditor, type EditorChangeMarks, type EditorSuggestionMark, type CitationGutterMark } from "../components/CodeEditor";
 import { CompareBaselinePicker } from "../components/CompareBaselinePicker";
@@ -1865,6 +1870,19 @@ export function EditorPage() {
     [id, activeAiHit, activateReviewHunk],
   );
 
+  const onPdfCitation = useCallback(
+    (citekey: string) => {
+      const opened = window.open(libraryPaperUrl(citekey), "_blank");
+      if (!opened) {
+        showSyncToast("Pop-up blocked — allow pop-ups to open the library");
+        return;
+      }
+      opened.opener = null;
+      showSyncToast(`Library · ${citekey}`);
+    },
+    [showSyncToast],
+  );
+
   const onReverseSearch = useCallback(
     async (page: number, x: number, y: number) => {
       if (!id) return;
@@ -2073,11 +2091,40 @@ export function EditorPage() {
     try {
       await renameProjectPath(id, target, next);
       remapActivePath(target, next);
+      if (project?.mainFile === target && next.toLowerCase().endsWith(".tex")) {
+        try {
+          const updated = await setProjectMainFile(id, next, { branchId });
+          setProject((prev) => (prev ? { ...prev, mainFile: updated.mainFile } : prev));
+        } catch {
+          setProject((prev) => (prev ? { ...prev, mainFile: next } : prev));
+        }
+      }
       await refreshTree();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Rename failed");
     }
   };
+
+  const onSetMainFile = useCallback(
+    async (path: string, opts?: { compile?: boolean }) => {
+      if (!id || isGuest || readOnly || !timelineCanEdit) return;
+      if (!path.toLowerCase().endsWith(".tex")) {
+        setError("Main document must be a .tex file");
+        return;
+      }
+      try {
+        setError(null);
+        const updated = await setProjectMainFile(id, path, { branchId });
+        setProject((prev) => (prev ? { ...prev, mainFile: updated.mainFile, engine: updated.engine } : updated));
+        if (opts?.compile && canCompile) {
+          await runCompile({ auto: true });
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not set main document");
+      }
+    },
+    [id, isGuest, readOnly, timelineCanEdit, branchId, canCompile, runCompile],
+  );
 
   const onMove = async (from: string, toDir: string) => {
     if (!id) return;
@@ -2088,6 +2135,14 @@ export function EditorPage() {
     try {
       await renameProjectPath(id, from, to);
       remapActivePath(from, to);
+      if (project?.mainFile === from && to.toLowerCase().endsWith(".tex")) {
+        try {
+          const updated = await setProjectMainFile(id, to, { branchId });
+          setProject((prev) => (prev ? { ...prev, mainFile: updated.mainFile } : prev));
+        } catch {
+          setProject((prev) => (prev ? { ...prev, mainFile: to } : prev));
+        }
+      }
       await refreshTree();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Move failed");
@@ -2372,6 +2427,13 @@ export function EditorPage() {
               >
                 Library
               </Link>
+              <Link
+                to="/facts"
+                className="btn btn-quiet"
+                title="Review extracted paper facts"
+              >
+                Facts
+              </Link>
               <button
                 type="button"
                 className={`btn btn-quiet toolbar-wide-only${libraryOpen ? " is-active" : ""}`}
@@ -2399,6 +2461,14 @@ export function EditorPage() {
                 ? `Merge · ${mergeSession.conflicts.filter((c) => !c.resolved).length} left`
                 : "Merge · ready"}
             </button>
+          )}
+          {project?.mainFile && (
+            <span
+              className="toolbar-main-file toolbar-wide-only"
+              title={`Compile / Recompile builds ${project.mainFile}. Right-click a .tex file → Set as main document to change.`}
+            >
+              Main <strong>{project.mainFile.includes("/") ? project.mainFile.slice(project.mainFile.lastIndexOf("/") + 1) : project.mainFile}</strong>
+            </span>
           )}
           {!readOnly && timelineCanEdit && !mergeSession && (
             <button
@@ -2444,7 +2514,7 @@ export function EditorPage() {
               }
               title={
                 canCompile
-                  ? "Save and recompile (⌘S / Ctrl+S). Autosave still runs in the background without compiling."
+                  ? `Save and recompile ${project?.mainFile ?? "the main document"} (⌘S / Ctrl+S). Autosave still runs in the background without compiling.`
                   : "Save now (⌘S / Ctrl+S). Autosave is already on."
               }
             >
@@ -2467,8 +2537,8 @@ export function EditorPage() {
               disabled={status === "compiling"}
               title={
                 viewingGitHash
-                  ? `Recompile checkpoint ${viewingGitHash.slice(0, 7)}`
-                  : "Recompile the current project"
+                  ? `Recompile checkpoint ${viewingGitHash.slice(0, 7)} (${project?.mainFile ?? "main"})`
+                  : `Recompile ${project?.mainFile ?? "the main document"}`
               }
             >
               {status === "compiling" ? "Compiling…" : "Recompile"}
@@ -2639,6 +2709,13 @@ export function EditorPage() {
                     >
                       Library
                     </Link>
+                    <Link
+                      role="menuitem"
+                      to="/facts"
+                      onClick={() => setToolbarMoreOpen(false)}
+                    >
+                      Facts
+                    </Link>
                     <button
                       type="button"
                       role="menuitem"
@@ -2655,7 +2732,7 @@ export function EditorPage() {
                 {narrow && (canHistory || !isGuest) && <div className="toolbar-menu-sep" />}
                 {!isGuest && project?.path ? (
                   <>
-                    <CopyPathMenuItem path={project.path} />
+                    <CopyPathMenuItem projectId={project.id} fallback={project.path} />
                     <div className="toolbar-menu-sep" />
                   </>
                 ) : null}
@@ -2834,14 +2911,11 @@ export function EditorPage() {
         </div>
       </div>
 
-      {error && (
-        <div className="error-banner" style={{ margin: 0, borderRadius: 0 }}>
+      {error ? (
+        <ErrorBanner style={{ margin: 0, borderRadius: 0 }} onDismiss={() => setError(null)}>
           {error}
-          <button type="button" className="btn btn-ghost" style={{ marginLeft: "0.75rem" }} onClick={() => setError(null)}>
-            Dismiss
-          </button>
-        </div>
-      )}
+        </ErrorBanner>
+      ) : null}
 
       {syncToast && <div className="sync-toast">{syncToast}</div>}
 
@@ -3015,6 +3089,7 @@ export function EditorPage() {
               <FileTree
                 nodes={tree}
                 activePath={activePath}
+                mainFile={project?.mainFile ?? null}
                 onOpen={openPath}
                 onNewFile={(dir) => void onNewFile(dir)}
                 onNewFolder={(dir) => void onNewFolder(dir)}
@@ -3024,10 +3099,26 @@ export function EditorPage() {
                 onMove={(from, toDir) => {
                   if (!readOnly) void onMove(from, toDir);
                 }}
+                onSetMainFile={
+                  !isGuest && !readOnly && timelineCanEdit
+                    ? (path) => void onSetMainFile(path)
+                    : undefined
+                }
                 canMutateActive={Boolean(activePath)}
                 readOnly={readOnly || !timelineCanEdit}
                 actor={fileActor}
                 onSetAccess={(filePath, level) => void setFileAccess(filePath, level)}
+                onCopyPath={
+                  isGuest
+                    ? undefined
+                    : async (relativePath) => {
+                        const result = await getProjectHostPath(id, relativePath, {
+                          os: clientOs(),
+                          branchId,
+                        });
+                        return result.path;
+                      }
+                }
                 fileChanges={fileChangeMap}
               />
             )}
@@ -3055,6 +3146,9 @@ export function EditorPage() {
                         browser editor (limit 1.5 MB). Edit it on disk, or replace a binary
                         via upload.
                       </p>
+                      {!isGuest && activePath ? (
+                        <CopyFilePathButton projectId={id} relativePath={activePath} branchId={branchId} />
+                      ) : null}
                     </div>
                   ) : editMode === "binary" && activePath && binaryMeta ? (
                     <BinaryPane
@@ -3090,6 +3184,9 @@ export function EditorPage() {
                             </span>
                           )}
                         </span>
+                        {!isGuest && activePath && (
+                          <CopyFilePathButton projectId={id} relativePath={activePath} branchId={branchId} />
+                        )}
                         {!readOnly && timelineCanEdit && !viewingDeletedFile && activePath && (
                           <button
                             type="button"
@@ -3103,6 +3200,25 @@ export function EditorPage() {
                           </button>
                         )}
                       </div>
+                      {activePath &&
+                        activePath.toLowerCase().endsWith(".tex") &&
+                        project?.mainFile &&
+                        activePath !== project.mainFile && (
+                          <div className="main-file-banner" role="status">
+                            <span>
+                              Compile builds <code>{project.mainFile}</code>, not this file.
+                            </span>
+                            {!isGuest && !readOnly && timelineCanEdit && (
+                              <button
+                                type="button"
+                                className="btn btn-quiet"
+                                onClick={() => void onSetMainFile(activePath, { compile: canCompile })}
+                              >
+                                {canCompile ? "Set as main & compile" : "Set as main document"}
+                              </button>
+                            )}
+                          </div>
+                        )}
                       {activePath && findTreeNode(tree, activePath)?.access?.canWrite === false && (
                         <div className="file-access-banner" role="status">
                           {findTreeNode(tree, activePath)?.access?.reason === "protected"
@@ -3122,6 +3238,7 @@ export function EditorPage() {
                         citationHints={citationHints}
                         labels={labels}
                         onLibraryCite={(citekey) => void syncLibraryCite(citekey)}
+                        canOpenLibrary={!isGuest}
                         onForwardSearch={(line, col) => void onForwardSearch(line, col)}
                         yText={collabText ? yText : null}
                         awareness={collabText ? collab.awareness : null}
@@ -3184,6 +3301,7 @@ export function EditorPage() {
                   url={pdfViewerUrl}
                   emptyHint={pdfEmptyHint}
                   onReverseSearch={onReverseSearch}
+                  onCitationClick={isGuest ? undefined : onPdfCitation}
                   onCommentAt={(page, x, y) => void onPdfComment(page, x, y)}
                   highlight={pdfHighlight}
                   overlays={diffOn && !trackChangesPreviewOn ? diffBoxes : undefined}

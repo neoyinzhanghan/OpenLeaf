@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent } from "react";
 import { Link } from "react-router-dom";
 import {
   bulkPatchLibraryPapers,
@@ -13,6 +13,8 @@ import {
   exportLibraryPapers,
   fetchLibraryPdf,
   getLibraryCollections,
+  getLibraryHostPath,
+  getLibraryPaper,
   getLibraryPdfSource,
   importLibraryBibtex,
   importLibraryLink,
@@ -25,7 +27,15 @@ import {
 import type { LibraryCollections, LibrarySort, PaperRecord } from "../api/types";
 import { listLibraryAiLinks } from "../api/libraryAi";
 import { copyText } from "../lib/clipboard";
+import { clientOs } from "../lib/hostPath";
 import { readLastProject } from "../lib/lastProject";
+import { isTransientPdfErrorMessage } from "../lib/transientErrors";
+import {
+  isPdfFile,
+  previewPdfReplace,
+  uploadPaperPdf,
+  type PdfReplacePreview,
+} from "../lib/libraryPdfUpload";
 import {
   TOPIC_SUGGESTIONS,
   SORT_OPTIONS,
@@ -33,10 +43,12 @@ import {
   ratingStars,
   slugCollectionId,
 } from "./LibraryOrganize";
+import { ErrorBanner } from "./ErrorBanner";
 import { LibraryAiLinkPanel } from "./LibraryAiLinkPanel";
 import { LibraryAiReviewPanel } from "./LibraryAiReviewPanel";
 import { LibraryPdfNotes } from "./LibraryPdfNotes";
 import { LibrarySharePanel } from "./LibrarySharePanel";
+import { SplitPane } from "./SplitPane";
 
 function downloadTextFile(filename: string, text: string, mime: string): void {
   const blob = new Blob([text], { type: `${mime};charset=utf-8` });
@@ -62,6 +74,8 @@ type Props = {
   /** drawer = editor overlay; page = full-screen route (no project required). */
   variant?: "drawer" | "page";
   projectId?: string;
+  /** Select this citekey once the catalog loads (library page deep link). */
+  focusCitekey?: string | null;
   onCiteIntoProject?: (citekey: string) => void;
   onCitationsChanged?: (instances: CitationInstance[]) => void;
 };
@@ -118,6 +132,7 @@ export function LibraryPanel({
   onClose,
   variant = "drawer",
   projectId,
+  focusCitekey = null,
   onCiteIntoProject,
   onCitationsChanged,
 }: Props) {
@@ -138,6 +153,7 @@ export function LibraryPanel({
   const [aiPendingCount, setAiPendingCount] = useState(0);
   const [pdfHint, setPdfHint] = useState<LibraryPdfSourceHint | null>(null);
   const [viewMode, setViewMode] = useState<"browse" | "litreview">("browse");
+  const [focusFactId, setFocusFactId] = useState<string | null>(null);
   const [litRows, setLitRows] = useState<
     Array<{ paper: PaperRecord; relevance: string; claim: string; integrity: string; importSelected: boolean }>
   >([]);
@@ -146,6 +162,12 @@ export function LibraryPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [detailPdfDrag, setDetailPdfDrag] = useState(false);
+  const [pdfReplacePrompt, setPdfReplacePrompt] = useState<PdfReplacePreview | null>(null);
+  const [pdfRevision, setPdfRevision] = useState(0);
+  const detailDragDepth = useRef(0);
+  const [catalogReady, setCatalogReady] = useState(false);
+  const appliedFocusRef = useRef<string | null>(null);
   const [tagDraft, setTagDraft] = useState("");
   const [newCollectionName, setNewCollectionName] = useState("");
   const [sectionOpen, setSectionOpen] = useState({
@@ -161,9 +183,86 @@ export function LibraryPanel({
   const [phoneSheet, setPhoneSheet] = useState<null | "collections" | "topics" | "sort">(null);
   const [selecting, setSelecting] = useState(false);
   const [detailMenu, setDetailMenu] = useState(false);
+  const [pathMenu, setPathMenu] = useState<{ x: number; y: number; citekey: string; hasPdf: boolean } | null>(null);
+  const [pathBanner, setPathBanner] = useState<{ ok: boolean; path: string } | null>(null);
   const pressTimer = useRef<number | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
+  const masterSplitRef = useRef<HTMLDivElement>(null);
+  const sidebarWidthRef = useRef(220);
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const saved = Number(localStorage.getItem("openleaf.library.sidebarWidth"));
+    return !Number.isNaN(saved) && saved >= 160 && saved <= 420 ? saved : 220;
+  });
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => localStorage.getItem("openleaf.library.sidebarCollapsed") === "1",
+  );
+  const [sidebarDragging, setSidebarDragging] = useState(false);
+
+  useEffect(() => {
+    sidebarWidthRef.current = sidebarWidth;
+  }, [sidebarWidth]);
+
+  useEffect(() => {
+    if (!sidebarDragging || sidebarCollapsed) return;
+    const onMove = (e: PointerEvent) => {
+      const el = masterSplitRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const w = Math.min(420, Math.max(160, e.clientX - rect.left));
+      sidebarWidthRef.current = w;
+      setSidebarWidth(w);
+    };
+    const onUp = () => {
+      setSidebarDragging(false);
+      localStorage.setItem("openleaf.library.sidebarWidth", String(sidebarWidthRef.current));
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+  }, [sidebarDragging, sidebarCollapsed]);
+
+  const toggleSidebarCollapsed = useCallback(() => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem("openleaf.library.sidebarCollapsed", next ? "1" : "0");
+      return next;
+    });
+  }, []);
+
+  const copyLibraryPath = useCallback(async (citekey: string, kind: "pdf" | "folder") => {
+    setPathMenu(null);
+    try {
+      const result = await getLibraryHostPath(citekey, { os: clientOs(), kind });
+      const ok = await copyText(result.path);
+      setPathBanner({ ok, path: result.path });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not copy the path");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!pathMenu) return;
+    const close = () => setPathMenu(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPathMenu(null);
+    };
+    window.addEventListener("mousedown", close);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [pathMenu]);
 
   const upsertLocal = useCallback((updated: PaperRecord) => {
     const norm = normalizePaper(updated);
@@ -185,6 +284,7 @@ export function LibraryPanel({
       ]);
       setPapers(list.map(normalizePaper));
       setCollections(coll);
+      setCatalogReady(true);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load library");
@@ -210,9 +310,45 @@ export function LibraryPanel({
   useEffect(() => {
     if (!open) return;
     void refresh();
+    if (focusCitekey) return;
     const t = window.setTimeout(() => searchRef.current?.focus(), 50);
     return () => window.clearTimeout(t);
-  }, [open, refresh]);
+  }, [open, refresh, focusCitekey]);
+
+  useEffect(() => {
+    if (!open || !focusCitekey || !catalogReady) return;
+    if (appliedFocusRef.current === focusCitekey) return;
+    if (papers.some((p) => p.citekey === focusCitekey)) {
+      appliedFocusRef.current = focusCitekey;
+      setSelectedKey(focusCitekey);
+      return;
+    }
+    let cancelled = false;
+    void getLibraryPaper(focusCitekey)
+      .then((paper) => {
+        if (cancelled) return;
+        const norm = normalizePaper(paper);
+        appliedFocusRef.current = focusCitekey;
+        setPapers((prev) => (prev.some((p) => p.citekey === norm.citekey) ? prev : [norm, ...prev]));
+        setSelectedKey(norm.citekey);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        appliedFocusRef.current = focusCitekey;
+        const message = err instanceof Error ? err.message : "";
+        if (/not found/i.test(message)) setNotice(`No paper “${focusCitekey}” in the library.`);
+        else setError(message || "Could not open that library paper");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, focusCitekey, catalogReady, papers]);
+
+  useEffect(() => {
+    if (!selectedKey || selectedKey !== focusCitekey) return;
+    const el = listRef.current?.querySelector(`[data-citekey="${CSS.escape(selectedKey)}"]`);
+    el?.scrollIntoView({ block: "nearest" });
+  }, [selectedKey, focusCitekey, papers]);
 
   const selected = useMemo(
     () => papers.find((p) => p.citekey === selectedKey) ?? null,
@@ -526,7 +662,10 @@ export function LibraryPanel({
       const buf = await file.arrayBuffer();
       const bytes = new Uint8Array(buf);
       let binary = "";
-      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]!);
+      const chunk = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+      }
       const pdfBase64 = btoa(binary);
       const result = await importLibraryPdf({ pdfBase64, filename: file.name });
       await refresh();
@@ -545,6 +684,77 @@ export function LibraryPanel({
     } finally {
       setBusy(false);
     }
+  };
+
+  const attachPdfToSelected = async (file: File, replace: boolean) => {
+    if (!selectedKey) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await uploadPaperPdf(selectedKey, file, replace);
+      setPdfRevision((n) => n + 1);
+      upsertLocal(result.paper);
+      await refresh();
+      if (result.replaced) {
+        setNotice(
+          `PDF replaced — ${result.factsUntagged} fact${result.factsUntagged === 1 ? "" : "s"} untagged (status kept).`,
+        );
+      } else {
+        setNotice("PDF attached.");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "PDF upload failed");
+    } finally {
+      setBusy(false);
+      setPdfReplacePrompt(null);
+      setDetailPdfDrag(false);
+      detailDragDepth.current = 0;
+    }
+  };
+
+  const onDetailPdfFile = async (file: File | undefined | null) => {
+    if (!file || !selectedKey) return;
+    if (!isPdfFile(file)) {
+      setError("Only PDF files can be uploaded.");
+      return;
+    }
+    const paper = papers.find((p) => p.citekey === selectedKey);
+    if (!paper?.attachment) {
+      await attachPdfToSelected(file, false);
+      return;
+    }
+    setPdfReplacePrompt(await previewPdfReplace(selectedKey, file));
+  };
+
+  const detailPdfDropHandlers = {
+    onDragEnter: (ev: ReactDragEvent) => {
+      if (![...ev.dataTransfer.types].includes("Files")) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      detailDragDepth.current += 1;
+      setDetailPdfDrag(true);
+    },
+    onDragOver: (ev: ReactDragEvent) => {
+      if (![...ev.dataTransfer.types].includes("Files")) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      ev.dataTransfer.dropEffect = "copy";
+      setDetailPdfDrag(true);
+    },
+    onDragLeave: (ev: ReactDragEvent) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      detailDragDepth.current = Math.max(0, detailDragDepth.current - 1);
+      if (detailDragDepth.current === 0) setDetailPdfDrag(false);
+    },
+    onDrop: (ev: ReactDragEvent) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      detailDragDepth.current = 0;
+      setDetailPdfDrag(false);
+      const file = ev.dataTransfer.files?.[0];
+      void onDetailPdfFile(file);
+    },
   };
 
   const runExport = async (
@@ -730,6 +940,13 @@ export function LibraryPanel({
             <button type="button" role="menuitem" onClick={() => { setPhoneMenu(false); viewMode === "litreview" ? setViewMode("browse") : seedLitReviewFromLibrary(); }}>
               Lit review
             </button>
+            <Link
+              to={selectedKey ? `/facts?paper=${encodeURIComponent(selectedKey)}` : "/facts"}
+              role="menuitem"
+              onClick={() => setPhoneMenu(false)}
+            >
+              Facts
+            </Link>
             <button type="button" role="menuitem" onClick={() => { setPhoneMenu(false); void runCheckAll(); }}>
               Check all
             </button>
@@ -786,6 +1003,13 @@ export function LibraryPanel({
           >
             Lit review
           </button>
+          <Link
+            to={selectedKey ? `/facts?paper=${encodeURIComponent(selectedKey)}` : "/facts"}
+            className="btn btn-ghost"
+            title={selectedKey ? `Review facts for ${selectedKey}` : "Review extracted facts"}
+          >
+            Facts
+          </Link>
           {projectId ? (
             <button
               type="button"
@@ -841,8 +1065,18 @@ export function LibraryPanel({
         </div>
       </div>
 
-      {error ? <div className="library-error">{error}</div> : null}
+      {error ? (
+        <ErrorBanner className="library-error" onDismiss={() => setError(null)}>
+          {error}
+        </ErrorBanner>
+      ) : null}
       {notice ? <div className="library-notice">{notice}</div> : null}
+      {pathBanner ? (
+        <div className="library-notice">
+          {pathBanner.ok ? "Copied" : "Select the path"}
+          <code className="project-path">{pathBanner.path}</code>
+        </div>
+      ) : null}
 
       {checkedKeys.size > 0 && viewMode === "browse" ? (
         <div className="library-bulk-bar" role="toolbar" aria-label="Bulk actions">
@@ -1066,6 +1300,33 @@ export function LibraryPanel({
             Sort: {SORT_OPTIONS.find((o) => o.id === sort)?.label ?? "Recent"} ▾
           </button>
         </div>
+        <div className="library-master-split split-row" ref={masterSplitRef}>
+        <div
+          className={`pane library-sidebar-pane${sidebarCollapsed ? " is-collapsed" : ""}`}
+          style={{ flex: `0 0 ${sidebarCollapsed ? 40 : sidebarWidth}px` }}
+        >
+          <div className="library-sidebar-pane-head">
+            {!sidebarCollapsed ? <strong>Filters</strong> : null}
+            <button
+              type="button"
+              className="btn btn-ghost btn-icon tree-collapse-btn"
+              onClick={toggleSidebarCollapsed}
+              title={sidebarCollapsed ? "Show filters" : "Hide filters"}
+              aria-label={sidebarCollapsed ? "Show filters" : "Hide filters"}
+              aria-expanded={!sidebarCollapsed}
+            >
+              {sidebarCollapsed ? (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                  <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              ) : (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                  <path d="M15 6l-6 6 6 6" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              )}
+            </button>
+          </div>
+          {!sidebarCollapsed ? (
         <div className="library-sidebar">
           <input
             ref={searchRef}
@@ -1201,7 +1462,26 @@ export function LibraryPanel({
             </div>
           </div>
         </div>
-
+          ) : null}
+        </div>
+        {!sidebarCollapsed ? (
+          <div
+            className={`split-handle library-sidebar-handle${sidebarDragging ? " active" : ""}`}
+            onPointerDown={() => setSidebarDragging(true)}
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize filters"
+          />
+        ) : null}
+        <SplitPane
+          className="library-list-detail-split"
+          storageKey="openleaf.library.listDetail"
+          initialLeftRatio={0.42}
+          minLeft={220}
+          minRight={280}
+          leftClassName="library-list-pane"
+          rightClassName="library-detail-pane"
+          left={
         <ul className="library-list" ref={listRef}>
           {papers.map((p) => {
             const badge = integrityBadge(p);
@@ -1211,6 +1491,11 @@ export function LibraryPanel({
                 <div
                   className={`library-item${selectedKey === p.citekey ? " is-selected" : ""}${checked ? " is-checked" : ""}`}
                   data-citekey={p.citekey}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    setPathBanner(null);
+                    setPathMenu({ x: e.clientX, y: e.clientY, citekey: p.citekey, hasPdf: Boolean(p.attachment) });
+                  }}
                 >
                   <div className="library-item-rail">
                     <input
@@ -1235,7 +1520,10 @@ export function LibraryPanel({
                     className="library-item-body"
                     onClick={() => {
                       if (selecting) toggleChecked(p.citekey);
-                      else setSelectedKey(p.citekey);
+                      else {
+                        setFocusFactId(null);
+                        setSelectedKey(p.citekey);
+                      }
                     }}
                     onPointerDown={() => {
                       if (pressTimer.current) window.clearTimeout(pressTimer.current);
@@ -1314,8 +1602,56 @@ export function LibraryPanel({
             </li>
           ) : null}
         </ul>
-
-        <div className="library-detail">
+          }
+          right={
+        <div
+          className={`library-detail${detailPdfDrag && selected ? " is-pdf-drag" : ""}`}
+          {...(selected ? detailPdfDropHandlers : {})}
+        >
+          {selected && detailPdfDrag ? (
+            <div className="library-detail-pdf-drop-overlay" aria-hidden>
+              <div className="library-detail-pdf-drop-card">
+                Drop PDF to {selected.attachment ? "replace" : "attach"}
+                <span className="muted">{selected.citekey}</span>
+              </div>
+            </div>
+          ) : null}
+          {pdfReplacePrompt ? (
+            <div className="library-pdf-replace-dialog" role="alertdialog" aria-modal="true">
+              <div className="library-pdf-replace-card">
+                <h3>Replace PDF?</h3>
+                <p>
+                  This paper already has a PDF. Replacing it will <strong>untag</strong>{" "}
+                  {pdfReplacePrompt.taggedFactCount} fact
+                  {pdfReplacePrompt.taggedFactCount === 1 ? "" : "s"} that currently point into the
+                  PDF
+                  {pdfReplacePrompt.totalFacts ? ` (${pdfReplacePrompt.totalFacts} total)` : ""}.
+                </p>
+                <p className="muted">
+                  Untagged facts keep their answers and approval status. Only the PDF anchors are
+                  cleared — you can retag them afterward.
+                </p>
+                <div className="library-pdf-pin-actions">
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    disabled={busy}
+                    onClick={() => void attachPdfToSelected(pdfReplacePrompt.file, true)}
+                  >
+                    {busy ? "Replacing…" : "Replace PDF"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    disabled={busy}
+                    onClick={() => setPdfReplacePrompt(null)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
           {selected ? (
             <>
               <div className="library-phone-detailbar">
@@ -1368,6 +1704,28 @@ export function LibraryPanel({
                     >
                       Open PDF
                     </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setDetailMenu(false);
+                        void copyLibraryPath(selected.citekey, "folder");
+                      }}
+                    >
+                      Copy folder path
+                    </button>
+                    {selected.attachment ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setDetailMenu(false);
+                          void copyLibraryPath(selected.citekey, "pdf");
+                        }}
+                      >
+                        Copy PDF path
+                      </button>
+                    ) : null}
                     <button type="button" role="menuitem" onClick={() => { setDetailMenu(false); setShareOpen(true); }}>
                       Share
                     </button>
@@ -1555,7 +1913,22 @@ export function LibraryPanel({
                     </button>
                   </div>
                 ) : null}
-                <LibraryPdfNotes paper={selected} onError={(msg) => setError(msg)} />
+                <LibraryPdfNotes
+                  paper={selected}
+                  pdfRevision={pdfRevision}
+                  onError={(msg) => {
+                    if (!isTransientPdfErrorMessage(msg)) setError(msg);
+                  }}
+                  onNotice={(msg) => setNotice(msg)}
+                  onPaperChange={(paper) => {
+                    upsertLocal(paper);
+                    setSelectedKey(paper.citekey);
+                    setPdfRevision((n) => n + 1);
+                    void refresh();
+                  }}
+                  focusFactId={focusFactId}
+                  initialPane={focusFactId ? "facts" : undefined}
+                />
               </Collapsible>
               <Collapsible
                 title="Topics"
@@ -1666,6 +2039,29 @@ export function LibraryPanel({
                     Cite into project
                   </button>
                 ) : null}
+                <Link
+                  className="btn btn-quiet"
+                  to={`/facts?paper=${encodeURIComponent(selected.citekey)}`}
+                  title="Review extracted facts for this paper"
+                >
+                  Review facts
+                </Link>
+                <button
+                  type="button"
+                  className="btn btn-quiet"
+                  onClick={() => void copyLibraryPath(selected.citekey, "folder")}
+                >
+                  Copy folder path
+                </button>
+                {selected.attachment ? (
+                  <button
+                    type="button"
+                    className="btn btn-quiet"
+                    onClick={() => void copyLibraryPath(selected.citekey, "pdf")}
+                  >
+                    Copy PDF path
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   className="btn btn-quiet"
@@ -1708,6 +2104,9 @@ export function LibraryPanel({
           ) : (
             <div className="library-empty">Select a paper</div>
           )}
+        </div>
+          }
+        />
         </div>
       </div>
       )}
@@ -1789,6 +2188,23 @@ export function LibraryPanel({
                 </button>
               ))
             : null}
+        </div>
+      ) : null}
+      {pathMenu ? (
+        <div
+          className="context-menu"
+          style={{ left: pathMenu.x, top: pathMenu.y }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <button type="button" onClick={() => void copyLibraryPath(pathMenu.citekey, "folder")}>
+            Copy folder path
+          </button>
+          {pathMenu.hasPdf ? (
+            <button type="button" onClick={() => void copyLibraryPath(pathMenu.citekey, "pdf")}>
+              Copy PDF path
+            </button>
+          ) : null}
         </div>
       ) : null}
     </aside>

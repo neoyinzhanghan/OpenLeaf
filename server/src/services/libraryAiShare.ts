@@ -53,11 +53,18 @@ function makeId(): string {
   return `libai_${crypto.randomBytes(8).toString("hex")}`;
 }
 
+/** Public origin for a library AI prompt. Localhost is only a fallback when no tunnel is up. */
+export function libraryAiOrigin(
+  gateway: { url?: string; status?: string } | null | undefined,
+  port: number,
+): string {
+  const url = (gateway?.url ?? "").replace(/\/$/, "");
+  if (gateway?.status === "active" && /^https:\/\//i.test(url)) return url;
+  return `http://127.0.0.1:${port}`;
+}
+
 function publicBaseUrl(port?: number): string {
-  const gw = getHostGateway();
-  if (gw?.url && gw.status === "active") return gw.url.replace(/\/$/, "");
-  const p = port ?? loadConfig().port;
-  return `http://127.0.0.1:${p}`;
+  return libraryAiOrigin(getHostGateway(), port ?? loadConfig().port);
 }
 
 function normalizeSettings(input: Partial<LibraryAiSettings> | undefined): LibraryAiSettings {

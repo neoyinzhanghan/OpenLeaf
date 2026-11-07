@@ -67,7 +67,8 @@ async function main() {
 
   app.use("/api/ai", bearerCors);
   app.use("/api/library-ai/v1", bearerCors);
-  app.use(express.json({ limit: "20mb" }));
+  // Library PDF attach sends base64 (~4/3 of file size). Allow up to ~100MB PDFs.
+  app.use(express.json({ limit: "150mb" }));
   app.use(invalidJsonMiddleware);
   // Classifies every request as host (direct) or guest (via a share tunnel)
   // and enforces guest sign-in + per-share permissions before any router.

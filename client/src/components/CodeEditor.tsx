@@ -5,6 +5,7 @@ import type { Awareness } from "y-protocols/awareness";
 import type * as Y from "yjs";
 import { bindYTextToMonaco, sealModelUndo, type YMonacoBinding } from "../collab/bindYTextToMonaco";
 import { latexBeginEndInsert } from "../latex/completions";
+import { latexStyleFromKeyboard, planHighlightPackage, planLatexStyle, type LatexStyleCommand } from "../latex/wrapStyle";
 import {
   BIBTEX_LANGUAGE,
   LATEX_LANGUAGE,
@@ -76,6 +77,8 @@ type Props = {
   labels?: string[];
   /** Called when the user inserts a library citekey that is not yet in the project .bib. */
   onLibraryCite?: (citekey: string) => void;
+  /** Citation hovers include a link that opens the reference library in a new tab. */
+  canOpenLibrary?: boolean;
   onForwardSearch?: (line: number, column: number) => void;
   /** Collaborative binding */
   yText?: Y.Text | null;
@@ -165,6 +168,7 @@ export function CodeEditor({
   citationHints = [],
   labels = [],
   onLibraryCite,
+  canOpenLibrary = false,
   onForwardSearch,
   yText = null,
   awareness = null,
@@ -212,10 +216,12 @@ export function CodeEditor({
   const citationHintsRef = useRef(citationHints);
   const labelsRef = useRef(labels);
   const onLibraryCiteRef = useRef(onLibraryCite);
+  const canOpenLibraryRef = useRef(canOpenLibrary);
   citationsRef.current = citations;
   citationHintsRef.current = citationHints;
   labelsRef.current = labels;
   onLibraryCiteRef.current = onLibraryCite;
+  canOpenLibraryRef.current = canOpenLibrary;
   const pathRef = useRef(path);
   pathRef.current = path;
   const bindingRef = useRef<YMonacoBinding | null>(null);
@@ -233,6 +239,7 @@ export function CodeEditor({
       citations: citationsRef.current,
       citationHints: citationHintsRef.current,
       labels: labelsRef.current,
+      openLibrary: canOpenLibraryRef.current,
     }));
     // Every model (including ones @monaco-editor/react creates from `path`) must
     // stay on LF so Yjs offsets match, especially for Windows guests.
@@ -329,6 +336,143 @@ export function CodeEditor({
         quote: lineText,
       });
     });
+
+    const applyLatexStyle = (command: LatexStyleCommand) => {
+      if (readOnlyRef.current) return;
+      const model = ed.getModel();
+      if (!model || model.getLanguageId() !== LATEX_LANGUAGE) return;
+      const selections = ed.getSelections();
+      if (!selections?.length) return;
+      const full = model.getValue();
+      const items = selections
+        .map((sel) => {
+          const start = model.getOffsetAt({ lineNumber: sel.startLineNumber, column: sel.startColumn });
+          const end = model.getOffsetAt({ lineNumber: sel.endLineNumber, column: sel.endColumn });
+          const plan = planLatexStyle(full.slice(0, start), full.slice(start, end), full.slice(end), command);
+          return {
+            start: start - plan.before,
+            end: end + plan.after,
+            text: plan.text,
+            selStart: plan.selStart,
+            selEnd: plan.selEnd,
+            placeSelection: true,
+          };
+        })
+        .sort((a, b) => a.start - b.start || a.end - b.end);
+      const kept: typeof items = [];
+      let lastEnd = -1;
+      for (const item of items) {
+        if (item.start < lastEnd) continue;
+        kept.push(item);
+        lastEnd = item.end;
+      }
+      // `\hl` is undefined until soul is loaded. Insert the package in the same
+      // edit so a highlight cannot compile as an undefined control sequence.
+      if (command === "hl") {
+        let edited = full;
+        for (const item of [...kept].sort((a, b) => b.start - a.start)) {
+          edited = edited.slice(0, item.start) + item.text + edited.slice(item.end);
+        }
+        const pkg = planHighlightPackage(edited);
+        if (pkg) {
+          let shift = 0;
+          for (const item of [...kept].sort((a, b) => a.start - b.start)) {
+            const editedStart = item.start + shift;
+            if (editedStart >= pkg.at) break;
+            shift += item.text.length - (item.end - item.start);
+          }
+          const at = pkg.at - shift;
+          if (!kept.some((item) => at >= item.start && at < item.end)) {
+            kept.push({ start: at, end: at, text: pkg.text, selStart: 0, selEnd: 0, placeSelection: false });
+            kept.sort((a, b) => a.start - b.start || a.end - b.end);
+          }
+        }
+      }
+      ed.executeEdits(
+        "latex-style",
+        kept.map((item) => {
+          const from = model.getPositionAt(item.start);
+          const to = model.getPositionAt(item.end);
+          return {
+            range: new monacoApi.Range(from.lineNumber, from.column, to.lineNumber, to.column),
+            text: item.text,
+            forceMoveMarkers: true,
+          };
+        }),
+      );
+      let delta = 0;
+      const next = [];
+      for (const item of kept) {
+        if (item.placeSelection) {
+          const a = model.getPositionAt(item.start + delta + item.selStart);
+          const b = model.getPositionAt(item.start + delta + item.selEnd);
+          next.push(new monacoApi.Selection(a.lineNumber, a.column, b.lineNumber, b.column));
+        }
+        delta += item.text.length - (item.end - item.start);
+      }
+      if (next.length) ed.setSelections(next);
+      ed.focus();
+    };
+    const styleWhen = "editorLangId == latex && !editorReadonly";
+    ed.addAction({
+      id: "openleaf.latex.textit",
+      label: "Italic (\\textit)",
+      precondition: styleWhen,
+      keybindings: [
+        monacoApi.KeyMod.CtrlCmd | monacoApi.KeyCode.KeyI,
+        monacoApi.KeyMod.CtrlCmd | monacoApi.KeyMod.Shift | monacoApi.KeyCode.KeyI,
+      ],
+      contextMenuGroupId: "1_modification",
+      contextMenuOrder: 1.5,
+      run: () => applyLatexStyle("textit"),
+    });
+    ed.addAction({
+      id: "openleaf.latex.textbf",
+      label: "Bold (\\textbf)",
+      precondition: styleWhen,
+      keybindings: [
+        monacoApi.KeyMod.CtrlCmd | monacoApi.KeyCode.KeyB,
+        monacoApi.KeyMod.CtrlCmd | monacoApi.KeyMod.Shift | monacoApi.KeyCode.KeyB,
+      ],
+      contextMenuGroupId: "1_modification",
+      contextMenuOrder: 1.6,
+      run: () => applyLatexStyle("textbf"),
+    });
+    ed.addAction({
+      id: "openleaf.latex.underline",
+      label: "Underline (\\underline)",
+      precondition: styleWhen,
+      keybindings: [monacoApi.KeyMod.CtrlCmd | monacoApi.KeyMod.Shift | monacoApi.KeyCode.KeyU],
+      contextMenuGroupId: "1_modification",
+      contextMenuOrder: 1.7,
+      run: () => applyLatexStyle("underline"),
+    });
+    ed.addAction({
+      id: "openleaf.latex.hl",
+      label: "Highlight (\\hl)",
+      precondition: styleWhen,
+      keybindings: [monacoApi.KeyMod.CtrlCmd | monacoApi.KeyMod.Shift | monacoApi.KeyCode.KeyH],
+      contextMenuGroupId: "1_modification",
+      contextMenuOrder: 1.8,
+      run: () => applyLatexStyle("hl"),
+    });
+    // Capture phase, before Monaco. Underline and highlight use Shift so the
+    // browser keeps history (Ctrl+H) and view-source (Ctrl+U).
+    const styleHost = ed.getContainerDomNode();
+    const onStyleKey = (ev: KeyboardEvent) => {
+      const command = latexStyleFromKeyboard(ev);
+      if (!command || readOnlyRef.current) return;
+      const model = ed.getModel();
+      if (!model || model.getLanguageId() !== LATEX_LANGUAGE) return;
+      const target = ev.target;
+      if (!(target instanceof HTMLTextAreaElement) || !target.classList.contains("inputarea")) return;
+      if (!styleHost.contains(target)) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      applyLatexStyle(command);
+    };
+    styleHost.addEventListener("keydown", onStyleKey, true);
+    ed.onDidDispose(() => styleHost.removeEventListener("keydown", onStyleKey, true));
 
     const typingEditor = ed as typeof ed & { onDidType(listener: (text: string) => void): { dispose(): void } };
     typingEditor.onDidType((typed: string) => {
@@ -932,6 +1076,8 @@ export function CodeEditor({
           bracketPairColorization: { enabled: false },
           guides: { bracketPairs: false, indentation: true },
           fontLigatures: false,
+          // Keep the citation hover open so its library link can be clicked.
+          hover: { sticky: true },
           suggestOnTriggerCharacters: true,
           quickSuggestions: {
             other: "on",

@@ -63,6 +63,47 @@ export type PaperAnnotation = {
   updatedAt: string;
 };
 
+export type FactType = "statement" | "value" | "question" | "tag";
+export type FactStatus = "unreviewed" | "confirmed" | "rejected" | "not_found";
+
+export type FactHighlight = {
+  page: number;
+  start: number;
+  end: number;
+  quote: string;
+};
+
+export type FactDisplayRect = {
+  page: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** "v" = stacked/rotated table digits; "h" = normal horizontal run. */
+  orient?: "h" | "v";
+};
+
+export type PaperFact = {
+  id: string;
+  citekey: string;
+  type: FactType;
+  input: string;
+  answer: string;
+  highlights: FactHighlight[];
+  status: FactStatus;
+  createdAt: string;
+  updatedAt: string;
+  displayRects: FactDisplayRect[];
+};
+
+export type LibraryFact = PaperFact & {
+  paperTitle: string;
+};
+
+export type FactsCapability =
+  | { ok: true; pages: number; chars: number }
+  | { ok: false; reason: "no-pdf" | "no-text" };
+
 /** Canonical library paper — mirrors server/services/library record.json. */
 export type PaperRecord = {
   citekey: string;

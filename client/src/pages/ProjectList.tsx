@@ -3,6 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { createProjectNamed, listProjects } from "../api/client";
 import { hostGateway, hostLogout, type HostGatewayView } from "../api/share";
 import type { ProjectMeta } from "../api/types";
+import { ErrorBanner } from "../components/ErrorBanner";
 import { HostAccessPanel } from "../components/HostAccessPanel";
 import { ProjectCard } from "../components/ProjectHostActions";
 import { ThemePicker } from "../components/ThemeToggle";
@@ -97,6 +98,9 @@ export function ProjectList() {
           <Link to="/library" className="btn btn-quiet">
             Library
           </Link>
+          <Link to="/facts" className="btn btn-quiet">
+            Facts
+          </Link>
         </nav>
         <div className="topbar-end">
           {remoteHost && (
@@ -168,7 +172,7 @@ export function ProjectList() {
         </p>
         {!remoteHost && <HostAccessPanel open={phoneOpen} onClose={() => setPhoneOpen(false)} />}
 
-        {error && <div className="error-banner">{error}</div>}
+        {error ? <ErrorBanner onDismiss={() => setError(null)}>{error}</ErrorBanner> : null}
 
         <div className="project-list">
           {loading && (
@@ -211,6 +215,7 @@ export function ProjectList() {
           </Link>
         ) : null}
         <Link to="/library">Library</Link>
+        <Link to="/facts">Facts</Link>
       </nav>
     </div>
   );

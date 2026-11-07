@@ -571,6 +571,19 @@ export function getBranch(state: TimelineState, branchId: string): TimelineBranc
   return b;
 }
 
+/**
+ * Directory that holds a branch's files. Does not create a worktree.
+ * Main and sacred branches live in the project folder. Other branches live
+ * in their worktree path even before that directory has been checked out.
+ */
+export async function branchDiskRoot(projectId: string, branchId: string): Promise<string> {
+  if (!branchId || branchId === "main") return projectDir(projectId);
+  const state = await loadTimeline(projectId);
+  const branch = getBranch(state, branchId);
+  if (branch.sacred) return projectDir(projectId);
+  return worktreePath(projectId, branch.id);
+}
+
 /** Filesystem root for a branch’s working copy. Refuses pruned tips. */
 export async function ensureBranchRoot(projectId: string, branchId: string): Promise<string> {
   const state = await loadTimeline(projectId);

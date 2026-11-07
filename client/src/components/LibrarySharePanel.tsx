@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { ErrorBanner } from "./ErrorBanner";
 import {
   createLibraryShare,
   importLibraryShare,
@@ -178,7 +179,7 @@ export function LibrarySharePanel({ open, onClose, citekeys, collectionId, colle
           </button>
         </div>
 
-        {error ? <div className="share-error">{error}</div> : null}
+        {error ? <ErrorBanner className="error-banner share-error" onDismiss={() => setError(null)}>{error}</ErrorBanner> : null}
 
         <div className="share-section">
           <p className="share-section-title">New link</p>

@@ -46,7 +46,7 @@ For human setup and usage, see [README.md](README.md).
 - All file paths must be resolved with the project FS helpers (reject `..`).
 - Prefer editing services over routes when changing behavior.
 - Add new HTTP APIs in `routes/` + matching client wrapper in `client/src/api/`.
-- In `npm run dev`, do **not** serve `client/dist`; Vite on `:5173` is the UI (`:8787` redirects).
+- In `npm run dev`, do **not** serve `client/dist`; Vite on `:5173` is the UI (`:8786` redirects).
 
 ## Config knobs
 
@@ -72,9 +72,9 @@ Contributors:
 
 ```bash
 npm install
-npm run dev   # API :8787 + Vite :5173 — open the Vite URL for the UI
+npm run dev   # API :8786 + Vite :5173 — open the Vite URL for the UI
 npm run build
-npm start     # NODE_ENV=production; API serves built client on :8787
+npm start     # NODE_ENV=production; API serves built client on :8786
 npm run typecheck
 npm test
 ```

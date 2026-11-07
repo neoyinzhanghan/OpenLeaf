@@ -9,6 +9,7 @@ import {
   type AiReviewHunk,
 } from "../api/share";
 import { AiSuggestionCard } from "./AiSuggestionCard";
+import { ErrorBanner } from "./ErrorBanner";
 
 type Props = {
   projectId: string;
@@ -188,7 +189,7 @@ export function AiReviewPanel({
         <strong>Dismiss</strong> restores what was there.
       </p>
 
-      {error && <div className="error-banner">{error}</div>}
+      {error ? <ErrorBanner className="error-banner" onDismiss={() => setError(null)}>{error}</ErrorBanner> : null}
 
       {loading && collaborators.length === 0 ? (
         <div className="empty-hint">Loading…</div>

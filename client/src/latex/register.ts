@@ -1,5 +1,6 @@
 import type { Monaco } from "@monaco-editor/react";
 import { createCompletionProvider, type LatexSuggestContext } from "./completions";
+import { libraryPaperUrl } from "./libraryLink";
 import { bibtexMonarch, latexMonarch } from "./monarch";
 
 const LANGUAGE_ID = "latex";
@@ -101,9 +102,17 @@ export function registerLatexLanguage(monaco: Monaco): void {
           const startCol = argStart + keyOffset + 1;
           const endCol = startCol + key.length;
           if (position.column >= startCol && position.column <= endCol) {
-            const hint = contextProvider().citationHints?.find((h) => h.citekey === key);
+            const ctx = contextProvider();
+            const hint = ctx.citationHints?.find((h) => h.citekey === key);
             const title = hint?.title ?? key;
             const detail = hint?.detail ?? "citation";
+            const contents = [
+              { value: `**${title}**` },
+              { value: `\`${key}\` · ${detail}` },
+            ];
+            if (ctx.openLibrary) {
+              contents.push({ value: `[Open in library](${libraryPaperUrl(key)})` });
+            }
             return {
               range: {
                 startLineNumber: position.lineNumber,
@@ -111,10 +120,7 @@ export function registerLatexLanguage(monaco: Monaco): void {
                 startColumn: startCol,
                 endColumn: endCol,
               },
-              contents: [
-                { value: `**${title}**` },
-                { value: `\`${key}\` · ${detail}` },
-              ],
+              contents,
             };
           }
         }

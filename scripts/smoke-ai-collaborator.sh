@@ -2,7 +2,7 @@
 # Smoke matrix for OpenLeaf AI collaborator (host localhost API).
 # Usage: ./scripts/smoke-ai-collaborator.sh [projectId]
 set -euo pipefail
-API="${OPENLEAF_API:-http://127.0.0.1:8787}"
+API="${OPENLEAF_API:-http://127.0.0.1:8786}"
 PROJ="${1:-example-article}"
 PASS=0
 FAIL=0

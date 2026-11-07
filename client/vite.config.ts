@@ -24,7 +24,7 @@ function configuredAccess(): string {
 const access = configuredAccess();
 const expose = access === "lan" || access === "remote";
 const port = Number(process.env.OPENLEAF_CLIENT_PORT || 5173);
-const apiPort = Number(process.env.OPENLEAF_PORT || 8787);
+const apiPort = Number(process.env.OPENLEAF_PORT || 8786);
 const apiTarget = `http://127.0.0.1:${apiPort}`;
 
 function apiProxy(ws = false) {

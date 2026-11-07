@@ -1,32 +1,98 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { renameProject } from "../api/client";
+import { getProjectHostPath, renameProject } from "../api/client";
 import type { ProjectMeta } from "../api/types";
+import { copyText } from "../lib/clipboard";
+import { clientOs } from "../lib/hostPath";
 import { projectFolderName } from "../projectFolder";
 
-export function CopyPathMenuItem({ path }: { path: string }) {
+export function CopyPathMenuItem({
+  projectId,
+  relativePath = "",
+  branchId,
+  fallback = "",
+}: {
+  projectId: string;
+  relativePath?: string;
+  branchId?: string;
+  fallback?: string;
+}) {
+  const [text, setText] = useState("");
   const [copied, setCopied] = useState(false);
   const [failed, setFailed] = useState(false);
 
+  useEffect(() => {
+    let cancelled = false;
+    setText("");
+    setCopied(false);
+    setFailed(false);
+    void getProjectHostPath(projectId, relativePath, { os: clientOs(), branchId })
+      .then((result) => {
+        if (!cancelled) setText(result.path);
+      })
+      .catch(() => {
+        if (!cancelled) setText(fallback);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, relativePath, branchId, fallback]);
+
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(path);
-      setFailed(false);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
-    } catch {
-      setCopied(false);
-      setFailed(true);
-    }
+    const value = text || fallback;
+    if (!value) return;
+    const ok = await copyText(value);
+    setCopied(ok);
+    setFailed(!ok);
+    if (ok) window.setTimeout(() => setCopied(false), 2000);
   };
 
   return (
     <>
-      <button type="button" role="menuitem" onClick={() => void copy()}>
+      <button type="button" role="menuitem" onClick={() => void copy()} disabled={!text && !fallback}>
         {failed ? "Select the path below" : copied ? "Copied" : "Copy path"}
       </button>
-      <code className="project-path">{path}</code>
+      <code className="project-path">{text || "…"}</code>
     </>
+  );
+}
+
+export function CopyFilePathButton({
+  projectId,
+  relativePath,
+  branchId,
+}: {
+  projectId: string;
+  relativePath: string;
+  branchId?: string;
+}) {
+  const [label, setLabel] = useState("Copy path");
+  const [shown, setShown] = useState("");
+
+  const copy = async () => {
+    try {
+      const result = await getProjectHostPath(projectId, relativePath, { os: clientOs(), branchId });
+      setShown(result.path);
+      const ok = await copyText(result.path);
+      setLabel(ok ? "Copied" : "Select the path");
+    } catch {
+      setLabel("Could not copy");
+    }
+    window.setTimeout(() => setLabel("Copy path"), 2500);
+  };
+
+  return (
+    <span className="copy-file-path">
+      <button
+        type="button"
+        className="btn btn-ghost pane-comment-btn"
+        title="Copy the absolute path of this file"
+        onClick={() => void copy()}
+      >
+        {label}
+      </button>
+      {shown && label === "Select the path" ? <code className="project-path">{shown}</code> : null}
+    </span>
   );
 }
 
@@ -203,7 +269,7 @@ function ProjectCardMenu({ project }: { project: ProjectMeta }) {
       </button>
       {open ? (
         <div className="toolbar-menu project-card-menu" role="menu" aria-label="Project actions">
-          <CopyPathMenuItem path={path} />
+          <CopyPathMenuItem projectId={project.id} fallback={path} />
         </div>
       ) : null}
     </div>
