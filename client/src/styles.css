@@ -4427,6 +4427,8 @@ button.lib-badge:hover {
   background: var(--tree-bg);
   min-width: 0;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .pane-tree.is-collapsed {
@@ -10740,19 +10742,61 @@ button.lib-badge:hover {
   max-height: min(42vh, 22rem);
 }
 
-.editor-kn-review-rail {
-  position: fixed;
-  left: 0.75rem;
-  top: calc(var(--toolbar-h, 3rem) + 0.75rem);
-  bottom: 0.75rem;
-  width: min(26rem, calc(100vw - 1.5rem));
-  z-index: 42;
+.pane-title-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.pane-title-tabs button {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--ink-faint);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  padding: 0.15rem 0.45rem;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.pane-title-tabs button.is-active {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--accent-soft) 70%, transparent);
+}
+
+.editor-kn-review-pane {
+  flex: 1;
+  min-height: 0;
   overflow: auto;
-  background: var(--panel, var(--bg-elevated));
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  box-shadow: 0 16px 48px color-mix(in srgb, #000 20%, transparent);
-  padding: 0.85rem 0.95rem;
+  padding: 0.55rem 0.65rem 0.85rem;
+  background: var(--bg);
+}
+
+.editor-kn-review-pane .kn-dep-review-head h2 {
+  font-size: 0.95rem;
+}
+
+.editor-kn-review-pane .kn-dep-trail {
+  max-height: none;
+}
+
+.editor-kn-review-pane .kn-dep-trail li {
+  grid-template-columns: auto auto 1fr;
+  grid-template-rows: auto auto;
+}
+
+.editor-kn-review-pane .kn-dep-trail .knowledge-status-chip {
+  grid-column: 3;
+  justify-self: start;
+}
+
+.editor-kn-review-pane .kn-dep-trail .btn {
+  grid-column: 1 / -1;
+  justify-self: stretch;
 }
 
 .knowledge-filters {

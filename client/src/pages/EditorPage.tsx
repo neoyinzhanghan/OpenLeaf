@@ -284,9 +284,17 @@ export function EditorPage() {
   const [knowledgeTarget, setKnowledgeTarget] = useState<KnowledgeCursorTarget>(null);
   const [knowledgeInspectorOpen, setKnowledgeInspectorOpen] = useState(false);
   const [depReviewOpen, setDepReviewOpen] = useState(false);
-  useEffect(() => {
-    if (reviewMode && knowledgeMeta?.kind === "knowledge") setDepReviewOpen(true);
-  }, [reviewMode, knowledgeMeta?.kind, knowledgeMeta?.knowledgeId]);
+  const closeDepReview = useCallback(() => {
+    setDepReviewOpen(false);
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        p.delete("review");
+        return p;
+      },
+      { replace: true },
+    );
+  }, [setSearchParams]);
   useEffect(() => {
     if (!id) return;
     rememberProject({ id, name: project?.name || id });
@@ -372,6 +380,12 @@ export function EditorPage() {
   const [treeCollapsed, setTreeCollapsed] = useState(
     () => localStorage.getItem("openleaf.treeCollapsed") === "1",
   );
+  useEffect(() => {
+    if (!(reviewMode && knowledgeMeta?.kind === "knowledge")) return;
+    setDepReviewOpen(true);
+    setTreeCollapsed(false);
+    setTreeWidth((w) => Math.max(w, 300));
+  }, [reviewMode, knowledgeMeta?.kind, knowledgeMeta?.knowledgeId]);
   const [treeDragging, setTreeDragging] = useState(false);
   const [jumpTo, setJumpTo] = useState<{
     path?: string;
@@ -2411,19 +2425,21 @@ export function EditorPage() {
                 type="button"
                 className={`btn btn-quiet toolbar-wide-only${depReviewOpen ? " is-active" : ""}`}
                 onClick={() => {
-                  setDepReviewOpen((v) => {
-                    const next = !v;
-                    setSearchParams(
-                      (prev) => {
-                        const p = new URLSearchParams(prev);
-                        if (next) p.set("review", "1");
-                        else p.delete("review");
-                        return p;
-                      },
-                      { replace: true },
-                    );
-                    return next;
-                  });
+                  if (depReviewOpen) {
+                    closeDepReview();
+                    return;
+                  }
+                  setDepReviewOpen(true);
+                  setTreeCollapsed(false);
+                  setTreeWidth((w) => Math.max(w, 300));
+                  setSearchParams(
+                    (prev) => {
+                      const p = new URLSearchParams(prev);
+                      p.set("review", "1");
+                      return p;
+                    },
+                    { replace: true },
+                  );
                 }}
               >
                 Review trail
@@ -3117,26 +3133,6 @@ export function EditorPage() {
         />
       ) : null}
 
-      {depReviewOpen && knowledgeMeta?.kind === "knowledge" && knowledgeMeta.knowledgeId ? (
-        <div className="editor-kn-review-rail" role="complementary" aria-label="Dependency review">
-          <KnowledgeDependencyReview
-            nodeId={`kn:${knowledgeMeta.knowledgeId}`}
-            projectId={id}
-            onClose={() => {
-              setDepReviewOpen(false);
-              setSearchParams(
-                (prev) => {
-                  const p = new URLSearchParams(prev);
-                  p.delete("review");
-                  return p;
-                },
-                { replace: true },
-              );
-            }}
-          />
-        </div>
-      ) : null}
-
       {syncToast && <div className="sync-toast">{syncToast}</div>}
 
       {!isGuest && (
@@ -3285,7 +3281,44 @@ export function EditorPage() {
             style={{ flex: `0 0 ${narrow ? "100%" : treeCollapsed ? "40px" : `${treeWidth}px`}` }}
           >
             <div className="pane-title pane-title-row">
-              {(!treeCollapsed || narrow) && <span>Files</span>}
+              {(!treeCollapsed || narrow) && (
+                <div className="pane-title-tabs" role="tablist" aria-label="Sidebar">
+                  {knowledgeMeta?.kind === "knowledge" ? (
+                    <>
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={!depReviewOpen}
+                        className={!depReviewOpen ? "is-active" : undefined}
+                        onClick={closeDepReview}
+                      >
+                        Files
+                      </button>
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={depReviewOpen}
+                        className={depReviewOpen ? "is-active" : undefined}
+                        onClick={() => {
+                          setDepReviewOpen(true);
+                          setSearchParams(
+                            (prev) => {
+                              const p = new URLSearchParams(prev);
+                              p.set("review", "1");
+                              return p;
+                            },
+                            { replace: true },
+                          );
+                        }}
+                      >
+                        Trail
+                      </button>
+                    </>
+                  ) : (
+                    <span>Files</span>
+                  )}
+                </div>
+              )}
               <button
                 type="button"
                 className="btn btn-ghost btn-icon tree-collapse-btn toolbar-wide-only"
@@ -3305,43 +3338,53 @@ export function EditorPage() {
                 )}
               </button>
             </div>
-            {(!treeCollapsed || narrow) && (
-              <FileTree
-                nodes={tree}
-                activePath={activePath}
-                mainFile={project?.mainFile ?? null}
-                onOpen={openPath}
-                onNewFile={(dir) => void onNewFile(dir)}
-                onNewFolder={(dir) => void onNewFolder(dir)}
-                onUpload={(files, dir) => void onUpload(files, dir)}
-                onDelete={(path) => void onDelete(path)}
-                onRename={(path) => void onRename(path)}
-                onMove={(from, toDir) => {
-                  if (!readOnly) void onMove(from, toDir);
-                }}
-                onSetMainFile={
-                  !isGuest && !readOnly && timelineCanEdit
-                    ? (path) => void onSetMainFile(path)
-                    : undefined
-                }
-                canMutateActive={Boolean(activePath)}
-                readOnly={readOnly || !timelineCanEdit}
-                actor={fileActor}
-                onSetAccess={(filePath, level) => void setFileAccess(filePath, level)}
-                onCopyPath={
-                  isGuest
-                    ? undefined
-                    : async (relativePath) => {
-                        const result = await getProjectHostPath(id, relativePath, {
-                          os: clientOs(),
-                          branchId,
-                        });
-                        return result.path;
-                      }
-                }
-                fileChanges={fileChangeMap}
-              />
-            )}
+            {(!treeCollapsed || narrow) &&
+              (depReviewOpen && knowledgeMeta?.kind === "knowledge" && knowledgeMeta.knowledgeId ? (
+                <div className="editor-kn-review-pane" role="tabpanel" aria-label="Dependency review">
+                  <KnowledgeDependencyReview
+                    nodeId={`kn:${knowledgeMeta.knowledgeId}`}
+                    projectId={id}
+                    compact
+                    onClose={closeDepReview}
+                  />
+                </div>
+              ) : (
+                <FileTree
+                  nodes={tree}
+                  activePath={activePath}
+                  mainFile={project?.mainFile ?? null}
+                  onOpen={openPath}
+                  onNewFile={(dir) => void onNewFile(dir)}
+                  onNewFolder={(dir) => void onNewFolder(dir)}
+                  onUpload={(files, dir) => void onUpload(files, dir)}
+                  onDelete={(path) => void onDelete(path)}
+                  onRename={(path) => void onRename(path)}
+                  onMove={(from, toDir) => {
+                    if (!readOnly) void onMove(from, toDir);
+                  }}
+                  onSetMainFile={
+                    !isGuest && !readOnly && timelineCanEdit
+                      ? (path) => void onSetMainFile(path)
+                      : undefined
+                  }
+                  canMutateActive={Boolean(activePath)}
+                  readOnly={readOnly || !timelineCanEdit}
+                  actor={fileActor}
+                  onSetAccess={(filePath, level) => void setFileAccess(filePath, level)}
+                  onCopyPath={
+                    isGuest
+                      ? undefined
+                      : async (relativePath) => {
+                          const result = await getProjectHostPath(id, relativePath, {
+                            os: clientOs(),
+                            branchId,
+                          });
+                          return result.path;
+                        }
+                  }
+                  fileChanges={fileChangeMap}
+                />
+              ))}
           </div>
           {(!treeCollapsed || narrow) && (
             <div
