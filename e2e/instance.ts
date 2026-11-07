@@ -89,15 +89,22 @@ export async function startInstance(): Promise<Instance> {
     projects,
     stop: () =>
       new Promise((resolve) => {
-        if (child.exitCode !== null) {
-          fs.rmSync(sandbox, { recursive: true, force: true });
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          try {
+            fs.rmSync(sandbox, { recursive: true, force: true });
+          } catch {
+            /* Windows/WSL sometimes holds locks briefly; sandbox is under /tmp */
+          }
           resolve();
+        };
+        if (child.exitCode !== null) {
+          finish();
           return;
         }
-        child.once("exit", () => {
-          fs.rmSync(sandbox, { recursive: true, force: true });
-          resolve();
-        });
+        child.once("exit", () => finish());
         const pid = child.pid;
         if (pid) {
           try {
@@ -114,7 +121,7 @@ export async function startInstance(): Promise<Instance> {
               /* already gone */
             }
           }
-          resolve();
+          finish();
         }, 4000).unref();
       }),
   };

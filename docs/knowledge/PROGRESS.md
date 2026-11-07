@@ -103,10 +103,9 @@ Baseline (America/Los_Angeles, before feature work landed):
 - [x] Demo seed + remove (`npm run seed:knowledge-demo`)
 - [x] README section
 - [x] Bug bash checklist (knowledge e2e green; unit suite green; typecheck/build green)
-- [x] Knowledge e2e repeated (2× knowledge-flow); full suite 3× — see Blockers if wall-clock limited
+- [x] Full Playwright suite green 3× in a row (34 tests; teardown `rmSync` hardened)
 - [x] Summary written at top
 
 ## Blockers
 - **Graph rebuild budget:** `npm run bench:knowledge-graph` on this library → `fullRebuildMs` 1688–2372 for 290 nodes (SPEC: &lt;1s for much larger graphs). Tried: drop 2s time-bucket from cache key; invalidate on item create. Would unblock: profile `listAllFacts` / project scan, or incremental rebuild.
 - **PDF review overlay (Phase 5):** SyncTeX “Show review status” overlay not finished. Tried: reuse diffHighlights path; deferred for inspector/gutter/banner. Would unblock: wire `boxesForFileLines` to step line ranges + PDF toggle.
-- **Full e2e ×3 wall-clock:** Knowledge specs verified repeatedly; entire Playwright suite ×3 may exceed session budget — run locally with `npm run e2e` thrice before merge if CI does not.
