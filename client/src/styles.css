@@ -3412,9 +3412,26 @@ a {
     gap: 0.25rem;
   }
 
-  .library-sidebar-pane,
-  .library-master-split > .split-handle.library-sidebar-handle {
-    display: none;
+  /* `.pane { display:flex }` is declared later — beat it with equal-or-higher
+     specificity so the phone single-column library layout actually applies. */
+  .pane.library-sidebar-pane,
+  .library-master-split > .split-handle.library-sidebar-handle,
+  .library-list-detail-split > .split-handle {
+    display: none !important;
+  }
+
+  .library-list-detail-split,
+  .pane.library-list-pane {
+    flex: 1 1 auto !important;
+    width: 100% !important;
+    max-width: none;
+    height: auto !important;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .library-list-pane .library-list {
+    height: auto !important;
   }
 
   .library-list {
@@ -3424,19 +3441,20 @@ a {
   }
 
   .library-detail,
-  .library-detail-pane {
-    display: none;
+  .pane.library-detail-pane {
+    display: none !important;
   }
 
-  .library-master.has-selection .library-sidebar-pane,
-  .library-master.has-selection .library-list-pane,
+  .library-master.has-selection .pane.library-sidebar-pane,
+  .library-master.has-selection .pane.library-list-pane,
   .library-master.has-selection .split-handle {
-    display: none;
+    display: none !important;
   }
 
-  .library-master.has-selection .library-detail-pane,
+  .library-master.has-selection .pane.library-detail-pane,
   .library-master.has-selection .library-detail {
-    display: block;
+    display: flex !important;
+    flex-direction: column;
     overflow-x: hidden;
     overflow-y: auto;
     overscroll-behavior: contain;
@@ -4530,6 +4548,13 @@ button.lib-badge:hover {
   font-weight: 600;
   color: var(--accent);
   padding: 0.2rem 0.5rem;
+}
+
+@media (max-width: 720px) {
+  .pane-comment-btn {
+    min-height: 44px;
+    padding: 0.55rem 0.75rem;
+  }
 }
 
 .pane-comment-btn:hover:not(:disabled) {
@@ -9464,9 +9489,9 @@ button.lib-badge:hover {
     min-height: 44px;
   }
 
-  .library-master.has-selection .library-detail-pane,
+  .library-master.has-selection .pane.library-detail-pane,
   .library-master.has-selection .library-detail {
-    display: flex;
+    display: flex !important;
     flex-direction: column;
     position: fixed;
     inset: 0;
@@ -9479,7 +9504,7 @@ button.lib-badge:hover {
   }
 
   .library-master.has-selection .library-list-detail-split,
-  .library-master.has-selection .library-detail-pane {
+  .library-master.has-selection .pane.library-detail-pane {
     flex: 1;
     min-height: 0;
   }
