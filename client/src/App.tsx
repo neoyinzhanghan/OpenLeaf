@@ -3,9 +3,11 @@ import { EditorPage } from "./pages/EditorPage";
 import { GuestInactive, GuestLogin } from "./pages/GuestLogin";
 import { HostLogin } from "./pages/HostLogin";
 import { FactsPage } from "./pages/FactsPage";
+import { KnowledgePage } from "./pages/KnowledgePage";
 import { LibraryPage } from "./pages/LibraryPage";
 import { LibraryShareGuestPage } from "./pages/LibraryShareGuestPage";
 import { ProjectList } from "./pages/ProjectList";
+import { ReviewInboxPage } from "./pages/ReviewInboxPage";
 import { useSession } from "./session/SessionContext";
 
 export function App() {
@@ -46,6 +48,8 @@ export function App() {
       <Route path="/" element={<ProjectList />} />
       <Route path="/library" element={<LibraryPage />} />
       <Route path="/facts" element={<FactsPage />} />
+      <Route path="/knowledge" element={<KnowledgePage />} />
+      <Route path="/review" element={<ReviewInboxPage />} />
       <Route path="/lib-share/:token" element={<LibraryShareGuestPage />} />
       <Route path="/p/:id" element={<EditorPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />

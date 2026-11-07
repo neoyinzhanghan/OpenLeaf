@@ -1241,3 +1241,92 @@ export function checkProjectCitations(
     body: JSON.stringify(body ?? {}),
   });
 }
+
+// --- Knowledge (host-only) --------------------------------------------------
+
+export type KnowledgeStatus =
+  | "needs-review"
+  | "rejected"
+  | "flagged"
+  | "reviewed"
+  | "confirmed"
+  | "unreviewed"
+  | "not_found"
+  | "up-to-date";
+
+export type KnowledgeGraphNode = {
+  id: string;
+  kind: "source" | "fact" | "knowledge" | "project";
+  name: string;
+  status: KnowledgeStatus;
+  why: string[];
+  collection: string;
+  note?: string;
+  inputs: string[];
+  outputs: string[];
+  updatedAt: string;
+};
+
+export type KnowledgeGraphEdge = { from: string; to: string; flagged: boolean };
+
+export type KnowledgeGraph = {
+  nodes: KnowledgeGraphNode[];
+  edges: KnowledgeGraphEdge[];
+  collections: string[];
+  generatedAt: string;
+};
+
+export type KnowledgeItemMeta = ProjectMeta & {
+  knowledgeId: string;
+  collection?: string;
+  title: string;
+};
+
+export type KnowledgeInboxItem = {
+  type: "fact" | "step" | "knowledge" | "project";
+  id: string;
+  label: string;
+  status: KnowledgeStatus;
+  citekey?: string;
+  factId?: string;
+  createdBy?: string;
+};
+
+export type KnowledgeInboxGroup = {
+  title: string;
+  kind: "agent" | "changed" | "flagged";
+  items: KnowledgeInboxItem[];
+};
+
+export type KnowledgeImpact = {
+  node: string;
+  flagged: KnowledgeGraphNode[];
+  notAffectedCount: number;
+};
+
+export function listKnowledgeItems(): Promise<{ items: KnowledgeItemMeta[] }> {
+  return request("/api/knowledge/items");
+}
+
+export function createKnowledgeItem(body: {
+  title: string;
+  collection?: string;
+  knowledgeId?: string;
+}): Promise<{ project: ProjectMeta; knowledgeId: string }> {
+  return request("/api/knowledge/items", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function getKnowledgeGraph(): Promise<KnowledgeGraph> {
+  return request("/api/knowledge/graph");
+}
+
+export function getKnowledgeImpact(node: string): Promise<KnowledgeImpact> {
+  return request(`/api/knowledge/impact?node=${encodeURIComponent(node)}`);
+}
+
+export function getKnowledgeInbox(): Promise<{ groups: KnowledgeInboxGroup[] }> {
+  return request("/api/knowledge/inbox");
+}

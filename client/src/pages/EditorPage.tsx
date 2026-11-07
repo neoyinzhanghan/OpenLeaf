@@ -262,6 +262,11 @@ export function EditorPage() {
   viewingGitHashRef.current = viewingGitHash;
   const [branchLabel, setBranchLabel] = useState(guest?.share.branchName || "main");
   const [project, setProject] = useState<ProjectMeta | null>(null);
+  const [knowledgeMeta, setKnowledgeMeta] = useState<{
+    kind?: "paper" | "knowledge";
+    knowledgeId?: string;
+    collection?: string;
+  } | null>(null);
   useEffect(() => {
     if (!id) return;
     rememberProject({ id, name: project?.name || id });
@@ -628,6 +633,29 @@ export function EditorPage() {
         setTree(t);
         setConfig(cfg);
         setActivePath(p.mainFile);
+        if (!isGuest) {
+          try {
+            const ol = await readProjectFile(id, "openleaf.json", { forceText: true });
+            if (ol.text && ol.content) {
+              const parsed = JSON.parse(ol.content) as {
+                kind?: "paper" | "knowledge";
+                knowledgeId?: string;
+                collection?: string;
+              };
+              setKnowledgeMeta({
+                kind: parsed.kind,
+                knowledgeId: parsed.knowledgeId,
+                collection: parsed.collection,
+              });
+            } else {
+              setKnowledgeMeta(null);
+            }
+          } catch {
+            setKnowledgeMeta(null);
+          }
+        } else {
+          setKnowledgeMeta(null);
+        }
         await loadIndexHints(id, t);
       } catch (err) {
         setProject(null);
@@ -2260,25 +2288,69 @@ export function EditorPage() {
             <span className="badge share-guest-badge" title="You joined through a share link">
               Shared with you
             </span>
+          ) : knowledgeMeta?.kind === "knowledge" ? (
+            <div className="toolbar-knowledge-crumb" title="Knowledge item">
+              <Link to="/knowledge">Knowledge</Link>
+              {knowledgeMeta.collection ? (
+                <>
+                  <span className="crumb-sep">/</span>
+                  <span>{knowledgeMeta.collection}</span>
+                </>
+              ) : null}
+              <span className="crumb-sep">/</span>
+              {!isGuest && project ? (
+                <ProjectNameField
+                  project={project}
+                  variant="toolbar"
+                  onRenamed={(next) => {
+                    setProject(next);
+                    if (next.id !== id) navigate(`/p/${encodeURIComponent(next.id)}`);
+                  }}
+                />
+              ) : (
+                <span className="crumb-title">{project?.name ?? project?.id ?? id}</span>
+              )}
+            </div>
           ) : (
             <Link className="btn btn-ghost btn-quiet toolbar-home-link" to="/" title="Back to projects">
               Projects
             </Link>
           )}
-          {!isGuest && project ? (
-            <ProjectNameField
-              project={project}
-              variant="toolbar"
-              onRenamed={(next) => {
-                setProject(next);
-                if (next.id !== id) navigate(`/p/${encodeURIComponent(next.id)}`);
-              }}
-            />
-          ) : (
-            <span className="toolbar-project-name" title={project?.name ?? project?.id ?? id}>
-              {project?.name ?? project?.id ?? id}
-            </span>
-          )}
+          {knowledgeMeta?.kind !== "knowledge" &&
+            (!isGuest && project ? (
+              <ProjectNameField
+                project={project}
+                variant="toolbar"
+                onRenamed={(next) => {
+                  setProject(next);
+                  if (next.id !== id) navigate(`/p/${encodeURIComponent(next.id)}`);
+                }}
+              />
+            ) : (
+              <span className="toolbar-project-name" title={project?.name ?? project?.id ?? id}>
+                {project?.name ?? project?.id ?? id}
+              </span>
+            ))}
+          {knowledgeMeta?.kind === "knowledge" ? (
+            <>
+              <span
+                className="knowledge-status-chip is-needs toolbar-wide-only"
+                title="Step review status will appear here once the review engine is wired"
+              >
+                Review status
+              </span>
+              <Link
+                className="btn btn-quiet toolbar-wide-only"
+                to={
+                  knowledgeMeta.knowledgeId
+                    ? `/knowledge?focus=${encodeURIComponent(`kn:${knowledgeMeta.knowledgeId}`)}`
+                    : "/knowledge"
+                }
+              >
+                View in tree
+              </Link>
+            </>
+          ) : null}
           <div className="toolbar-meta toolbar-wide-only">
             <span
               className={`status-pill ${

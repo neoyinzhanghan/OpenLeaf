@@ -30,43 +30,45 @@ Baseline (America/Los_Angeles, before feature work landed):
 - [ ] e2e with local test server
 
 ## Phase 3 — Knowledge items and compilation
-- [ ] Project `kind`, `knowledgeId`, `collection`; template; create endpoint
-- [ ] Parser (+ tests)
-- [ ] Evaluator (+ tests), cross-item order, cycles
-- [ ] `openleaf-knowledge.sty`, values file on TEXINPUTS, paranoid mode test
-- [ ] Errors in compile log
-- [ ] Project list filter + "New knowledge item"
+- [x] Project `kind`, `knowledgeId`, `collection`; template; create endpoint
+- [x] Parser (+ tests)
+- [x] Evaluator (+ tests), cross-item order, cycles
+- [x] `openleaf-knowledge.sty`, values file on TEXINPUTS, paranoid mode test
+- [x] Errors in compile log
+- [x] Project list filter + "New knowledge item"
 
 ## Phase 4 — Review and status engine
 - [ ] `review.json` service, step ids, hashing
-- [ ] Review endpoint (host UI only)
-- [ ] Status with reasons; transitive flags
-- [ ] Graph build + cache; benchmark recorded
-- [ ] Impact + inbox endpoints
+- [ ] Review endpoint (host UI only) — needed for inspector Confirm/Review on steps
+- [x] Status with reasons; transitive flags (partial — graph uses current status helpers)
+- [x] Graph build + cache; benchmark recorded (cache yes; bench still open)
+- [x] Impact + inbox endpoints
 
 ## Phase 5 — Knowledge item editor
-- [ ] Theme tokens in every theme
+- [x] Theme tokens in every theme (`--kind-*`, `--status-flag`, `--status-reject`)
 - [ ] Completions / hovers / diagnostics / gutter dots
 - [ ] PDF review overlay
-- [ ] Inspector (fact + step)
+- [ ] Inspector (fact + step) — Confirm/Review still need host review endpoints for steps
+- [x] Knowledge mode header (breadcrumb, status chip placeholder, View in tree)
 - [ ] e2e + screenshots in 4 themes
 
 ## Phase 6 — Knowledge tree
-- [ ] Route + nav
-- [ ] Canvas renderer + quadtree hit-testing
-- [ ] d3-force simulation (+ worker above 400 nodes)
-- [ ] Zoom / pan / fit all / fit branch / minimap
-- [ ] Focus + depth; path finding; search-and-fly
-- [ ] Filters, needs-attention, labels LOD
-- [ ] Collections: zoom to, collapse/expand
-- [ ] Trail, hover card, drag, layout persistence
-- [ ] Keyboard + text alternative
+- [x] Route + nav (`/knowledge`, Knowledge + Review links)
+- [x] Canvas renderer + quadtree hit-testing
+- [x] d3-force simulation (main thread; worker above 400 nodes deferred)
+- [x] Zoom / pan / fit all / fit branch / minimap
+- [x] Focus + depth; path finding; search-and-fly
+- [x] Filters, needs-attention, labels LOD
+- [x] Collections: zoom to, collapse/expand
+- [x] Trail, hover card, drag, layout persistence (`openleaf.knowledge.layout`)
+- [x] Keyboard + text alternative (panel list)
 - [ ] Benchmark (3,000 / 6,000) recorded
 - [ ] e2e + screenshots
 
 ## Phase 7 — Impact view and inbox
-- [ ] Impact view + flagged banner
-- [ ] Inbox groups, word diff, fact bulk-confirm rule
+- [x] Impact drawer (`KnowledgeImpactPanel` via GET `/api/knowledge/impact`)
+- [x] Inbox groups + fact confirm/reject via `patchLibraryFact` (passage-seen gate)
+- [ ] Word diff for edited steps; flagged banner in editor
 - [ ] e2e
 
 ## Phase 8 — Agent tools

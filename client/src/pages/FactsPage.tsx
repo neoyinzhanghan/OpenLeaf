@@ -59,6 +59,12 @@ export function FactsPage() {
           <Link to="/facts" className="btn btn-quiet is-active" aria-current="page">
             Facts
           </Link>
+          <Link to="/knowledge" className="btn btn-quiet">
+            Knowledge
+          </Link>
+          <Link to="/review" className="btn btn-quiet">
+            Review
+          </Link>
           {lastProject ? (
             <Link to={`/p/${encodeURIComponent(lastProject.id)}`} className="btn btn-quiet topbar-wide-only">
               {lastProject.name}
@@ -91,7 +97,7 @@ export function FactsPage() {
           if (!isTransientPdfErrorMessage(msg)) setError(msg);
         }}
       />
-      <nav className={`phone-tabbar${lastProject ? " has-project" : ""}`} aria-label="Primary">
+      <nav className={`phone-tabbar${lastProject ? " has-project" : ""} has-knowledge`} aria-label="Primary">
         <Link to="/">Projects</Link>
         {lastProject ? (
           <Link to={`/p/${encodeURIComponent(lastProject.id)}`} className="phone-tabbar-project">
@@ -102,6 +108,8 @@ export function FactsPage() {
         <Link to="/facts" aria-current="page">
           Facts
         </Link>
+        <Link to="/knowledge">Knowledge</Link>
+        <Link to="/review">Review</Link>
       </nav>
     </div>
   );

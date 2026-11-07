@@ -1,6 +1,6 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { Link, useSearchParams } from "react-router-dom";
-import { createProjectNamed, listProjects } from "../api/client";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { createKnowledgeItem, createProjectNamed, listKnowledgeItems, listProjects } from "../api/client";
 import { hostGateway, hostLogout, type HostGatewayView } from "../api/share";
 import type { ProjectMeta } from "../api/types";
 import { ErrorBanner } from "../components/ErrorBanner";
@@ -11,8 +11,11 @@ import { readLastProject, rememberProject, type LastProject } from "../lib/lastP
 import { projectFolderName } from "../projectFolder";
 import { useSession } from "../session/SessionContext";
 
+type ProjectFilter = "all" | "papers" | "knowledge";
+
 export function ProjectList() {
   const { session, refresh } = useSession();
+  const navigate = useNavigate();
   const [lastProject, setLastProject] = useState<LastProject | null>(null);
   useEffect(() => {
     setLastProject(readLastProject());
@@ -20,9 +23,12 @@ export function ProjectList() {
   const [params] = useSearchParams();
   const remoteHost = session.kind === "host" && session.remote;
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
+  const [knowledgeIds, setKnowledgeIds] = useState<Set<string>>(() => new Set());
+  const [filter, setFilter] = useState<ProjectFilter>("all");
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [knBusy, setKnBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [gateway, setGateway] = useState<HostGatewayView | null>(null);
   const [phoneOpen, setPhoneOpen] = useState(false);
@@ -30,7 +36,9 @@ export function ProjectList() {
   const folder = title ? projectFolderName(title) : null;
 
   const refreshProjects = async () => {
-    setProjects(await listProjects());
+    const [list, kn] = await Promise.all([listProjects(), listKnowledgeItems()]);
+    setProjects(list);
+    setKnowledgeIds(new Set(kn.items.map((i) => i.id)));
   };
 
   useEffect(() => {
@@ -67,6 +75,12 @@ export function ProjectList() {
     };
   }, [remoteHost]);
 
+  const visible = useMemo(() => {
+    if (filter === "all") return projects;
+    if (filter === "knowledge") return projects.filter((p) => knowledgeIds.has(p.id));
+    return projects.filter((p) => !knowledgeIds.has(p.id));
+  }, [projects, knowledgeIds, filter]);
+
   const onCreate = async (e: FormEvent) => {
     e.preventDefault();
     if (!title || !folder) return;
@@ -80,6 +94,23 @@ export function ProjectList() {
       setError(err instanceof Error ? err.message : "Could not create project");
     } finally {
       setBusy(false);
+    }
+  };
+
+  const onCreateKnowledge = async () => {
+    const knTitle = title || window.prompt("Knowledge item title", "New knowledge item");
+    if (!knTitle?.trim()) return;
+    setKnBusy(true);
+    setError(null);
+    try {
+      const { project } = await createKnowledgeItem({ title: knTitle.trim() });
+      setName("");
+      rememberProject({ id: project.id, name: project.name });
+      navigate(`/p/${encodeURIComponent(project.id)}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not create knowledge item");
+    } finally {
+      setKnBusy(false);
     }
   };
 
@@ -100,6 +131,12 @@ export function ProjectList() {
           </Link>
           <Link to="/facts" className="btn btn-quiet">
             Facts
+          </Link>
+          <Link to="/knowledge" className="btn btn-quiet">
+            Knowledge
+          </Link>
+          <Link to="/review" className="btn btn-quiet">
+            Review
           </Link>
         </nav>
         <div className="topbar-end">
@@ -127,8 +164,8 @@ export function ProjectList() {
         )}
         <p className="home-lead">
           Local folders with a main <code>.tex</code>, bibliography, and figures — edit and compile side by side.
-          Your personal reference collection lives separately in{" "}
-          <Link to="/library">Library</Link>.
+          Your personal reference collection lives separately in <Link to="/library">Library</Link>. Knowledge items
+          are short write-ups in the same editor.
         </p>
 
         {remoteHost && (
@@ -151,7 +188,28 @@ export function ProjectList() {
           </div>
         )}
 
-        <form className="home-actions" onSubmit={onCreate}>
+        <div className="project-filter-tabs" role="tablist" aria-label="Project kind">
+          {(
+            [
+              ["all", "All"],
+              ["papers", "Papers"],
+              ["knowledge", "Knowledge"],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={filter === id}
+              className={filter === id ? "is-active" : undefined}
+              onClick={() => setFilter(id)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <form className="home-actions is-split" onSubmit={onCreate}>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -161,6 +219,14 @@ export function ProjectList() {
           <button className="btn btn-primary" type="submit" disabled={busy || !title || !folder}>
             {busy ? "Creating…" : "Create from example"}
           </button>
+          <button
+            type="button"
+            className="btn btn-quiet"
+            disabled={knBusy}
+            onClick={() => void onCreateKnowledge()}
+          >
+            {knBusy ? "Creating…" : "New knowledge item"}
+          </button>
         </form>
         {title && folder && folder !== title ? (
           <p className="home-actions-hint">
@@ -168,7 +234,8 @@ export function ProjectList() {
           </p>
         ) : null}
         <p className="home-actions-hint">
-          Seeds a starter article you can rename and rewrite. Click a project title to rename it. Spaces are fine.
+          Seeds a starter article you can rename and rewrite. Knowledge items use the knowledge template and open in
+          the editor. Click a project title to rename it.
         </p>
         {!remoteHost && <HostAccessPanel open={phoneOpen} onClose={() => setPhoneOpen(false)} />}
 
@@ -181,7 +248,7 @@ export function ProjectList() {
             </div>
           )}
           {!loading &&
-            projects.map((p) => (
+            visible.map((p) => (
               <ProjectCard
                 key={p.id}
                 project={p}
@@ -195,17 +262,19 @@ export function ProjectList() {
                 }}
               />
             ))}
-          {!loading && projects.length === 0 && !error && (
+          {!loading && visible.length === 0 && !error && (
             <div className="empty-hint empty-hint-card">
-              <strong>No projects yet</strong>
+              <strong>No {filter === "all" ? "projects" : filter} yet</strong>
               <p>
-                Pick an id like <code>thesis-ch2</code> above, then create from the example template.
+                {filter === "knowledge"
+                  ? "Use “New knowledge item” above to start a short write-up."
+                  : "Pick a name above, then create from the example template."}
               </p>
             </div>
           )}
         </div>
       </main>
-      <nav className={`phone-tabbar${lastProject ? " has-project" : ""}`} aria-label="Primary">
+      <nav className={`phone-tabbar${lastProject ? " has-project" : ""} has-knowledge`} aria-label="Primary">
         <Link to="/" aria-current="page">
           Projects
         </Link>
@@ -216,6 +285,8 @@ export function ProjectList() {
         ) : null}
         <Link to="/library">Library</Link>
         <Link to="/facts">Facts</Link>
+        <Link to="/knowledge">Knowledge</Link>
+        <Link to="/review">Review</Link>
       </nav>
     </div>
   );

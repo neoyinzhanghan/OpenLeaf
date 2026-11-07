@@ -41,6 +41,12 @@ export function LibraryPage() {
           >
             Facts
           </Link>
+          <Link to="/knowledge" className="btn btn-quiet">
+            Knowledge
+          </Link>
+          <Link to="/review" className="btn btn-quiet">
+            Review
+          </Link>
           {lastProject ? (
             <Link to={`/p/${encodeURIComponent(lastProject.id)}`} className="btn btn-quiet topbar-wide-only">
               {lastProject.name}
@@ -63,7 +69,7 @@ export function LibraryPage() {
         </div>
       </header>
       <LibraryPanel open variant="page" focusCitekey={focusCitekey} onClose={() => undefined} />
-      <nav className={`phone-tabbar${lastProject ? " has-project" : ""}`} aria-label="Primary">
+      <nav className={`phone-tabbar${lastProject ? " has-project" : ""} has-knowledge`} aria-label="Primary">
         <Link to="/">Projects</Link>
         {lastProject ? (
           <Link to={`/p/${encodeURIComponent(lastProject.id)}`} className="phone-tabbar-project">
@@ -76,6 +82,8 @@ export function LibraryPage() {
         <Link to={focusCitekey ? `/facts?paper=${encodeURIComponent(focusCitekey)}` : "/facts"}>
           Facts
         </Link>
+        <Link to="/knowledge">Knowledge</Link>
+        <Link to="/review">Review</Link>
       </nav>
     </div>
   );
