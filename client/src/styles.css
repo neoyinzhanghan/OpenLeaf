@@ -10424,3 +10424,80 @@ button.lib-badge:hover {
     grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
   }
 }
+
+.knowledge-flag-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  align-items: center;
+  padding: 0.55rem 0.9rem;
+  background: color-mix(in srgb, var(--status-flag) 18%, var(--bg));
+  border-bottom: 1px solid color-mix(in srgb, var(--status-flag) 40%, var(--border));
+  font-size: 0.9rem;
+}
+.knowledge-flag-banner strong { margin-right: 0.25rem; }
+.knowledge-inspector {
+  position: fixed;
+  right: 0.75rem;
+  bottom: 0.75rem;
+  width: min(360px, calc(100vw - 1.5rem));
+  max-height: min(70vh, 520px);
+  overflow: auto;
+  z-index: 40;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px color-mix(in srgb, #000 22%, transparent);
+  padding: 0.75rem;
+}
+.knowledge-inspector-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+.knowledge-inspector-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+}
+.knowledge-passage {
+  margin: 0.4rem 0;
+  padding: 0.5rem 0.65rem;
+  border-left: 3px solid var(--kind-fact);
+  background: color-mix(in srgb, var(--kind-fact) 10%, var(--bg));
+  font-size: 0.88rem;
+}
+.knowledge-step-body {
+  white-space: pre-wrap;
+  font-size: 0.8rem;
+  max-height: 8rem;
+  overflow: auto;
+  background: var(--bg);
+  padding: 0.45rem;
+  border-radius: 6px;
+}
+.knowledge-word-diff { font-size: 0.88rem; line-height: 1.45; }
+.knowledge-word-diff .wd-del {
+  text-decoration: line-through;
+  color: var(--status-reject, var(--danger));
+  opacity: 0.85;
+}
+.knowledge-word-diff .wd-add {
+  background: color-mix(in srgb, var(--status-flag) 28%, transparent);
+  border-radius: 2px;
+}
+.knowledge-step-glyph {
+  margin-left: 2px;
+  width: 6px !important;
+  border-radius: 50%;
+}
+.knowledge-step-glyph.status-reviewed { background: var(--kind-knowledge); }
+.knowledge-step-glyph.status-needs-review { background: transparent; border: 1.5px solid var(--kind-knowledge); }
+.knowledge-step-glyph.status-flagged { background: var(--status-flag); box-shadow: 0 0 0 2px color-mix(in srgb, var(--status-flag) 35%, transparent); }
+.knowledge-step-glyph.status-rejected { background: var(--status-reject, var(--danger)); }
+.knowledge-status-chip.is-ok {
+  background: color-mix(in srgb, var(--kind-knowledge) 16%, var(--bg));
+}

@@ -1330,3 +1330,38 @@ export function getKnowledgeImpact(node: string): Promise<KnowledgeImpact> {
 export function getKnowledgeInbox(): Promise<{ groups: KnowledgeInboxGroup[] }> {
   return request("/api/knowledge/inbox");
 }
+
+export type KnowledgeStepStatus = {
+  id: string;
+  status: string;
+  why: string[];
+  body: string;
+  hash: string;
+  line?: number;
+  reviewedText?: string;
+};
+
+export function getKnowledgeSteps(projectId: string): Promise<{ steps: KnowledgeStepStatus[] }> {
+  return request(`/api/projects/${encodeURIComponent(projectId)}/knowledge/steps`);
+}
+
+export function checkKnowledgeProject(projectId: string): Promise<{
+  errors: Array<{ message: string; line?: number }>;
+  steps: KnowledgeStepStatus[];
+  usesKnowledge: boolean;
+}> {
+  return request(`/api/projects/${encodeURIComponent(projectId)}/knowledge/check`, {
+    method: "POST",
+    body: "{}",
+  });
+}
+
+export function reviewKnowledgeStep(
+  projectId: string,
+  body: { stepId: string; verdict: "reviewed" | "rejected" | "clear"; by?: string },
+): Promise<{ review: unknown }> {
+  return request(`/api/projects/${encodeURIComponent(projectId)}/knowledge/review`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}

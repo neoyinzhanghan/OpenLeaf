@@ -19,3 +19,9 @@ One line per decision: **question** — choice — why. Newest at the bottom.
 - **Force sim on main thread for now** — `d3-force` + `d3-quadtree` in the page; Web Worker deferred until graphs regularly exceed ~400 nodes. — Keeps the first client ship small; API surface unchanged.
 - **Inbox fact confirm gate** — `sessionStorage` remembers which fact passages were opened (“See passage”) before Confirm is allowed. — Spec bulk-confirm rule applied to single confirm too, without a server round-trip.
 - **Knowledge mode detection** — Editor reads `openleaf.json` via existing `readProjectFile` rather than extending `ProjectMeta`. — Avoids an API shape change; config is already protected for writes.
+- **writeProjectConfig must round-trip kind/knowledgeId/collection** — Extended read/write; earlier versions silently dropped them so list/graph saw zero items. — Root cause of empty Knowledge list after create.
+- **Graph cache key** — Project `openleaf.json` / `review.json` / `main.tex` mtimes only (removed 2s time bucket). — Avoids stale cache and flaky e2e without busy-wait.
+- **MCP tool count assertion** — Compare to `libraryMcpToolNames().length` instead of hard-coded 8. — Knowledge tools expanded the list.
+- **Step edit detection** — Comments alone do not invalidate review hashes (`normalizeStepText` strips `%`); tests change real expression text. — Matches authoring intent.
+- **Seed script** — TypeScript via `tsx` (`scripts/seed-knowledge-demo.mts`) wrapped by `.mjs` npm script. — Reuses server services; DEMO titles everywhere.
+- **PDF review overlay deferred** — Inspector + gutter + flagged banner ship first; SyncTeX overlay logged as blocker. — Highest-value review path without blocking handover.

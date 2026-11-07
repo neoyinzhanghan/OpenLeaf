@@ -53,8 +53,6 @@ async function mtimeStamp(): Promise<string> {
       }
     }
   }
-  // facts — cheap: library papers dir count + collections mtime is enough for v1 cache key
-  parts.push(`t:${Date.now() - (Date.now() % 2000)}`); // 2s bucket — tests can force rebuild
   return parts.sort().join("|");
 }
 
@@ -285,6 +283,42 @@ export async function knowledgeInbox(): Promise<{
       })),
     });
   }
+  // Steps whose reviewed text drifted (changed outside OpenLeaf UI)
+  try {
+    const { listProjects, readProjectConfig } = await import("../projectFs.js");
+    const { listStepStatuses } = await import("./review.js");
+    const changedSteps: Array<{
+      type: "step";
+      id: string;
+      label: string;
+      status: Status;
+      createdBy?: string;
+    }> = [];
+    for (const p of await listProjects()) {
+      try {
+        const cfg = await readProjectConfig(p.id);
+        if (cfg.kind !== "knowledge") continue;
+        for (const s of await listStepStatuses(p.id)) {
+          if (s.status === "needs-review" && s.reviewedText && s.reviewedText !== s.body) {
+            changedSteps.push({
+              type: "step",
+              id: `${p.id}:${s.id}`,
+              label: `${cfg.name || p.name} · ${s.id}`,
+              status: "needs-review",
+            });
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    if (changedSteps.length) {
+      groups.push({ title: "Changed outside OpenLeaf", kind: "changed", items: changedSteps });
+    }
+  } catch {
+    /* ignore */
+  }
+
   const graph = await buildKnowledgeGraph();
   const flagged = graph.nodes.filter((n) => n.status === "flagged" || n.status === "rejected");
   if (flagged.length) {

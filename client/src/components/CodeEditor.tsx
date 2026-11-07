@@ -89,6 +89,14 @@ type Props = {
   commentMarks?: CommentMark[];
   /** Citation integrity / claim gutter markers on this file */
   citationMarks?: CitationGutterMark[];
+  /** Knowledge `\fact` / `\kn` / `\out` completions */
+  factHints?: import("../latex/completions").KnowledgeFactHint[];
+  knowledgeHints?: import("../latex/completions").KnowledgeItemHint[];
+  outNames?: string[];
+  /** Knowledge step status gutter dots */
+  knowledgeStepMarks?: Array<{ line: number; status: string }>;
+  /** Cursor moved — used by knowledge inspector */
+  onCursorChange?: (pos: { line: number; column: number; lineText: string; nearby: string[] }) => void;
   /** Cmd/Ctrl+Alt+M or selection helper — open compose for current selection */
   onRequestComment?: (sel: CommentSelection) => void;
   /** Click a gutter mark → focus that thread in the comments panel */
@@ -175,6 +183,11 @@ export function CodeEditor({
   readOnly = false,
   commentMarks = [],
   citationMarks = [],
+  factHints = [],
+  knowledgeHints = [],
+  outNames = [],
+  knowledgeStepMarks = [],
+  onCursorChange,
   onRequestComment,
   onOpenCommentThread,
   changeMarks = null,
@@ -217,11 +230,17 @@ export function CodeEditor({
   const labelsRef = useRef(labels);
   const onLibraryCiteRef = useRef(onLibraryCite);
   const canOpenLibraryRef = useRef(canOpenLibrary);
+  const factHintsRef = useRef(factHints);
+  const knowledgeHintsRef = useRef(knowledgeHints);
+  const outNamesRef = useRef(outNames);
   citationsRef.current = citations;
   citationHintsRef.current = citationHints;
   labelsRef.current = labels;
   onLibraryCiteRef.current = onLibraryCite;
   canOpenLibraryRef.current = canOpenLibrary;
+  factHintsRef.current = factHints;
+  knowledgeHintsRef.current = knowledgeHints;
+  outNamesRef.current = outNames;
   const pathRef = useRef(path);
   pathRef.current = path;
   const bindingRef = useRef<YMonacoBinding | null>(null);
@@ -240,6 +259,9 @@ export function CodeEditor({
       citationHints: citationHintsRef.current,
       labels: labelsRef.current,
       openLibrary: canOpenLibraryRef.current,
+      factHints: factHintsRef.current,
+      knowledgeHints: knowledgeHintsRef.current,
+      outNames: outNamesRef.current,
     }));
     // Every model (including ones @monaco-editor/react creates from `path`) must
     // stay on LF so Yjs offsets match, especially for Windows guests.
@@ -298,10 +320,28 @@ export function CodeEditor({
     return true;
   };
 
+  const onCursorChangeRef = useRef(onCursorChange);
+  onCursorChangeRef.current = onCursorChange;
+
   const handleMount: OnMount = (ed, monacoApi) => {
     editorRef.current = ed;
     monacoRef.current = monacoApi;
     setEditorReady(true);
+    ed.onDidChangeCursorPosition(() => {
+      const model = ed.getModel();
+      const pos = ed.getPosition();
+      if (!model || !pos || !onCursorChangeRef.current) return;
+      const line = pos.lineNumber;
+      const start = Math.max(1, line - 8);
+      const nearby: string[] = [];
+      for (let i = start; i <= line; i += 1) nearby.push(model.getLineContent(i));
+      onCursorChangeRef.current({
+        line,
+        column: pos.column,
+        lineText: model.getLineContent(line),
+        nearby,
+      });
+    });
     ed.addCommand(monacoApi.KeyMod.CtrlCmd | monacoApi.KeyCode.KeyS, () => {
       if (readOnlyRef.current) return;
       saveRef.current();
@@ -697,6 +737,30 @@ export function CodeEditor({
       }),
     );
   }, [citationMarks, editorReady, path]);
+
+  const knowledgeStepDecoRef = useRef<string[]>([]);
+  useEffect(() => {
+    const ed = editorRef.current;
+    if (!ed || !editorReady) return;
+    knowledgeStepDecoRef.current = ed.deltaDecorations(
+      knowledgeStepDecoRef.current,
+      knowledgeStepMarks
+        .filter((m) => m.line >= 1)
+        .map((m) => ({
+          range: {
+            startLineNumber: m.line,
+            startColumn: 1,
+            endLineNumber: m.line,
+            endColumn: 1,
+          },
+          options: {
+            isWholeLine: false,
+            linesDecorationsClassName: `knowledge-step-glyph status-${m.status}`,
+            hoverMessage: { value: `Step status: **${m.status}**` },
+          },
+        })),
+    );
+  }, [knowledgeStepMarks, editorReady, path]);
 
   // Cursor-style show-changes: green additions + red deleted view zones.
   // Re-apply on model swap (file/path remount) — decorations die with the old model.

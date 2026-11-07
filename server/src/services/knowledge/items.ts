@@ -102,6 +102,12 @@ export async function createKnowledgeItem(input: {
     collection: input.collection,
   });
   const { getProject } = await import("../projectFs.js");
+  try {
+    const { invalidateKnowledgeGraph } = await import("./graph.js");
+    invalidateKnowledgeGraph();
+  } catch {
+    /* ignore */
+  }
   return { project: await getProject(project.id), knowledgeId };
 }
 

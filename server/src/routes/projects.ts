@@ -1194,6 +1194,52 @@ projectsRouter.post("/:id/fs/rename", async (req, res) => {
   }
 });
 
+projectsRouter.get("/:id/knowledge/steps", async (req, res) => {
+  if (req.access?.mode === "guest") {
+    res.status(403).json({ error: "Only the host can inspect knowledge review state" });
+    return;
+  }
+  try {
+    const { listStepStatuses } = await import("../services/knowledge/review.js");
+    res.json({ steps: await listStepStatuses(req.params.id) });
+  } catch (err) {
+    res.status(statusOf(err)).json(errorBody(err));
+  }
+});
+
+projectsRouter.post("/:id/knowledge/check", async (req, res) => {
+  try {
+    const { prepareKnowledgeCompile } = await import("../services/knowledge/prepareCompile.js");
+    const { listStepStatuses } = await import("../services/knowledge/review.js");
+    const prepared = await prepareKnowledgeCompile(req.params.id);
+    const steps = await listStepStatuses(req.params.id);
+    res.json({ errors: prepared.errors, steps, usesKnowledge: prepared.usesKnowledge });
+  } catch (err) {
+    res.status(statusOf(err)).json(errorBody(err));
+  }
+});
+
+projectsRouter.post("/:id/knowledge/review", async (req, res) => {
+  if (req.access?.mode === "guest") {
+    res.status(403).json({ error: "Only the host can review knowledge steps" });
+    return;
+  }
+  try {
+    const body = z
+      .object({
+        stepId: z.string().min(1),
+        verdict: z.enum(["reviewed", "rejected", "clear"]),
+        by: z.string().optional(),
+      })
+      .parse(req.body ?? {});
+    const { reviewStep } = await import("../services/knowledge/review.js");
+    const review = await reviewStep(req.params.id, body.stepId, body.verdict, body.by ?? "");
+    res.json({ review });
+  } catch (err) {
+    res.status(statusOf(err)).json(errorBody(err));
+  }
+});
+
 projectsRouter.post("/:id/compile", async (req, res) => {
   const id = req.params.id;
   const stream = req.query.stream === "1" || req.headers.accept?.includes("text/event-stream");

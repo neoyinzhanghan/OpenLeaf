@@ -26,7 +26,9 @@
     "postinstall": "node scripts/install-cli-bin.mjs",
     "typecheck": "npm run typecheck -w server && npm run typecheck -w client && npm run typecheck -w cli",
     "test": "node scripts/test-all.mjs",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "seed:knowledge-demo": "node scripts/seed-knowledge-demo.mjs",
+    "bench:knowledge-graph": "npx tsx scripts/bench-knowledge-graph.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",

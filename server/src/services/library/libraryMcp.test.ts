@@ -11,7 +11,7 @@ const { loadConfig } = await import("../../config.js");
 loadConfig(true);
 
 const { addPaper, closeIndexDb, reindexLibrary } = await import("./index.js");
-const { handleLibraryMcpHttp } = await import("./libraryMcp.js");
+const { handleLibraryMcpHttp, libraryMcpToolNames } = await import("./libraryMcp.js");
 
 describe("library MCP", () => {
   before(async () => {
@@ -47,7 +47,8 @@ describe("library MCP", () => {
     });
     const tools = (listed.body as { result: { tools: Array<{ name: string }> } }).result.tools;
     assert.ok(tools.some((t) => t.name === "library_search"));
-    assert.equal(tools.length, 8);
+    assert.ok(tools.some((t) => t.name === "fact_propose"));
+    assert.equal(tools.length, libraryMcpToolNames().length);
 
     const search = await handleLibraryMcpHttp({
       jsonrpc: "2.0",

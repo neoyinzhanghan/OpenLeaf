@@ -125,6 +125,63 @@ export function registerLatexLanguage(monaco: Monaco): void {
           }
         }
       }
+      const knRe = /\\(?:fact|kn|knref|out)(?:\[[^\]]*\])?\{([^}]+)\}/g;
+      while ((m = knRe.exec(line))) {
+        const key = m[1]!.trim();
+        const startCol = m.index + m[0].indexOf("{") + 2;
+        const endCol = startCol + key.length;
+        if (position.column >= startCol && position.column <= endCol) {
+          const ctx = contextProvider();
+          const cmd = m[0].startsWith("\\fact")
+            ? "fact"
+            : m[0].startsWith("\\out")
+              ? "out"
+              : "kn";
+          if (cmd === "fact") {
+            const hint = ctx.factHints?.find((h) => h.key === key);
+            return {
+              range: {
+                startLineNumber: position.lineNumber,
+                endLineNumber: position.lineNumber,
+                startColumn: startCol,
+                endColumn: endCol,
+              },
+              contents: [
+                { value: `**${hint?.statement ?? key}**` },
+                {
+                  value: `\`${key}\` · ${hint?.status ?? "fact"}${
+                    hint?.value != null ? ` · ${hint.value}${hint.unit ? ` ${hint.unit}` : ""}` : ""
+                  }`,
+                },
+              ],
+            };
+          }
+          if (cmd === "kn") {
+            const hint = ctx.knowledgeHints?.find((h) => h.id === key);
+            return {
+              range: {
+                startLineNumber: position.lineNumber,
+                endLineNumber: position.lineNumber,
+                startColumn: startCol,
+                endColumn: endCol,
+              },
+              contents: [
+                { value: `**${hint?.title ?? key}**` },
+                { value: `\`${key}\` · ${hint?.status ?? "knowledge"}` },
+              ],
+            };
+          }
+          return {
+            range: {
+              startLineNumber: position.lineNumber,
+              endLineNumber: position.lineNumber,
+              startColumn: startCol,
+              endColumn: endCol,
+            },
+            contents: [{ value: `**\\out{${key}}**` }],
+          };
+        }
+      }
       return null;
     },
   });

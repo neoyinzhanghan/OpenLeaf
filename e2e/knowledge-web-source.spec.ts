@@ -75,5 +75,6 @@ test("add a web page and confirm a fact on its snapshot text", async ({ page }) 
   expect(factBody.fact.key).toBeTruthy();
 
   await page.goto(`${instance.baseURL}/facts?paper=${encodeURIComponent(body.paper.citekey)}`);
+  await page.getByRole("tab", { name: /Confirmed/i }).click();
   await expect(page.locator(".library-facts-key-chip").first()).toBeVisible({ timeout: 20_000 });
 });

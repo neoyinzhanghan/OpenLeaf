@@ -273,6 +273,21 @@ Then open `http://127.0.0.1:5176`.
 - Light / dark theme
 - Download PDF or project ZIP (excludes `.openleaf/`); optional track-changes PDF via `latexdiff`
 - Temporary public links per project (Cloudflare Quick Tunnel + one-off credentials), see below
+- **Knowledge** — facts from papers/web, knowledge items as LaTeX projects, review inbox, and a force-directed tree (see below)
+
+## Knowledge
+
+Knowledge turns verified source extracts (**facts**) and short LaTeX write-ups (**knowledge items**) into a shared slip box. Papers can cite both with `\fact{key}` and `\kn{id}` via `openleaf-knowledge`. Only the host UI confirms facts or marks steps reviewed; MCP tools propose and draft, never verify.
+
+Try it:
+
+1. `npm run seed:knowledge-demo` (titles contain `DEMO`; remove with `npm run seed:knowledge-demo -- --remove`).
+2. Open **Knowledge** in the nav for the tree; **Review** for the inbox.
+3. Open a DEMO knowledge item and compile — values come from the generated TeX values file.
+4. Confirm or reject facts on **Facts**; downstream items flag in the editor banner and tree.
+5. Agents: `docs/knowledge/AUTHORING.md` and host MCP tools on `POST /api/library/mcp`.
+
+Spec and build notes: `docs/knowledge/`. Graph build bench: `npm run bench:knowledge-graph`.
 
 ## Sharing a project publicly
 

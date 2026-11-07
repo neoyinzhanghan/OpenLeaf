@@ -221,6 +221,9 @@ export async function readProjectConfig(id: string, rootDir?: string): Promise<P
       name: storedName || undefined,
       identities: Array.isArray(raw.identities) ? raw.identities : undefined,
       fileAccess: Array.isArray(rules) ? { rules } : undefined,
+      kind: raw.kind === "knowledge" || raw.kind === "paper" ? raw.kind : undefined,
+      knowledgeId: typeof raw.knowledgeId === "string" ? raw.knowledgeId : undefined,
+      collection: typeof raw.collection === "string" ? raw.collection : undefined,
     };
   } catch {
     return { mainFile: "main.tex", engine: globalEngine };
@@ -262,10 +265,16 @@ export async function writeProjectConfig(
     name: patch.name === undefined ? current.name : patch.name,
     identities: patch.identities ?? current.identities,
     fileAccess: patch.fileAccess !== undefined ? patch.fileAccess : current.fileAccess,
+    kind: patch.kind !== undefined ? patch.kind : current.kind,
+    knowledgeId: patch.knowledgeId !== undefined ? patch.knowledgeId : current.knowledgeId,
+    collection: patch.collection !== undefined ? patch.collection : current.collection,
   };
   if (!next.identities) delete next.identities;
   if (!next.name) delete next.name;
   if (!next.fileAccess) delete next.fileAccess;
+  if (!next.kind) delete next.kind;
+  if (!next.knowledgeId) delete next.knowledgeId;
+  if (!next.collection) delete next.collection;
   const cfgPath = rootDir ? path.join(rootDir, "openleaf.json") : resolveProjectPath(id, "openleaf.json");
   await fs.writeFile(cfgPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
   return next;

@@ -31,7 +31,11 @@ For human setup and usage, see [README.md](README.md).
 | `library/.cache/index.sqlite` | Derived FTS5 index — rebuild from `record.json`, never authoritative |
 | `projects/<id>/citations.json` | Claim-support instances (file:line); git-tracked |
 | `server/src/services/library/` | Library service layer (REST + MCP share this) |
-| `POST /api/library/mcp` | Host-only MCP (8 tools); do not wire into Share without risk-ack |
+| `POST /api/library/mcp` | Host-only MCP (library + knowledge tools); do not wire into Share without risk-ack |
+| `docs/knowledge/` | Knowledge feature brief/spec; agents: see [AUTHORING.md](docs/knowledge/AUTHORING.md) |
+| `POST /api/knowledge/*` | Host-only knowledge graph, items, impact, inbox |
+| `projects/<id>/review.json` | Knowledge step reviews (host UI only); git-tracked |
+| `server/tex/openleaf-knowledge.sty` | LaTeX package for `\fact` / `\kn` / calculations |
 | Library paper shares | Host `GET/POST/DELETE /api/library-share` + `POST …/import`; guests `/api/lib-share/:token` (join/notes/bundle/pdf). Invite path `/lib-share/:token` on host gateway — token is the credential |
 | Library AI links | Host `GET/POST/DELETE /api/library-ai` (riskAck required). AI Bearer tools + MCP at `/api/library-ai/v1/*`; briefing `/library-ai/:token`. Adds are verify-first then **queued** for host Accept/Reject (`GET/POST /api/library-ai/review`). |
 | Library PDFs | Local `papers/<citekey>/attachment.pdf`. List shows PDF / PDF↓ badges. `GET …/pdf-source`, `POST …/fetch-pdf` downloads arXiv or Unpaywall OA PDF into the record. |

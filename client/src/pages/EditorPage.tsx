@@ -34,8 +34,15 @@ import {
   listLibraryPapers,
   citeLibraryIntoProject,
   listProjectCitations,
+  listAllLibraryFacts,
+  listKnowledgeItems,
+  checkKnowledgeProject,
   type CitationInstance,
+  type KnowledgeStepStatus,
 } from "../api/client";
+import type { KnowledgeFactHint, KnowledgeItemHint } from "../latex/completions";
+import { extractOutNames, knowledgeCursorTarget, type KnowledgeCursorTarget } from "../latex/knowledgeSupport";
+import { KnowledgeInspector } from "../components/KnowledgeInspector";
 import type { AppConfig, FileAccessLevel, FileChangeDiff, GitCommitInfo, PaperRecord, ProjectMeta, TimelineView, TreeNode } from "../api/types";
 import { guestLogout, hostLogout, listProjectAiReview, acceptAiReview, rejectAiReview, type AiReviewCollaborator, type AiReviewHunk } from "../api/share";
 import { flushCollab, useProjectCollab } from "../collab/useProjectCollab";
@@ -267,6 +274,12 @@ export function EditorPage() {
     knowledgeId?: string;
     collection?: string;
   } | null>(null);
+  const [factHints, setFactHints] = useState<KnowledgeFactHint[]>([]);
+  const [knowledgeHints, setKnowledgeHints] = useState<KnowledgeItemHint[]>([]);
+  const [knowledgeSteps, setKnowledgeSteps] = useState<KnowledgeStepStatus[]>([]);
+  const [knowledgeFlagWhy, setKnowledgeFlagWhy] = useState<string[]>([]);
+  const [knowledgeTarget, setKnowledgeTarget] = useState<KnowledgeCursorTarget>(null);
+  const [knowledgeInspectorOpen, setKnowledgeInspectorOpen] = useState(false);
   useEffect(() => {
     if (!id) return;
     rememberProject({ id, name: project?.name || id });
@@ -663,6 +676,46 @@ export function EditorPage() {
       }
     })();
   }, [id, loadIndexHints, isGuest]);
+
+  const refreshKnowledgeUi = useCallback(async () => {
+    if (!id || isGuest) return;
+    try {
+      const [facts, items, check] = await Promise.all([
+        listAllLibraryFacts().catch(() => ({ facts: [] })),
+        listKnowledgeItems().catch(() => ({ items: [] })),
+        checkKnowledgeProject(id).catch(() => null),
+      ]);
+      setFactHints(
+        facts.facts
+          .filter((f) => f.key)
+          .map((f) => ({
+            key: f.key!,
+            statement: f.input,
+            value: f.value ?? null,
+            unit: f.unit,
+            status: f.status,
+          })),
+      );
+      setKnowledgeHints(
+        items.items.map((it) => ({
+          id: it.knowledgeId,
+          title: it.title || it.name,
+          status: undefined,
+        })),
+      );
+      if (check) {
+        setKnowledgeSteps(check.steps);
+        const why = check.steps.flatMap((s) => (s.status === "flagged" || s.status === "rejected" ? s.why : []));
+        setKnowledgeFlagWhy(why);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [id, isGuest]);
+
+  useEffect(() => {
+    void refreshKnowledgeUi();
+  }, [refreshKnowledgeUi, knowledgeMeta?.kind, content]);
 
   // Refresh tree when remote FS ops bump treeVersion
   useEffect(() => {
@@ -2334,10 +2387,18 @@ export function EditorPage() {
           {knowledgeMeta?.kind === "knowledge" ? (
             <>
               <span
-                className="knowledge-status-chip is-needs toolbar-wide-only"
-                title="Step review status will appear here once the review engine is wired"
+                className={`knowledge-status-chip toolbar-wide-only${
+                  knowledgeSteps.some((s) => s.status === "flagged" || s.status === "rejected")
+                    ? " is-flag"
+                    : knowledgeSteps.some((s) => s.status === "needs-review")
+                      ? " is-needs"
+                      : " is-ok"
+                }`}
+                title={knowledgeSteps.map((s) => `${s.id}: ${s.status}`).join("\n") || "No steps yet"}
               >
-                Review status
+                {knowledgeSteps.length
+                  ? `${knowledgeSteps.filter((s) => s.status === "needs-review" || s.status === "flagged").length} of ${knowledgeSteps.length} steps need review`
+                  : "No steps yet"}
               </span>
               <Link
                 className="btn btn-quiet toolbar-wide-only"
@@ -2989,6 +3050,45 @@ export function EditorPage() {
         </ErrorBanner>
       ) : null}
 
+      {knowledgeFlagWhy.length > 0 ? (
+        <div className="knowledge-flag-banner" role="status">
+          <strong>Flagged upstream change</strong>
+          <span>{knowledgeFlagWhy.slice(0, 3).join("; ")}</span>
+          <button
+            type="button"
+            className="btn btn-quiet"
+            onClick={() => {
+              const step = knowledgeSteps.find((s) => s.status === "flagged" || s.status === "needs-review");
+              if (step) {
+                setKnowledgeTarget({ kind: "step", stepId: step.id, line: step.line ?? 1 });
+                setKnowledgeInspectorOpen(true);
+              }
+            }}
+          >
+            Re-check these steps
+          </button>
+          <button
+            type="button"
+            className="btn btn-quiet"
+            onClick={() => {
+              const prompt = `An upstream fact or knowledge input was rejected or changed (${knowledgeFlagWhy.join("; ")}). Find a replacement source with exact quotes and propose a new fact via fact_propose.`;
+              void navigator.clipboard.writeText(prompt);
+            }}
+          >
+            Ask agent to find a new source
+          </button>
+        </div>
+      ) : null}
+
+      {knowledgeInspectorOpen && knowledgeTarget && id ? (
+        <KnowledgeInspector
+          projectId={id}
+          target={knowledgeTarget}
+          onClose={() => setKnowledgeInspectorOpen(false)}
+          onChanged={() => void refreshKnowledgeUi()}
+        />
+      ) : null}
+
       {syncToast && <div className="sync-toast">{syncToast}</div>}
 
       {!isGuest && (
@@ -3322,6 +3422,17 @@ export function EditorPage() {
                         }
                         commentMarks={commentMarks}
                         citationMarks={citationMarks}
+                        factHints={factHints}
+                        knowledgeHints={knowledgeHints}
+                        outNames={extractOutNames(content)}
+                        knowledgeStepMarks={knowledgeSteps
+                          .filter((s) => typeof s.line === "number")
+                          .map((s) => ({ line: s.line!, status: s.status }))}
+                        onCursorChange={(pos) => {
+                          const t = knowledgeCursorTarget(pos.lineText, pos.column, pos.line, pos.nearby);
+                          setKnowledgeTarget(t);
+                          if (t) setKnowledgeInspectorOpen(true);
+                        }}
                         onRequestComment={onRequestComment}
                         onOpenCommentThread={(threadId) => {
                           setFocusCommentId(threadId);

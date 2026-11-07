@@ -116,6 +116,100 @@ const TOOLS = [
       required: ["projectId", "file", "line"],
     },
   },
+  {
+    name: "source_add_web",
+    description: "Save a web page as a library source (text snapshot). Returns citekey.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: { type: "string" },
+        title: { type: "string" },
+        collection: { type: "string" },
+      },
+      required: ["url"],
+    },
+  },
+  {
+    name: "facts_search",
+    description: "Search library facts by text/key/source/status.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        q: { type: "string" },
+        citekey: { type: "string" },
+        status: { type: "string" },
+        type: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "fact_get",
+    description: "One fact with passages and status.",
+    inputSchema: {
+      type: "object",
+      properties: { citekey: { type: "string" }, id: { type: "string" }, key: { type: "string" } },
+    },
+  },
+  {
+    name: "fact_propose",
+    description:
+      "Create an unreviewed fact on a source. Every quote must appear verbatim in the source text. Never confirms.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        citekey: { type: "string" },
+        type: { type: "string" },
+        input: { type: "string" },
+        answer: { type: "string" },
+        quotes: { type: "array", items: { type: "string" } },
+        key: { type: "string" },
+        value: { type: "number" },
+        unit: { type: "string" },
+        agentName: { type: "string" },
+      },
+      required: ["citekey", "type", "input", "quotes"],
+    },
+  },
+  {
+    name: "knowledge_list",
+    description: "List knowledge items with ids, titles, collections.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "knowledge_get",
+    description: "One knowledge item with tex, steps, values.",
+    inputSchema: {
+      type: "object",
+      properties: { knowledgeId: { type: "string" }, projectId: { type: "string" } },
+    },
+  },
+  {
+    name: "knowledge_create",
+    description: "Create a knowledge item project from the template.",
+    inputSchema: {
+      type: "object",
+      properties: { title: { type: "string" }, collection: { type: "string" } },
+      required: ["title"],
+    },
+  },
+  {
+    name: "knowledge_check",
+    description: "Parse/evaluate a knowledge item; return errors, values, statuses.",
+    inputSchema: {
+      type: "object",
+      properties: { projectId: { type: "string" } },
+      required: ["projectId"],
+    },
+  },
+  {
+    name: "graph_neighborhood",
+    description: "Nodes and edges around a graph node up to depth N.",
+    inputSchema: {
+      type: "object",
+      properties: { node: { type: "string" }, depth: { type: "number" } },
+      required: ["node"],
+    },
+  },
 ] as const;
 
 async function callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
@@ -199,9 +293,161 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<un
         force: true,
       });
     }
+    case "source_add_web": {
+      const { addWebSource } = await import("./webSource.js");
+      const result = await addWebSource({
+        url: String(args.url),
+        title: typeof args.title === "string" ? args.title : undefined,
+        collections: typeof args.collection === "string" ? [args.collection] : undefined,
+      });
+      return { citekey: result.paper.citekey, paper: result.paper, snapshot: result.snapshot };
+    }
+    case "facts_search": {
+      const { listAllFacts, FactStatusSchema, FactTypeSchema } = await import("./facts.js");
+      const status =
+        typeof args.status === "string" ? FactStatusSchema.parse(args.status) : undefined;
+      const type = typeof args.type === "string" ? FactTypeSchema.parse(args.type) : undefined;
+      return {
+        facts: await listAllFacts({
+          q: typeof args.q === "string" ? args.q : undefined,
+          citekey: typeof args.citekey === "string" ? args.citekey : undefined,
+          status,
+          type,
+        }),
+      };
+    }
+    case "fact_get": {
+      const { listFacts, listAllFacts } = await import("./facts.js");
+      if (typeof args.citekey === "string" && typeof args.id === "string") {
+        const facts = await listFacts(args.citekey);
+        const fact = facts.find((f) => f.id === args.id);
+        if (!fact) throw Object.assign(new Error("Fact not found"), { status: 404 });
+        return { fact };
+      }
+      if (typeof args.key === "string") {
+        const all = await listAllFacts({ q: args.key });
+        const fact = all.find((f) => f.key === args.key);
+        if (!fact) throw Object.assign(new Error("Fact not found"), { status: 404 });
+        return { fact };
+      }
+      throw Object.assign(new Error("Provide citekey+id or key"), { status: 400 });
+    }
+    case "fact_propose": {
+      const { createFact } = await import("./facts.js");
+      const { getSourceText } = await import("./sourceText.js");
+      const { locateQuoteInPages } = await import("./pdfText.js");
+      const citekey = String(args.citekey);
+      const quotes = Array.isArray(args.quotes) ? args.quotes.map(String) : [];
+      if (!quotes.length) throw Object.assign(new Error("quotes[] required"), { status: 400 });
+      const { pages } = await getSourceText(citekey);
+      const highlights = [];
+      for (const q of quotes) {
+        const hits = locateQuoteInPages(pages, q);
+        if (!hits.length) {
+          throw Object.assign(new Error(`Quote not found in source: “${q.slice(0, 80)}”`), {
+            status: 400,
+          });
+        }
+        highlights.push(hits[0]!);
+      }
+      const fact = await createFact(citekey, {
+        type: args.type as "statement" | "value" | "question" | "tag",
+        input: String(args.input),
+        answer: typeof args.answer === "string" ? args.answer : undefined,
+        highlights,
+        key: typeof args.key === "string" ? args.key : undefined,
+        value: typeof args.value === "number" ? args.value : undefined,
+        unit: typeof args.unit === "string" ? args.unit : undefined,
+        createdBy: {
+          kind: "agent",
+          name: typeof args.agentName === "string" ? args.agentName : "mcp",
+        },
+      });
+      if (fact.status === "confirmed") {
+        // Spec: agent-made facts are always unreviewed — force if human-tag path auto-confirmed.
+        const { updateFact } = await import("./facts.js");
+        return {
+          fact: await updateFact(citekey, fact.id, { status: "unreviewed" }),
+        };
+      }
+      return { fact };
+    }
+    case "knowledge_list": {
+      const { listKnowledgeItems } = await import("../knowledge/items.js");
+      return { items: await listKnowledgeItems() };
+    }
+    case "knowledge_get": {
+      const { listKnowledgeItems } = await import("../knowledge/items.js");
+      const { listStepStatuses } = await import("../knowledge/review.js");
+      const items = await listKnowledgeItems();
+      const item =
+        items.find((i) => i.knowledgeId === args.knowledgeId || i.id === args.projectId) ?? null;
+      if (!item) throw Object.assign(new Error("Knowledge item not found"), { status: 404 });
+      const fs = await import("node:fs/promises");
+      const path = await import("node:path");
+      const { getProjectsRootAbs } = await import("../../config.js");
+      const tex = await fs.readFile(path.join(getProjectsRootAbs(), item.id, "main.tex"), "utf8");
+      const steps = await listStepStatuses(item.id);
+      return { item, tex, steps };
+    }
+    case "knowledge_create": {
+      const { createKnowledgeItem } = await import("../knowledge/items.js");
+      return createKnowledgeItem({
+        title: String(args.title),
+        collection: typeof args.collection === "string" ? args.collection : undefined,
+      });
+    }
+    case "knowledge_check": {
+      const { prepareKnowledgeCompile } = await import("../knowledge/prepareCompile.js");
+      const { listStepStatuses } = await import("../knowledge/review.js");
+      const projectId = String(args.projectId);
+      const prepared = await prepareKnowledgeCompile(projectId);
+      const steps = await listStepStatuses(projectId);
+      return { errors: prepared.errors, steps, usesKnowledge: prepared.usesKnowledge };
+    }
+    case "graph_neighborhood": {
+      const { buildKnowledgeGraph } = await import("../knowledge/graph.js");
+      const graph = await buildKnowledgeGraph();
+      const start = String(args.node);
+      const depth = typeof args.depth === "number" ? Math.max(0, Math.min(8, args.depth)) : 1;
+      const keep = new Set<string>([start]);
+      let frontier = new Set<string>([start]);
+      for (let d = 0; d < depth; d += 1) {
+        const next = new Set<string>();
+        for (const e of graph.edges) {
+          if (frontier.has(e.from) && !keep.has(e.to)) {
+            keep.add(e.to);
+            next.add(e.to);
+          }
+          if (frontier.has(e.to) && !keep.has(e.from)) {
+            keep.add(e.from);
+            next.add(e.from);
+          }
+        }
+        frontier = next;
+      }
+      return {
+        nodes: graph.nodes.filter((n) => keep.has(n.id)),
+        edges: graph.edges.filter((e) => keep.has(e.from) && keep.has(e.to)),
+      };
+    }
     default:
       throw Object.assign(new Error(`Unknown tool: ${name}`), { status: 400 });
   }
+}
+
+/** Tool names that would verify — must stay empty forever. */
+export const VERIFICATION_TOOL_NAMES = [
+  "fact_confirm",
+  "fact_reject",
+  "knowledge_review",
+  "step_review",
+  "confirm_fact",
+  "reject_fact",
+] as const;
+
+export function libraryMcpToolNames(): string[] {
+  return TOOLS.map((t) => t.name);
 }
 
 export async function handleLibraryMcpHttp(body: unknown): Promise<McpHttpResult> {

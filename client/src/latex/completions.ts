@@ -9,6 +9,20 @@ export type LatexCitationHint = {
   fromLibrary?: boolean;
 };
 
+export type KnowledgeFactHint = {
+  key: string;
+  statement?: string;
+  value?: number | null;
+  unit?: string;
+  status?: string;
+};
+
+export type KnowledgeItemHint = {
+  id: string;
+  title?: string;
+  status?: string;
+};
+
 export type LatexSuggestContext = {
   citations: string[];
   /** Richer library + bib hints (preferred over bare citations when present). */
@@ -16,6 +30,12 @@ export type LatexSuggestContext = {
   labels: string[];
   /** When true, citation hovers link to the reference library in a new tab. */
   openLibrary?: boolean;
+  /** `\fact{…}` completions */
+  factHints?: KnowledgeFactHint[];
+  /** `\kn{…}` / `\knref{…}` completions */
+  knowledgeHints?: KnowledgeItemHint[];
+  /** `\out{…}` names defined in the open knowledge item */
+  outNames?: string[];
 };
 
 function wordRange(model: editor.ITextModel, position: Position): IRange {
@@ -53,7 +73,7 @@ function braceArgContext(model: editor.ITextModel, position: Position): {
   const line = model.getLineContent(position.lineNumber);
   const before = line.slice(0, position.column - 1);
   const match = new RegExp(
-    `\\\\(${CITE_COMMANDS}|ref|eqref|pageref|label|begin|end|includegraphics|input|include)\\{([^}]*)$`,
+    `\\\\(${CITE_COMMANDS}|ref|eqref|pageref|label|begin|end|includegraphics|input|include|fact|kn|knref|out)\\{([^}]*)$`,
   ).exec(before);
   if (!match) return null;
   const arg = match[2] ?? "";
@@ -144,6 +164,46 @@ export function createCompletionProvider(
               kind: monaco.languages.CompletionItemKind.EnumMember,
               insertText: env,
               detail: "environment",
+              range: arg.range,
+            });
+          }
+          return { suggestions };
+        }
+        if (arg.command === "fact") {
+          for (const hint of ctx.factHints ?? []) {
+            suggestions.push({
+              label: hint.key,
+              kind: monaco.languages.CompletionItemKind.Value,
+              insertText: hint.key,
+              detail: [hint.status, hint.value != null ? String(hint.value) : null, hint.unit]
+                .filter(Boolean)
+                .join(" · "),
+              documentation: hint.statement,
+              range: arg.range,
+            });
+          }
+          return { suggestions };
+        }
+        if (arg.command === "kn" || arg.command === "knref") {
+          for (const hint of ctx.knowledgeHints ?? []) {
+            suggestions.push({
+              label: hint.id,
+              kind: monaco.languages.CompletionItemKind.Reference,
+              insertText: hint.id,
+              detail: hint.status ?? "knowledge",
+              documentation: hint.title,
+              range: arg.range,
+            });
+          }
+          return { suggestions };
+        }
+        if (arg.command === "out") {
+          for (const name of ctx.outNames ?? []) {
+            suggestions.push({
+              label: name,
+              kind: monaco.languages.CompletionItemKind.Variable,
+              insertText: name,
+              detail: "output",
               range: arg.range,
             });
           }
