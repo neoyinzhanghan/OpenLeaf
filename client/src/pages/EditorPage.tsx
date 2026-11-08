@@ -385,6 +385,7 @@ export function EditorPage() {
     setDepReviewOpen(true);
     setTreeCollapsed(false);
     setTreeWidth((w) => Math.max(w, 360));
+    if (window.matchMedia("(max-width: 720px)").matches) setMobilePane("files");
   }, [reviewMode, knowledgeMeta?.kind, knowledgeMeta?.knowledgeId]);
   // Deep-link: ?step=calculation:total opens the step inspector.
   const stepParam = searchParams.get("step");
@@ -2633,14 +2634,14 @@ export function EditorPage() {
             <>
               <Link
                 to="/library"
-                className="btn btn-quiet"
+                className="btn btn-quiet toolbar-wide-only"
                 title="Open the personal citation library (independent of this project)"
               >
                 Library
               </Link>
               <Link
                 to="/facts"
-                className="btn btn-quiet"
+                className="btn btn-quiet toolbar-wide-only"
                 title="Review extracted paper facts"
               >
                 Facts

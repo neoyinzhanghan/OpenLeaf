@@ -313,9 +313,16 @@ export function KnowledgePage() {
   });
   const panelWidthRef = useRef(panelWidth);
   panelWidthRef.current = panelWidth;
-  const [panelCollapsed, setPanelCollapsed] = useState(
-    () => localStorage.getItem("openleaf.knowledgePanelCollapsed") === "1",
-  );
+  const [panelCollapsed, setPanelCollapsed] = useState(() => {
+    const stored = localStorage.getItem("openleaf.knowledgePanelCollapsed");
+    const phone =
+      typeof window !== "undefined" && window.matchMedia("(max-width: 639px)").matches;
+    // Focus needs the trail panel; otherwise phone starts collapsed for canvas room.
+    if (phone && params.get("focus")) return false;
+    if (stored === "1") return true;
+    if (stored === "0") return false;
+    return phone;
+  });
   const [panelDragging, setPanelDragging] = useState(false);
   const mainRef = useRef<HTMLDivElement | null>(null);
   const [focus, setFocus] = useState<string | null>(params.get("focus"));
