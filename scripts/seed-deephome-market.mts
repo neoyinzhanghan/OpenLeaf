@@ -387,6 +387,116 @@ await importAndFact(
   FACTS_DP_MARKET,
 );
 
+// --- Healthcare-system primers (beginner sources) ---------------------------
+
+const FACTS_KFF_MEDICARE: QuoteFact[] = [
+  {
+    key: "kff-medicare-part-a-enrollees-2024",
+    input:
+      "According to KFF Medicare 101, about how many people were enrolled in Medicare Part A (hospital insurance) in 2024?",
+    answer: "67500000",
+    value: 67_500_000,
+    unit: "people",
+    quote: "An estimated 67.5 million people were enrolled in Part A in 2024",
+  },
+  {
+    key: "kff-medicare-advantage-share-2025",
+    input:
+      "According to KFF Medicare 101, what share of Medicare beneficiaries eligible for Medicare Advantage were enrolled in Advantage plans in 2025?",
+    answer: "54",
+    value: 54,
+    unit: "percent",
+    quote: "54% of Medicare beneficiaries who are eligible to enroll in Medicare Advantage plans",
+  },
+];
+
+await curatedWebSource(
+  "https://www.kff.org/medicare/health-policy-101-medicare/",
+  "KFF Medicare 101 — how Medicare works (primer)",
+  "Kaiser Family Foundation plain-English primer on Medicare Parts A–D, Traditional Medicare vs Medicare Advantage, and who is covered. Best starter reading before DeepHeme market numbers.",
+  `Kaiser Family Foundation — Health Policy 101: Medicare
+
+Medicare is the federal health insurance program for people ages 65 and older and for younger people with long-term disabilities.
+
+Part A, also known as the Hospital Insurance (HI) program, covers inpatient care provided in hospitals and short-term stays in skilled nursing facilities, hospice care, post-acute home health care, and pints of blood received at a hospital or skilled nursing facility. An estimated 67.5 million people were enrolled in Part A in 2024.
+
+Part B, the Supplementary Medical Insurance (SMI) program, covers outpatient services such as physician visits, outpatient hospital care, and preventive services (e.g., mammography and colorectal cancer screening), among other medical benefits.
+
+Part C, more commonly referred to as the Medicare Advantage program, allows beneficiaries to enroll in a private plan, such as a health maintenance organization (HMO) or preferred provider organization (PPO), as an alternative to traditional Medicare. Medicare Advantage plans cover all benefits under Medicare Part A, Part B, and, in most cases, Part D. In 2025, 34.1 million beneficiaries are enrolled in Medicare Advantage, which is 54% of Medicare beneficiaries who are eligible to enroll in Medicare Advantage plans.
+
+Part D is a voluntary outpatient prescription drug benefit delivered through private plans that contract with Medicare.
+
+Traditional Medicare (also called Original Medicare) is the fee-for-service program: the government pays claims for Part A and Part B services. Medicare Advantage is the private-plan alternative.
+`,
+  FACTS_KFF_MEDICARE,
+);
+
+const FACTS_MEDICARE_GOV: QuoteFact[] = [
+  {
+    key: "medicare-gov-part-b-covers-doctors",
+    input:
+      "Does Medicare.gov say Part B (Medical Insurance) helps cover services from doctors and other health care providers?",
+    answer: "yes",
+    value: 1,
+    unit: "boolean",
+    quote: "Services from doctors and other health care providers",
+  },
+];
+
+await curatedWebSource(
+  "https://www.medicare.gov/basics/get-started-with-medicare/medicare-basics/parts-of-medicare",
+  "Medicare.gov — Parts of Medicare (official)",
+  "Official short definitions of Parts A, B, C (Advantage), and D. Use this when you need the government’s own wording.",
+  `Medicare.gov — Parts of Medicare
+
+Part A (Hospital Insurance)
+Part A helps cover inpatient care in hospitals, skilled nursing facility care, hospice care, and home health care.
+
+Part B (Medical Insurance)
+Part B helps cover:
+- Services from doctors and other health care providers
+- Outpatient care
+- Home health care
+- Durable medical equipment (like wheelchairs, walkers, hospital beds, and other equipment)
+- Many preventive services (like screenings, shots or vaccines, and yearly “Wellness” visits)
+
+Part D (Drug coverage)
+Part D helps cover the cost of prescription drugs. You join a Medicare drug plan in addition to Original Medicare, or you get it by joining a Medicare Advantage Plan with drug coverage.
+
+Medicare Advantage (also known as Part C)
+Medicare Advantage offers an alternative to Original Medicare for your health and drug needs. You get benefits through a private health plan that Medicare approved. These “bundled” plans include Part A, Part B, and usually Part D.
+You may need to use doctors in the plan’s network and get approval (prior authorization) for certain drugs or services before you get them.
+`,
+  FACTS_MEDICARE_GOV,
+);
+
+await curatedWebSource(
+  "https://www.kff.org/health-costs/health-policy-101-employer-sponsored-health-insurance/",
+  "KFF Employer-Sponsored Health Insurance 101",
+  "How job-based (commercial) insurance works for people under 65 — the largest private payer category, and the main reason a Medicare-only floor understates all-payer spend.",
+  `Kaiser Family Foundation — Health Policy 101: Employer-Sponsored Health Insurance
+
+Employer-sponsored health insurance (ESI) is the largest source of health coverage for U.S. residents under age 65. Unlike many other nations, the U.S. relies on voluntary, private health insurance as the primary source of coverage for residents who are not elderly, poor or disabled.
+
+Overall, 60% of people under age 65, or about 165.6 million people, had employment-sponsored health insurance in 2025.
+
+There are several ways people get private health insurance. One is by purchasing coverage directly from an insurer (individual or nongroup). The second is coverage under a policy offered by a sponsoring group such as an employer — employer-sponsored health insurance, or ESI.
+
+Commercial (employer) plans usually negotiate their own rates with doctors and hospitals. Those rates are often higher than Traditional Medicare’s published allowed amounts for the same CPT code.
+`,
+  [
+    {
+      key: "kff-esi-under65-share-2025",
+      input:
+        "According to KFF, what share of people under age 65 had employment-sponsored health insurance in 2025?",
+      answer: "60",
+      value: 60,
+      unit: "percent",
+      quote: "60% of people under age 65, or about 165.6 million people, had employment-sponsored health insurance in 2025",
+    },
+  ],
+);
+
 // --- Knowledge items --------------------------------------------------------
 
 async function writeKnowledge(
@@ -424,6 +534,117 @@ ${texBody}
   });
   console.log(`knowledge ${knowledgeId} → ${project.id}`);
 }
+
+await writeKnowledge(
+  "us-healthcare-coverage-primer",
+  "US health coverage map for beginners",
+  `\\begin{knowledge}{Who pays for care in the US?}
+\\begin{judgment}[big-picture]
+\\textbf{Plain idea.} The United States does \\emph{not} have one insurance plan for
+everyone. When a patient gets care, a \\emph{provider} (doctor, hospital, lab)
+delivers it, and a \\emph{payer} usually pays most of the bill.
+
+\\textbf{The main payers you will meet:}
+\\begin{itemize}
+  \\item \\emph{Employer-sponsored (commercial) insurance:} coverage tied to a job.
+        This is the most common coverage for people under 65
+        (about \\fact{kff-esi-under65-share-2025}\\% of that age group in 2025,
+        per KFF).
+  \\item \\emph{Medicare:} federal insurance mainly for people 65+ and some younger
+        people with disabilities. See \\kn{us-medicare-parts-primer}.
+  \\item \\emph{Medicaid:} joint federal--state coverage for people who qualify by
+        income, disability, pregnancy, or related rules (often renamed by state).
+  \\item \\emph{Individual / marketplace plans:} coverage you buy yourself
+        (Healthcare.gov or a state exchange).
+  \\item \\emph{Uninsured / self-pay:} no plan; the patient may be billed directly.
+\\end{itemize}
+
+\\textbf{Why this matters for DeepHeme market work.} A smear interpretation can be
+paid by any of the above. Public, CPT-level dollar tables are clearest for
+\\emph{Traditional Medicare}. That is why our spending floor starts there --- not
+because other payers do not matter, but because they are harder to measure cleanly.
+\\end{judgment}
+\\conclusion{US care is paid by a mix of employer plans, Medicare, Medicaid,
+marketplace plans, and self-pay. DeepHeme market floors that use Traditional
+Medicare are intentionally looking at one measured slice of that mix.}
+\\end{knowledge}`,
+);
+
+await writeKnowledge(
+  "us-medicare-parts-primer",
+  "Medicare Parts A, B, C, D explained",
+  `\\begin{knowledge}{What do Medicare Parts A, B, C, and D mean?}
+\\begin{judgment}[parts]
+\\textbf{Plain question.} When people say Medicare, which \\emph{part} do they
+mean --- and which part pays for a doctor reading a smear?
+
+\\textbf{Part A --- hospital insurance.} Covers inpatient hospital stays, short
+skilled-nursing stays, hospice, and some home health. About
+\\fact{kff-medicare-part-a-enrollees-2024} people were enrolled in Part A in 2024
+(KFF). This is usually \\emph{not} the part that pays for an outpatient smear
+interpretation.
+
+\\textbf{Part B --- medical / outpatient insurance.} Covers doctor services,
+outpatient care, many lab and pathology services, and preventive visits.
+Medicare.gov lists services from doctors and other health care providers under
+Part B (\\fact{medicare-gov-part-b-covers-doctors}). \\emph{This is the part that
+usually pays for interpreting a blood or bone-marrow smear.}
+
+\\textbf{Part C --- Medicare Advantage.} A private plan that replaces Traditional
+Medicare for the enrollee. It must cover Part A and Part B benefits, usually
+includes drugs, and often uses networks and prior authorization. In 2025 about
+\\fact{kff-medicare-advantage-share-2025}\\% of eligible beneficiaries were in
+Advantage (KFF). Advantage payments are \\emph{not} the same public CPT allowed
+tables we use for the DeepHeme floor.
+
+\\textbf{Part D --- drugs.} Outpatient prescription-drug coverage through private
+plans. Irrelevant to smear-interpretation billing.
+
+\\textbf{Traditional (Original) Medicare} means Parts A and B paid
+claim-by-claim by the government (fee-for-service). That is the path behind the
+public CPT allowed amounts in our market write-ups.
+\\end{judgment}
+\\conclusion{For DeepHeme smear-read dollars, focus on Traditional Medicare Part B.
+Parts A and D are different benefits; Part C (Advantage) is a private alternative
+whose rates are not the public CPT tables used in our floor.}
+\\end{knowledge}`,
+);
+
+await writeKnowledge(
+  "us-cpt-allowed-amount-primer",
+  "How a doctor bill becomes a CPT allowed amount",
+  `\\begin{knowledge}{How does a smear read turn into a Medicare dollar number?}
+\\begin{judgment}[pipeline]
+\\textbf{Step 1 --- Care happens.} A pathologist examines a blood or marrow smear
+and writes an interpretation.
+
+\\textbf{Step 2 --- A CPT code labels the service.} CPT (Current Procedural
+Terminology) is the shared billing language for what was done. Examples:
+CPT 85060 = interpret a peripheral blood smear; CPT 85097 = interpret a
+bone-marrow smear.
+
+\\textbf{Step 3 --- A claim goes to the payer.} The lab or clinic sends the CPT
+code (and other details) to whoever is paying --- often Traditional Medicare
+Part B for older patients.
+
+\\textbf{Step 4 --- The payer has an allowed amount.} For Traditional Medicare,
+the \\emph{allowed amount} is what Medicare treats as the approved value of that
+service before patient coinsurance. Public summaries report average and total
+allowed dollars by CPT code --- that is how we get measured volume and spend.
+
+\\textbf{What allowed amount is not.}
+\\begin{itemize}
+  \\item Not the hospital's chargemaster sticker price.
+  \\item Not a commercial insurer's privately negotiated rate.
+  \\item Not DeepHeme's software price (sometimes called ASP).
+  \\item Not proof of what every US payer pays.
+\\end{itemize}
+\\end{judgment}
+\\conclusion{A smear read becomes a Medicare dollar figure when it is coded with a
+CPT label and Traditional Medicare publishes an allowed amount for that code.
+Those public CPT totals are the backbone of the DeepHeme Medicare spending floor.}
+\\end{knowledge}`,
+);
 
 await writeKnowledge(
   "us-medicare-ffs-heme-smear-reads",
@@ -519,6 +740,10 @@ await writeKnowledge(
 \\textbf{Plain question.} How large is the pot of US money tied to the clinical work
 DeepHeme helps with today --- a doctor reading a blood or bone-marrow smear?
 
+\\textbf{Background first.} If the US coverage map, Medicare Parts, or CPT language
+is unfamiliar, start with \\kn{us-healthcare-coverage-primer},
+\\kn{us-medicare-parts-primer}, and \\kn{us-cpt-allowed-amount-primer}.
+
 \\textbf{How DeepHeme connects to these bills.} DeepHeme's near-term clinical product
 is software that assists pathologists when they interpret
 \\emph{peripheral blood smears} (slides of circulating blood cells) and
@@ -589,6 +814,8 @@ await relabelExistingFacts([
   ...FACTS_38222,
   ...FACTS_ACS,
   ...FACTS_DP_MARKET,
+  ...FACTS_KFF_MEDICARE,
+  ...FACTS_MEDICARE_GOV,
 ]);
 
 try {
