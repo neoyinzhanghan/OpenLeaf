@@ -536,13 +536,150 @@ ${texBody}
 }
 
 await writeKnowledge(
+  "us-healthcare-from-zero",
+  "US healthcare, explained from zero",
+  `\\begin{knowledge}{US healthcare, explained from zero}
+\\begin{judgment}[big-idea]
+\\textbf{Plain idea.} The United States does \\emph{not} have one national insurance
+plan for everyone. Care is delivered by \\emph{providers} (doctors, hospitals,
+labs). Money usually comes from a \\emph{payer} (an employer plan, Medicare,
+Medicaid, a marketplace plan, or the patient). Market estimates for a product
+like DeepHeme almost always start from one payer's published bills --- often
+Traditional Medicare --- because those numbers are public and specific.
+
+This write-up is the beginner map. Deeper follow-ups:
+\\kn{us-healthcare-coverage-primer} (who pays),
+\\kn{us-medicare-parts-primer} (Parts A--D),
+\\kn{us-cpt-allowed-amount-primer} (how a CPT bill becomes dollars).
+\\end{judgment}
+
+\\begin{judgment}[who-pays]
+\\textbf{1. Who pays the bill?}
+\\begin{itemize}
+  \\item \\emph{Employer plan (ESI / commercial):} a job buys coverage. Most common
+        for people under 65 --- about \\fact{kff-esi-under65-share-2025}\\% of that
+        age group in 2025 (KFF).
+  \\item \\emph{Medicare:} federal insurance mainly for people 65+ and some younger
+        people with disabilities.
+  \\item \\emph{Medicaid:} joint federal--state coverage for people who qualify by
+        income, disability, pregnancy, or related rules (often renamed by state).
+  \\item \\emph{Buy yourself (marketplace / nongroup):} a plan purchased on
+        Healthcare.gov or a state exchange.
+  \\item \\emph{Uninsured / self-pay:} no plan; the patient may be billed directly.
+\\end{itemize}
+\\end{judgment}
+
+\\begin{judgment}[medicare-parts]
+\\textbf{2. Medicare in four boxes.} People often say Medicare when they mean only
+one Part. For smear-interpretation dollars, you almost always care about Part B
+under Traditional Medicare --- not Advantage, not drugs.
+\\begin{itemize}
+  \\item \\emph{Part A (hospital insurance):} inpatient hospital stays, short
+        skilled-nursing stays, hospice, some home health. About
+        \\fact{kff-medicare-part-a-enrollees-2024} people enrolled in 2024 (KFF).
+        Usually \\emph{not} the part that pays for an outpatient smear read.
+  \\item \\emph{Part B (medical / outpatient insurance):} doctor visits, outpatient
+        care, many lab/pathology services, durable equipment, preventive visits.
+        Medicare.gov lists doctor services under Part B
+        (\\fact{medicare-gov-part-b-covers-doctors}). \\emph{This is the part that
+        usually pays for interpreting a blood or bone-marrow smear.}
+  \\item \\emph{Part C (Medicare Advantage):} a private plan that replaces
+        Traditional Medicare for you. Must cover A+B; usually includes drugs;
+        often has networks and prior authorization. In 2025 about
+        \\fact{kff-medicare-advantage-share-2025}\\% of eligible beneficiaries were
+        in Advantage (KFF). Advantage rates are \\emph{not} the public CPT tables
+        used for the DeepHeme floor.
+  \\item \\emph{Part D (drugs):} outpatient prescriptions via private drug plans.
+\\end{itemize}
+
+\\textbf{Traditional (Original) Medicare} = Parts A + B paid claim-by-claim by the
+government (fee-for-service). That path is what publishes the CPT allowed amounts
+in our market write-ups.
+\\end{judgment}
+
+\\begin{judgment}[bill-pipeline]
+\\textbf{3. How a doctor bill becomes a number.}
+\\begin{enumerate}
+  \\item \\emph{Care happens.} A pathologist looks at a blood or marrow smear and
+        writes an interpretation.
+  \\item \\emph{A CPT code labels the service.} CPT (Current Procedural Terminology)
+        is the shared billing language for what was done (e.g.\\ CPT 85060 = blood
+        smear read; CPT 85097 = marrow smear read).
+  \\item \\emph{A claim goes to the payer.} Often Traditional Medicare Part B for
+        older patients.
+  \\item \\emph{Allowed amount.} What Medicare treats as the approved value of that
+        service before patient coinsurance. Public summaries report average and
+        total allowed dollars by CPT --- that is how we get measured volume and
+        spend.
+\\end{enumerate}
+Allowed amount is \\emph{not} the hospital sticker price, \\emph{not} a commercial
+contract rate, and \\emph{not} DeepHeme's software price (sometimes called ASP).
+\\end{judgment}
+
+\\begin{assumption}[glossary]
+\\textbf{4. Glossary --- words that trip people up.}
+\\begin{itemize}
+  \\item \\emph{Payer:} whoever pays the bill.
+  \\item \\emph{Provider:} whoever delivers care.
+  \\item \\emph{Claim:} the bill describing what was done.
+  \\item \\emph{CPT code:} standardized billing label for a service.
+  \\item \\emph{Allowed amount:} what the payer says the service is worth.
+  \\item \\emph{Fee-for-service (FFS):} pay per service; each claim stands alone.
+        Traditional Medicare works this way.
+  \\item \\emph{Traditional / Original Medicare:} government-run Parts A+B paid
+        claim-by-claim.
+  \\item \\emph{Medicare Advantage (MA):} Part C private plans that take over
+        Medicare benefits; networks and prior auth are common.
+  \\item \\emph{Commercial insurance:} private coverage, usually via an employer;
+        rates are negotiated and often higher than Medicare.
+  \\item \\emph{Premium:} monthly price to keep the plan.
+  \\item \\emph{Deductible:} what you pay before the plan shares costs.
+  \\item \\emph{Copay / coinsurance:} your share when you use care (fixed dollar or
+        percent).
+  \\item \\emph{Network:} doctors/hospitals a private plan prefers.
+  \\item \\emph{Prior authorization:} plan approval required before some care.
+  \\item \\emph{ASP:} average selling price --- often a product/drug list price, not
+        a Medicare smear-read allowed amount.
+  \\item \\emph{TAM:} total addressable market --- a broad business estimate, much
+        wider than one CPT code's Medicare dollars.
+  \\item \\emph{Floor:} a deliberately narrow, measured lower bound (e.g.\\ Traditional
+        Medicare dollars for smear reads), not the whole market.
+\\end{itemize}
+\\end{assumption}
+
+\\begin{judgment}[deephome-map]
+\\textbf{5. How this maps onto DeepHeme market language.}
+\\begin{itemize}
+  \\item \\emph{Traditional Medicare Part B FFS} = government outpatient insurance
+        paying claim-by-claim for doctor/lab services.
+  \\item \\emph{CPT 85060 / 85097} = billing codes for doctor interprets blood smear /
+        doctor interprets marrow smear.
+  \\item \\emph{Allowed amount / allowed spend} = Medicare's approved dollar value
+        for those reads --- public numbers we can sum.
+  \\item \\emph{Addressable floor} = only that Medicare slice --- a lower bound, not
+        DeepHeme revenue or all US payers.
+  \\item \\emph{All-payer sensitivity (e.g.\\ $1.85\\times$)} = rough what-if sketch if
+        private plans paid more than Medicare --- not a measured TAM.
+\\end{itemize}
+\\end{judgment}
+
+\\conclusion{The US mixes employer plans, Medicare, Medicaid, marketplace coverage,
+and self-pay. For DeepHeme smear-read dollars, start with Traditional Medicare
+Part B and its public CPT allowed amounts --- a measured floor, not the whole
+market. Read \\kn{us-medicare-parts-primer} and \\kn{us-cpt-allowed-amount-primer}
+for the next level of detail.}
+\\end{knowledge}`,
+);
+
+await writeKnowledge(
   "us-healthcare-coverage-primer",
   "US health coverage map for beginners",
   `\\begin{knowledge}{Who pays for care in the US?}
 \\begin{judgment}[big-picture]
 \\textbf{Plain idea.} The United States does \\emph{not} have one insurance plan for
 everyone. When a patient gets care, a \\emph{provider} (doctor, hospital, lab)
-delivers it, and a \\emph{payer} usually pays most of the bill.
+delivers it, and a \\emph{payer} usually pays most of the bill. Start with the full
+introduction \\kn{us-healthcare-from-zero} if you are new to this vocabulary.
 
 \\textbf{The main payers you will meet:}
 \\begin{itemize}
@@ -740,9 +877,10 @@ await writeKnowledge(
 \\textbf{Plain question.} How large is the pot of US money tied to the clinical work
 DeepHeme helps with today --- a doctor reading a blood or bone-marrow smear?
 
-\\textbf{Background first.} If the US coverage map, Medicare Parts, or CPT language
-is unfamiliar, start with \\kn{us-healthcare-coverage-primer},
-\\kn{us-medicare-parts-primer}, and \\kn{us-cpt-allowed-amount-primer}.
+\\textbf{Background first.} If the US medical system is unfamiliar, start with
+\\kn{us-healthcare-from-zero} (full beginner introduction). Deeper pieces:
+\\kn{us-healthcare-coverage-primer}, \\kn{us-medicare-parts-primer},
+\\kn{us-cpt-allowed-amount-primer}.
 
 \\textbf{How DeepHeme connects to these bills.} DeepHeme's near-term clinical product
 is software that assists pathologists when they interpret
